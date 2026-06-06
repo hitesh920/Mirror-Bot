@@ -39,6 +39,21 @@ def _format_for(task: Task) -> dict:
     return {"format": f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"}
 
 
+def _progress_hook(task: Task):
+    def update(data):
+        if data.get("status") != "downloading":
+            return
+        task.downloaded = int(data.get("downloaded_bytes") or 0)
+        task.size = int(
+            data.get("total_bytes") or data.get("total_bytes_estimate") or 0
+        )
+        task.speed = int(data.get("speed") or 0)
+        task.eta = int(data.get("eta") or 0)
+        task.progress = task.downloaded / task.size if task.size else 0
+
+    return update
+
+
 async def download_ytdlp(task: Task) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info(
@@ -55,6 +70,7 @@ async def download_ytdlp(task: Task) -> Path:
         "quiet": True,
         "no_warnings": True,
         "logger": YtDlpLogger(),
+        "progress_hooks": [_progress_hook(task)],
         **_format_for(task),
     }
     if task.options.name:

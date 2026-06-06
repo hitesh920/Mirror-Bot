@@ -12,6 +12,7 @@ from .logging_config import setup_logging
 from .models import Destination, Source, SourceType
 from .parser import parse_add_text
 from .source_detector import detect_source
+from .status import format_status
 from .task_manager import TaskManager
 
 setup_logging()
@@ -20,6 +21,9 @@ config = Config.load()
 manager = TaskManager(config)
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 delete_targets: dict[str, Path] = {}
+status_messages: dict[int, Message] = {}
+status_jobs: dict[int, asyncio.Task] = {}
+status_text: dict[int, str] = {}
 
 app = Client(
     "mirrorbot",
@@ -35,6 +39,54 @@ def owner_only(_, __, message: Message) -> bool:
 
 
 owner_filter = filters.create(owner_only)
+
+
+def chat_tasks(chat_id: int):
+    return [task for task in manager.active_tasks() if task.chat_id == chat_id]
+
+
+async def update_status_message(chat_id: int) -> None:
+    tasks = chat_tasks(chat_id)
+    if not tasks:
+        message = status_messages.pop(chat_id, None)
+        status_text.pop(chat_id, None)
+        if message:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+        return
+
+    text = format_status(tasks)
+    message = status_messages.get(chat_id)
+    if message is None:
+        status_messages[chat_id] = await app.send_message(
+            chat_id, text, parse_mode=None, disable_notification=True
+        )
+        status_text[chat_id] = text
+    elif status_text.get(chat_id) != text:
+        try:
+            await message.edit_text(text, parse_mode=None)
+            status_text[chat_id] = text
+        except Exception:
+            LOGGER.exception("Could not update status message chat=%s", chat_id)
+
+
+async def status_loop(chat_id: int) -> None:
+    try:
+        while chat_tasks(chat_id):
+            await update_status_message(chat_id)
+            await asyncio.sleep(config.status_update_interval)
+        await update_status_message(chat_id)
+    finally:
+        status_jobs.pop(chat_id, None)
+
+
+async def ensure_live_status(chat_id: int) -> None:
+    await update_status_message(chat_id)
+    job = status_jobs.get(chat_id)
+    if job is None or job.done():
+        status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
 
 
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
@@ -106,7 +158,13 @@ async def add(_, message: Message):
     if reply and not link:
         media = reply.document or reply.video or reply.audio or reply.photo or reply.animation
         if media:
-            source = Source(SourceType.TELEGRAM_FILE, "", getattr(media, "file_name", "") or "")
+            filename = getattr(media, "file_name", "") or ""
+            source_type = (
+                SourceType.TORRENT_FILE
+                if filename.lower().endswith(".torrent")
+                else SourceType.TELEGRAM_FILE
+            )
+            source = Source(source_type, "", filename)
         elif reply.text:
             link = reply.text.split()[0]
 
@@ -116,10 +174,8 @@ async def add(_, message: Message):
             return
         source = detect_source(link)
 
-    if source.type in {SourceType.UNSUPPORTED, SourceType.MAGNET, SourceType.TORRENT_FILE, SourceType.GOOGLE_DRIVE, SourceType.RCLONE}:
+    if source.type in {SourceType.UNSUPPORTED, SourceType.GOOGLE_DRIVE, SourceType.RCLONE}:
         planned = {
-            SourceType.MAGNET: "Torrent/qBittorrent support is planned for the next build pass.",
-            SourceType.TORRENT_FILE: "Torrent/qBittorrent support is planned for the next build pass.",
             SourceType.GOOGLE_DRIVE: "Google Drive download support is planned for the next build pass.",
             SourceType.RCLONE: "rclone download support is planned for the next build pass.",
             SourceType.UNSUPPORTED: "Unsupported source.",
@@ -179,16 +235,42 @@ async def local_choice(_, query):
     destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
     task = manager.create_task(query.from_user.id, query.message.chat.id, query.message.id, source, destination, options)
     LOGGER.info("Task %s: selected local category=%s", task.short_id(), category)
-    await query.message.edit(f"Started local task `{task.short_id()}` for {category}.")
+    is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
+    if is_torrent:
+        await query.message.edit("Collecting torrent metadata...")
+    else:
+        await query.message.edit(f"Started local task `{task.short_id()}` for {category}.")
+        await ensure_live_status(task.chat_id)
 
     async def runner():
-        await manager.run_local_task(task, reply)
+        async def selector_ready(selected_task):
+            return await query.message.edit(
+                "Torrent files are ready for review.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Click here to review files", url=selected_task.selection_url)]]
+                ),
+                disable_web_page_preview=True,
+            )
+
+        async def selector_done(selector_message):
+            try:
+                await selector_message.delete()
+            except Exception:
+                pass
+            await app.send_message(
+                task.chat_id,
+                f"Started local task `{task.short_id()}` for {category}.",
+            )
+            await ensure_live_status(task.chat_id)
+
+        await manager.run_local_task(task, reply, selector_ready, selector_done)
         if task.phase.value == "complete":
             await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
         elif task.error:
             await app.send_message(task.chat_id, f"Task `{task.short_id()}` failed:\n`{task.error}`")
         else:
             await app.send_message(task.chat_id, f"Task `{task.short_id()}` {task.phase.value}.")
+        await update_status_message(task.chat_id)
 
     asyncio.create_task(runner())
 
@@ -196,24 +278,10 @@ async def local_choice(_, query):
 @app.on_message(filters.command("status") & owner_filter)
 async def status(_, message: Message):
     LOGGER.info("Received /status active_tasks=%s", len(manager.active_tasks()))
-    reply = await message.reply(format_status())
-    while manager.active_tasks():
-        await asyncio.sleep(config.status_update_interval)
-        try:
-            await reply.edit(format_status())
-        except Exception:
-            break
-
-
-def format_status() -> str:
-    active = manager.active_tasks()
-    if not active:
-        return "No active tasks."
-    lines = ["Active tasks:"]
-    for task in active:
-        pct = f"{task.progress * 100:.1f}%" if task.progress else "..."
-        lines.append(f"`{task.short_id()}` {task.phase.value} {pct} {task.name or task.source.type.value}")
-    return "\n".join(lines)
+    if not chat_tasks(message.chat.id):
+        await message.reply("No active tasks.")
+        return
+    await ensure_live_status(message.chat.id)
 
 
 @app.on_message(filters.command("stats") & owner_filter)

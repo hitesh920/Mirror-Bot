@@ -8,10 +8,13 @@ from .archive import extract_path, zip_path
 from .config import Config
 from .downloaders.direct import download_direct
 from .downloaders.telegram import download_telegram_file
+from .downloaders.torrent import download_torrent
 from .downloaders.ytdlp import download_ytdlp
 from .models import Destination, SourceType, Task, TaskPhase
 from .paths import deliver_to_local
+from .qbittorrent import QBittorrentClient
 from .resolvers import resolve_source
+from .torrent_selector import TorrentSelector
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +25,13 @@ class TaskManager:
         self.tasks: dict[str, Task] = {}
         self.download_sem = asyncio.Semaphore(config.queue_download_limit)
         self.upload_sem = asyncio.Semaphore(config.queue_upload_limit)
+        self.qb = QBittorrentClient(config.qb_host)
+        self.torrent_selector = TorrentSelector(
+            self.qb,
+            config.public_base_url,
+            config.torrent_selection_port,
+            config.torrent_selection_timeout,
+        )
 
     def create_task(self, user_id, chat_id, message_id, source, destination, options) -> Task:
         task_id = str(uuid4())
@@ -44,13 +54,21 @@ class TaskManager:
         )
         return task
 
-    async def run_local_task(self, task: Task, telegram_reply=None) -> Task:
+    async def run_local_task(
+        self,
+        task: Task,
+        telegram_reply=None,
+        on_selector_ready=None,
+        on_selector_done=None,
+    ) -> Task:
         try:
             async with self.download_sem:
                 task.phase = TaskPhase.DOWNLOADING
                 LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 task.source = await resolve_source(task.source)
-                downloaded = await self._download(task, telegram_reply)
+                downloaded = await self._download(
+                    task, telegram_reply, on_selector_ready, on_selector_done
+                )
 
             task.phase = TaskPhase.PROCESSING
             LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
@@ -81,12 +99,50 @@ class TaskManager:
             task.error = str(exc)
             LOGGER.exception("Task %s: failed", task.short_id())
         finally:
+            if task.torrent_hash and task.phase in {
+                TaskPhase.CANCELLED,
+                TaskPhase.ERROR,
+            }:
+                try:
+                    await self.qb.delete(task.torrent_hash, True)
+                except Exception:
+                    LOGGER.exception(
+                        "Task %s: failed to clean qBittorrent task", task.short_id()
+                    )
             self._cleanup(task.work_dir)
         return task
 
-    async def _download(self, task: Task, telegram_reply=None) -> Path:
+    async def _download(
+        self,
+        task: Task,
+        telegram_reply=None,
+        on_selector_ready=None,
+        on_selector_done=None,
+    ) -> Path:
         if task.source.type == SourceType.TELEGRAM_FILE:
             return await download_telegram_file(task, telegram_reply)
+        if task.source.type == SourceType.TORRENT_FILE:
+            torrent_file = (
+                await download_telegram_file(task, telegram_reply)
+                if telegram_reply is not None
+                else None
+            )
+            return await download_torrent(
+                task,
+                self.qb,
+                self.torrent_selector,
+                torrent_file=torrent_file,
+                on_selector_ready=on_selector_ready,
+                on_selector_done=on_selector_done,
+            )
+        if task.source.type == SourceType.MAGNET:
+            return await download_torrent(
+                task,
+                self.qb,
+                self.torrent_selector,
+                on_selector_ready=on_selector_ready,
+                on_selector_done=on_selector_done,
+            )
         if task.source.type == SourceType.DIRECT_URL:
             return await download_direct(task)
         if task.source.type == SourceType.YTDLP:

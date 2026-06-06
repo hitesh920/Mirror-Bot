@@ -2,6 +2,7 @@ import asyncio
 import logging
 from email.message import Message
 from pathlib import Path
+from time import monotonic
 from urllib.parse import unquote, urlparse
 
 import aiohttp
@@ -49,14 +50,22 @@ async def download_direct(task: Task) -> Path:
             target = task.work_dir / filename
             task.name = filename
             task.size = total
+            started = monotonic()
             with target.open("wb") as file:
                 async for chunk in response.content.iter_chunked(1024 * 512):
                     if task.cancelled:
                         raise asyncio.CancelledError()
                     file.write(chunk)
                     task.downloaded += len(chunk)
+                    elapsed = monotonic() - started
+                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
                     if total:
                         task.progress = task.downloaded / total
+                        task.eta = (
+                            int((total - task.downloaded) / task.speed)
+                            if task.speed
+                            else 0
+                        )
             LOGGER.info(
                 "Task %s: direct download complete name=%r bytes=%s",
                 task.short_id(),

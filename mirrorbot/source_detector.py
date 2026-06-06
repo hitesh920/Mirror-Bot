@@ -39,7 +39,9 @@ def yt_dlp_can_handle(value: str) -> bool:
 
 
 def detect_source(value: str, filename: str = "") -> Source:
-    if filename.endswith(".torrent"):
+    if filename.lower().endswith(".torrent") or urlparse(value).path.lower().endswith(
+        ".torrent"
+    ):
         return Source(SourceType.TORRENT_FILE, value, filename)
     if value.startswith("magnet:"):
         return Source(SourceType.MAGNET, value)

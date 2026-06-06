@@ -26,6 +26,8 @@ class Destination(str, Enum):
 
 class TaskPhase(str, Enum):
     QUEUED = "queued"
+    METADATA = "fetching metadata"
+    SELECTING = "selecting"
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
     DELIVERING = "delivering"
@@ -68,11 +70,14 @@ class Task:
     progress: float = 0
     size: int = 0
     downloaded: int = 0
+    speed: int = 0
+    eta: int = 0
     error: str = ""
     result_path: Path | None = None
+    torrent_hash: str = ""
+    selection_url: str = ""
     created_at: float = field(default_factory=time)
     cancelled: bool = False
 
     def short_id(self) -> str:
         return self.id.split("-", 1)[0]
-

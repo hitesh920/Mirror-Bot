@@ -23,6 +23,11 @@ async def download_telegram_file(task: Task, message: Message) -> Path:
     filename = task.options.name or getattr(media, "file_name", None) or f"telegram-{message.id}"
     target = task.work_dir / filename
     task.name = filename
-    path = await message.download(file_name=str(target))
-    return Path(path)
 
+    async def progress(current: int, total: int):
+        task.downloaded = current
+        task.size = total
+        task.progress = current / total if total else 0
+
+    path = await message.download(file_name=str(target), progress=progress)
+    return Path(path)
