@@ -1,9 +1,9 @@
 aiofiles
 aiohttp
+curl_cffi
 aioshutil
 python-dotenv
 kurigram
 tgcrypto
 yt-dlp[default]
 psutil
-

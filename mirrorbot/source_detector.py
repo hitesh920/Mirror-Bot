@@ -5,6 +5,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.extractor import gen_extractors
 
 from .models import Source, SourceType
+from .resolvers import is_resolvable_url
 
 
 def is_google_drive_url(value: str) -> bool:
@@ -51,6 +52,8 @@ def detect_source(value: str, filename: str = "") -> Source:
         return Source(SourceType.RCLONE, value)
     if is_telegram_url(value):
         return Source(SourceType.TELEGRAM_LINK, value)
+    if is_resolvable_url(value):
+        return Source(SourceType.DIRECT_URL, value)
     if yt_dlp_can_handle(value):
         return Source(SourceType.YTDLP, value)
     if looks_like_url(value):
