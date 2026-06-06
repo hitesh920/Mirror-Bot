@@ -1,13 +1,22 @@
+import logging
 from asyncio import create_subprocess_exec
+from asyncio.subprocess import PIPE
 from pathlib import Path
 from shutil import make_archive, unpack_archive
 
+LOGGER = logging.getLogger(__name__)
+
 
 async def _run(*args: str) -> None:
-    proc = await create_subprocess_exec(*args)
-    code = await proc.wait()
+    proc = await create_subprocess_exec(*args, stdout=PIPE, stderr=PIPE)
+    stdout, stderr = await proc.communicate()
+    code = proc.returncode
     if code != 0:
-        raise RuntimeError(f"Command failed: {' '.join(args)}")
+        detail = stderr.decode(errors="replace").strip() or stdout.decode(
+            errors="replace"
+        ).strip()
+        LOGGER.error("Archive command failed command=%s detail=%s", args[0], detail)
+        raise RuntimeError(f"Archive command failed: {args[0]}")
 
 
 async def zip_path(path: Path, password: str = "") -> Path:
@@ -28,4 +37,3 @@ async def extract_path(path: Path, password: str = "") -> Path:
     else:
         unpack_archive(str(path), str(output_dir))
     return output_dir
-

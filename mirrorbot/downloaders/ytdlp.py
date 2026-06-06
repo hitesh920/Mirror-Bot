@@ -1,9 +1,26 @@
 from asyncio import to_thread
+import logging
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
 from ..models import Task
+
+LOGGER = logging.getLogger(__name__)
+
+
+class YtDlpLogger:
+    def debug(self, _message):
+        pass
+
+    def info(self, message):
+        LOGGER.info("yt-dlp: %s", message)
+
+    def warning(self, message):
+        LOGGER.warning("yt-dlp: %s", message)
+
+    def error(self, message):
+        LOGGER.error("yt-dlp: %s", message)
 
 
 def _format_for(task: Task) -> dict:
@@ -24,12 +41,20 @@ def _format_for(task: Task) -> dict:
 
 async def download_ytdlp(task: Task) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
+    LOGGER.info(
+        "Task %s: starting yt-dlp kind=%s quality=%s",
+        task.short_id(),
+        task.options.ytdlp_kind or "video",
+        task.options.ytdlp_quality or "1080",
+    )
     output = task.work_dir / "%(title).180B.%(ext)s"
     options = {
         "outtmpl": str(output),
         "merge_output_format": "mp4",
         "noplaylist": False,
         "quiet": True,
+        "no_warnings": True,
+        "logger": YtDlpLogger(),
         **_format_for(task),
     }
     if task.options.name:
@@ -49,5 +74,6 @@ async def download_ytdlp(task: Task) -> Path:
             raise RuntimeError("yt-dlp did not create an output file")
         return files[0]
 
-    return await to_thread(run)
-
+    result = await to_thread(run)
+    LOGGER.info("Task %s: yt-dlp download complete path=%s", task.short_id(), result)
+    return result

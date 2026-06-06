@@ -7,5 +7,4 @@ data/
 downloads/
 *.session
 *.session-journal
-bot.log
-
+logs/

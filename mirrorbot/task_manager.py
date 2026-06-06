@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from shutil import rmtree
 from uuid import uuid4
@@ -11,6 +12,8 @@ from .downloaders.ytdlp import download_ytdlp
 from .models import Destination, SourceType, Task, TaskPhase
 from .paths import deliver_to_local
 from .resolvers import resolve_source
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TaskManager:
@@ -33,32 +36,50 @@ class TaskManager:
             work_dir=self.config.download_dir / task_id,
         )
         self.tasks[task_id] = task
+        LOGGER.info(
+            "Task %s: created source=%s destination=%s",
+            task.short_id(),
+            source.type.value,
+            destination.value,
+        )
         return task
 
     async def run_local_task(self, task: Task, telegram_reply=None) -> Task:
         try:
             async with self.download_sem:
                 task.phase = TaskPhase.DOWNLOADING
+                LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 task.source = await resolve_source(task.source)
                 downloaded = await self._download(task, telegram_reply)
 
             task.phase = TaskPhase.PROCESSING
+            LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
             if task.options.extract:
+                LOGGER.info("Task %s: extracting archive", task.short_id())
                 downloaded = await extract_path(downloaded, task.options.extract_password)
             if task.options.zip:
+                LOGGER.info("Task %s: creating zip archive", task.short_id())
                 downloaded = await zip_path(downloaded, task.options.zip_password)
 
             async with self.upload_sem:
                 task.phase = TaskPhase.DELIVERING
+                LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 category = "movies" if task.destination == Destination.LOCAL_MOVIES else "series"
                 task.result_path = deliver_to_local(downloaded, self.config.local_download_root, category)
             task.phase = TaskPhase.COMPLETE
+            LOGGER.info(
+                "Task %s: complete result=%s",
+                task.short_id(),
+                task.result_path,
+            )
         except asyncio.CancelledError:
             task.phase = TaskPhase.CANCELLED
             task.cancelled = True
+            LOGGER.info("Task %s: cancelled", task.short_id())
         except Exception as exc:
             task.phase = TaskPhase.ERROR
             task.error = str(exc)
+            LOGGER.exception("Task %s: failed", task.short_id())
         finally:
             self._cleanup(task.work_dir)
         return task
@@ -77,6 +98,7 @@ class TaskManager:
         if task is None:
             return False
         task.cancelled = True
+        LOGGER.info("Task %s: cancellation requested", task.short_id())
         return True
 
     def get(self, task_id_or_short: str) -> Task | None:
@@ -93,4 +115,3 @@ class TaskManager:
     def _cleanup(self, path: Path) -> None:
         if path.exists():
             rmtree(path, ignore_errors=True)
-

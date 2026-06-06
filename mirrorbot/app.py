@@ -8,17 +8,13 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Config
+from .logging_config import setup_logging
 from .models import Destination, Source, SourceType
 from .parser import parse_add_text
 from .source_detector import detect_source
 from .task_manager import TaskManager
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
-    level=logging.INFO,
-)
-
+setup_logging()
 LOGGER = logging.getLogger(__name__)
 config = Config.load()
 manager = TaskManager(config)
@@ -98,6 +94,14 @@ async def add(_, message: Message):
     link, options = parse_add_text(message.text or "")
     reply = message.reply_to_message
     source = None
+    LOGGER.info(
+        "Received /add message_id=%s reply=%s flags=zip:%s extract:%s custom_name:%s",
+        message.id,
+        bool(reply),
+        options.zip,
+        options.extract,
+        bool(options.name),
+    )
 
     if reply and not link:
         media = reply.document or reply.video or reply.audio or reply.photo or reply.animation
@@ -123,6 +127,7 @@ async def add(_, message: Message):
         await message.reply(planned[source.type])
         return
 
+    LOGGER.info("Prepared /add message_id=%s source=%s", message.id, source.type.value)
     token = str(message.id)
     pending_adds[token] = (source, options, reply)
     if source.type == SourceType.YTDLP:
@@ -173,6 +178,7 @@ async def local_choice(_, query):
     source, options, reply = pending
     destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
     task = manager.create_task(query.from_user.id, query.message.chat.id, query.message.id, source, destination, options)
+    LOGGER.info("Task %s: selected local category=%s", task.short_id(), category)
     await query.message.edit(f"Started local task `{task.short_id()}` for {category}.")
 
     async def runner():
@@ -189,6 +195,7 @@ async def local_choice(_, query):
 
 @app.on_message(filters.command("status") & owner_filter)
 async def status(_, message: Message):
+    LOGGER.info("Received /status active_tasks=%s", len(manager.active_tasks()))
     reply = await message.reply(format_status())
     while manager.active_tasks():
         await asyncio.sleep(config.status_update_interval)
@@ -211,6 +218,7 @@ def format_status() -> str:
 
 @app.on_message(filters.command("stats") & owner_filter)
 async def stats(_, message: Message):
+    LOGGER.info("Received /stats active_tasks=%s", len(manager.active_tasks()))
     disk = psutil.disk_usage(str(config.local_download_root))
     await message.reply(
         "Bot stats:\n"
@@ -228,6 +236,7 @@ async def cancel(_, message: Message):
         await message.reply("Usage: /cancel <task-id>")
         return
     if manager.cancel(parts[1]):
+        LOGGER.info("Received /cancel task=%s", parts[1])
         await message.reply("Cancel requested.")
     else:
         await message.reply("Task not found.")
@@ -235,6 +244,7 @@ async def cancel(_, message: Message):
 
 @app.on_message(filters.command("cancelall") & owner_filter)
 async def cancel_all(_, message: Message):
+    LOGGER.info("Received /cancelall active_tasks=%s", len(manager.active_tasks()))
     for task in manager.active_tasks():
         task.cancelled = True
     await message.reply("Cancel requested for all active tasks.")
@@ -242,6 +252,7 @@ async def cancel_all(_, message: Message):
 
 @app.on_message(filters.command("delete") & owner_filter)
 async def delete_cmd(_, message: Message):
+    LOGGER.info("Received /delete")
     await message.reply(
         "Choose delete target:",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Local", callback_data="delete:local")]]),
@@ -301,18 +312,21 @@ async def delete_item(_, query):
     if root not in target.resolve().parents:
         await query.answer("Invalid path", show_alert=True)
         return
+    LOGGER.info("Deleting local folder path=%s", target)
     rmtree(target, ignore_errors=True)
     await query.message.edit(f"Deleted `{target}`")
 
 
 @app.on_message(filters.command("ping") & owner_filter)
 async def ping(_, message: Message):
+    LOGGER.info("Received /ping")
     await message.reply("pong")
 
 
 @app.on_message(filters.command("log") & owner_filter)
 async def log_cmd(_, message: Message):
-    log_path = Path("bot.log")
+    LOGGER.info("Received /log")
+    log_path = Path(config.log_file)
     if log_path.exists():
         await message.reply_document(str(log_path))
     else:

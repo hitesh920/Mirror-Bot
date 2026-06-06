@@ -35,7 +35,7 @@ class Config:
     ytdlp_audio_format: str = "mp3"
     ytdlp_audio_quality: str = "320"
     zip_compression_level: int = 5
-    log_file: str = "bot.log"
+    log_file: str = "logs/bot.log"
 
     @classmethod
     def load(cls) -> "Config":
@@ -69,4 +69,3 @@ class Config:
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8000),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
         )
-

@@ -8,8 +8,5 @@ services:
       - "8000:8000"
     volumes:
       - ./data/downloads:/app/downloads
-      - /home/ubuntu/downloads:/home/ubuntu/downloads
-      - ./credentials.json:/app/credentials.json
-      - ./token.json:/app/token.json
-      - ./rclone.conf:/app/rclone.conf:ro
-
+      - ./data/logs:/app/logs
+      - ./downloads:/media
