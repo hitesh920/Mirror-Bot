@@ -36,6 +36,7 @@ class Config:
     ytdlp_audio_quality: str = "320"
     zip_compression_level: int = 5
     log_file: str = "logs/bot.log"
+    rclone_config_file: Path = Path("/app/data/rclone/rclone.conf")
 
     @classmethod
     def load(cls) -> "Config":

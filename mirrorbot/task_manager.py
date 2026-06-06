@@ -7,6 +7,8 @@ from uuid import uuid4
 from .archive import extract_path, zip_path
 from .config import Config
 from .downloaders.direct import download_direct
+from .downloaders.gdrive import download_gdrive
+from .downloaders.rclone import download_rclone
 from .downloaders.telegram import download_telegram_file
 from .downloaders.torrent import download_torrent
 from .downloaders.ytdlp import download_ytdlp
@@ -58,6 +60,7 @@ class TaskManager:
         self,
         task: Task,
         telegram_reply=None,
+        telegram_client=None,
         on_selector_ready=None,
         on_selector_done=None,
     ) -> Task:
@@ -67,7 +70,11 @@ class TaskManager:
                 LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 task.source = await resolve_source(task.source)
                 downloaded = await self._download(
-                    task, telegram_reply, on_selector_ready, on_selector_done
+                    task,
+                    telegram_reply,
+                    telegram_client,
+                    on_selector_ready,
+                    on_selector_done,
                 )
 
             task.phase = TaskPhase.PROCESSING
@@ -116,14 +123,15 @@ class TaskManager:
         self,
         task: Task,
         telegram_reply=None,
+        telegram_client=None,
         on_selector_ready=None,
         on_selector_done=None,
     ) -> Path:
         if task.source.type == SourceType.TELEGRAM_FILE:
-            return await download_telegram_file(task, telegram_reply)
+            return await download_telegram_file(task, telegram_reply, telegram_client)
         if task.source.type == SourceType.TORRENT_FILE:
             torrent_file = (
-                await download_telegram_file(task, telegram_reply)
+                await download_telegram_file(task, telegram_reply, telegram_client)
                 if telegram_reply is not None
                 else None
             )
@@ -147,6 +155,10 @@ class TaskManager:
             return await download_direct(task)
         if task.source.type == SourceType.YTDLP:
             return await download_ytdlp(task)
+        if task.source.type == SourceType.GOOGLE_DRIVE:
+            return await download_gdrive(task)
+        if task.source.type == SourceType.RCLONE:
+            return await download_rclone(task, self.config.rclone_config_file)
         raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")
 
     def cancel(self, task_id: str) -> bool:

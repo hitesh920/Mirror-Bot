@@ -1,3 +1,5 @@
+from html import escape
+
 from .models import Task, TaskPhase
 
 
@@ -29,35 +31,40 @@ def human_time(seconds: int) -> str:
 
 
 def progress_bar(progress: float) -> str:
-    filled = min(10, max(0, round(progress * 10)))
+    filled = min(10, max(0, int(progress * 10)))
     return "[" + "#" * filled + "-" * (10 - filled) + "]"
+
+
+def field(label: str, value: str) -> str:
+    return f"<b>{label}:</b> <code>{escape(value)}</code>"
 
 
 def task_status(task: Task) -> str:
     name = (task.name or task.source.type.value).replace("\n", " ")[:70]
-    lines = [f"{task.phase.value.title()} | {task.short_id()}", name]
+    lines = [field(task.phase.value.title(), name)]
     if task.phase == TaskPhase.SELECTING:
-        lines.append("Waiting for file selection")
+        lines.append("<i>Waiting for file selection</i>")
     elif task.phase == TaskPhase.METADATA:
-        lines.append("Waiting for torrent metadata")
+        lines.append("<i>Waiting for metadata</i>")
     elif task.phase == TaskPhase.QUEUED:
-        lines.append("Waiting in download queue")
+        lines.append("<i>Waiting in download queue</i>")
     elif task.phase == TaskPhase.DOWNLOADING:
-        lines.append(f"{progress_bar(task.progress)} {task.progress * 100:.1f}%")
-        transferred = human_size(task.downloaded)
-        total = human_size(task.size) if task.size else "unknown"
-        details = f"{transferred} / {total}"
-        if task.speed:
-            details += f" | {human_size(task.speed)}/s"
-        if task.eta:
-            details += f" | ETA {human_time(task.eta)}"
-        lines.append(details)
+        if task.size:
+            percent = f"{task.progress * 100:.1f}%"
+        else:
+            percent = "--"
+        lines.append(f"<code>{progress_bar(task.progress)}</code> <b>{percent}</b>")
+        lines.append(field("Processed", human_size(task.downloaded)))
+        lines.append(field("Size", human_size(task.size) if task.size else "Unknown"))
+        lines.append(field("Speed", f"{human_size(task.speed)}/s" if task.speed else "-"))
+        lines.append(field("ETA", human_time(task.eta)))
+    lines.append(field("ID", task.short_id()))
     return "\n".join(lines)
 
 
 def format_status(tasks: list[Task]) -> str:
     if not tasks:
         return "No active tasks."
-    sections = [f"Active tasks: {len(tasks)}"]
-    sections.extend(task_status(task) for task in tasks)
+    sections = [task_status(task) for task in tasks]
+    sections.append(field("Active tasks", str(len(tasks))))
     return "\n\n".join(sections)

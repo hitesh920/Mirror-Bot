@@ -9,4 +9,5 @@ services:
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
+      - ./data/rclone:/app/data/rclone
       - ./downloads:/media

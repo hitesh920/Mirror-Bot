@@ -8,7 +8,6 @@ from typing import Any
 class SourceType(str, Enum):
     DIRECT_URL = "direct_url"
     TELEGRAM_FILE = "telegram_file"
-    TELEGRAM_LINK = "telegram_link"
     MAGNET = "magnet"
     TORRENT_FILE = "torrent_file"
     YTDLP = "ytdlp"

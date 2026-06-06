@@ -1,10 +1,12 @@
 import asyncio
 import logging
+from collections import defaultdict
 from pathlib import Path
 from shutil import rmtree
 
 import psutil
 from pyrogram import Client, filters
+from pyrogram.enums import ParseMode
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Config
@@ -24,6 +26,7 @@ delete_targets: dict[str, Path] = {}
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
+status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 app = Client(
     "mirrorbot",
@@ -46,30 +49,47 @@ def chat_tasks(chat_id: int):
 
 
 async def update_status_message(chat_id: int) -> None:
-    tasks = chat_tasks(chat_id)
-    if not tasks:
-        message = status_messages.pop(chat_id, None)
-        status_text.pop(chat_id, None)
-        if message:
+    async with status_locks[chat_id]:
+        tasks = chat_tasks(chat_id)
+        if not tasks:
+            message = status_messages.pop(chat_id, None)
+            status_text.pop(chat_id, None)
+            if message:
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+            return
+
+        text = format_status(tasks)
+        message = status_messages.get(chat_id)
+        if message is None:
+            status_messages[chat_id] = await app.send_message(
+                chat_id, text, parse_mode=ParseMode.HTML, disable_notification=True
+            )
+            status_text[chat_id] = text
+        elif status_text.get(chat_id) != text:
             try:
-                await message.delete()
+                await message.edit_text(text, parse_mode=ParseMode.HTML)
+                status_text[chat_id] = text
+            except Exception:
+                LOGGER.exception("Could not update status message chat=%s", chat_id)
+
+
+async def replace_status_message(chat_id: int) -> None:
+    async with status_locks[chat_id]:
+        text = format_status(chat_tasks(chat_id))
+        new_message = await app.send_message(
+            chat_id, text, parse_mode=ParseMode.HTML, disable_notification=True
+        )
+        old_message = status_messages.get(chat_id)
+        status_messages[chat_id] = new_message
+        status_text[chat_id] = text
+        if old_message:
+            try:
+                await old_message.delete()
             except Exception:
                 pass
-        return
-
-    text = format_status(tasks)
-    message = status_messages.get(chat_id)
-    if message is None:
-        status_messages[chat_id] = await app.send_message(
-            chat_id, text, parse_mode=None, disable_notification=True
-        )
-        status_text[chat_id] = text
-    elif status_text.get(chat_id) != text:
-        try:
-            await message.edit_text(text, parse_mode=None)
-            status_text[chat_id] = text
-        except Exception:
-            LOGGER.exception("Could not update status message chat=%s", chat_id)
 
 
 async def status_loop(chat_id: int) -> None:
@@ -83,7 +103,10 @@ async def status_loop(chat_id: int) -> None:
 
 
 async def ensure_live_status(chat_id: int) -> None:
-    await update_status_message(chat_id)
+    try:
+        await update_status_message(chat_id)
+    except Exception:
+        LOGGER.exception("Could not create live status message chat=%s", chat_id)
     job = status_jobs.get(chat_id)
     if job is None or job.done():
         status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
@@ -174,13 +197,8 @@ async def add(_, message: Message):
             return
         source = detect_source(link)
 
-    if source.type in {SourceType.UNSUPPORTED, SourceType.GOOGLE_DRIVE, SourceType.RCLONE}:
-        planned = {
-            SourceType.GOOGLE_DRIVE: "Google Drive download support is planned for the next build pass.",
-            SourceType.RCLONE: "rclone download support is planned for the next build pass.",
-            SourceType.UNSUPPORTED: "Unsupported source.",
-        }
-        await message.reply(planned[source.type])
+    if source.type == SourceType.UNSUPPORTED:
+        await message.reply("Unsupported source.")
         return
 
     LOGGER.info("Prepared /add message_id=%s source=%s", message.id, source.type.value)
@@ -263,7 +281,13 @@ async def local_choice(_, query):
             )
             await ensure_live_status(task.chat_id)
 
-        await manager.run_local_task(task, reply, selector_ready, selector_done)
+        await manager.run_local_task(
+            task,
+            telegram_reply=reply,
+            telegram_client=app,
+            on_selector_ready=selector_ready,
+            on_selector_done=selector_done,
+        )
         if task.phase.value == "complete":
             await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
         elif task.error:
@@ -281,7 +305,14 @@ async def status(_, message: Message):
     if not chat_tasks(message.chat.id):
         await message.reply("No active tasks.")
         return
-    await ensure_live_status(message.chat.id)
+    await replace_status_message(message.chat.id)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    job = status_jobs.get(message.chat.id)
+    if job is None or job.done():
+        status_jobs[message.chat.id] = asyncio.create_task(status_loop(message.chat.id))
 
 
 @app.on_message(filters.command("stats") & owner_filter)

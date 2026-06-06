@@ -51,7 +51,7 @@ def detect_source(value: str, filename: str = "") -> Source:
     if is_rclone_path(value):
         return Source(SourceType.RCLONE, value)
     if is_telegram_url(value):
-        return Source(SourceType.TELEGRAM_LINK, value)
+        return Source(SourceType.UNSUPPORTED, value)
     if is_resolvable_url(value):
         return Source(SourceType.DIRECT_URL, value)
     if yt_dlp_can_handle(value):

@@ -1,6 +1,7 @@
 aiofiles
 aiohttp
 curl_cffi
+gdown
 aioshutil
 python-dotenv
 kurigram
