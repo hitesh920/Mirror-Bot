@@ -1,0 +1,9 @@
+aiofiles
+aiohttp
+aioshutil
+python-dotenv
+kurigram
+tgcrypto
+yt-dlp[default]
+psutil
+

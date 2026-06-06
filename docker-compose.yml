@@ -1,0 +1,15 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/downloads:/app/downloads
+      - /home/ubuntu/downloads:/home/ubuntu/downloads
+      - ./credentials.json:/app/credentials.json
+      - ./token.json:/app/token.json
+      - ./rclone.conf:/app/rclone.conf:ro
+
