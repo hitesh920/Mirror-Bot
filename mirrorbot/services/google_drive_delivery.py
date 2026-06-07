@@ -89,7 +89,7 @@ def delete_drive_item(config: Config, file_id: str) -> dict:
     return item
 
 
-def search_drive_items(config: Config, query: str, limit: int = 10) -> list[dict]:
+def search_drive_items(config: Config, query: str, limit: int = 100) -> list[dict]:
     safe_query = escape_drive_query(query.strip())
     if not safe_query:
         return []
@@ -101,7 +101,7 @@ def search_drive_items(config: Config, query: str, limit: int = 10) -> list[dict
             includeItemsFromAllDrives=True,
             q=f"name contains '{safe_query}' and trashed = false",
             spaces="drive",
-            pageSize=max(1, min(limit, 20)),
+            pageSize=max(1, min(limit, 100)),
             fields="files(id,name,mimeType,size,webViewLink)",
             orderBy="folder,name",
         )

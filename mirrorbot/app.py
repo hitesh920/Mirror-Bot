@@ -20,11 +20,11 @@ from .services.status import format_status, human_size
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
     delete_drive_item,
-    drive_item_link,
     drive_storage_quota,
     load_credentials,
     search_drive_items,
 )
+from .services.drive_search_pages import DriveSearchPages
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -35,6 +35,11 @@ pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
 delete_targets: dict[str, Path] = {}
 pending_drive_delete_chats: set[int] = set()
+drive_search_pages = DriveSearchPages(
+    config.public_base_url,
+    config.torrent_selection_port + 1,
+    300,
+)
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
@@ -764,41 +769,35 @@ async def search_cmd(_, message: Message):
         return
     query_text = parts[1].strip()
     LOGGER.info("Received /search query=%s", query_text)
+    progress = await message.reply("Searching Google Drive...")
     try:
-        results = await asyncio.to_thread(search_drive_items, config, query_text, 10)
+        results = await asyncio.to_thread(search_drive_items, config, query_text, 100)
     except Exception as exc:
         LOGGER.exception("Google Drive search failed")
-        await message.reply(
+        await progress.edit_text(
             f"Google Drive search failed:\n{exc}",
             parse_mode=ParseMode.DISABLED,
         )
         return
     if not results:
-        await message.reply("No Google Drive results found.")
+        await progress.edit_text("No Google Drive results found.")
         return
-
-    lines = [f"<b>Google Drive search:</b> <code>{escape(query_text[:80])}</code>"]
-    buttons = []
-    for index, item in enumerate(results, 1):
-        name = escape(item.get("name", "Untitled")[:80])
-        kind = "folder" if item.get("mimeType") == "application/vnd.google-apps.folder" else "file"
-        size = human_size(int(item.get("size") or 0)) if item.get("size") else "-"
-        lines.append(
-            f"<b>{index}.</b> <code>{name}</code> "
-            f"<code>{kind}</code> <code>{size}</code>"
+    try:
+        url = await drive_search_pages.create(query_text, results)
+    except Exception as exc:
+        LOGGER.exception("Could not create Google Drive search page")
+        await progress.edit_text(
+            f"Could not create search page:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
         )
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    f"Open {index}",
-                    url=drive_item_link(item),
-                )
-            ]
-        )
-    await message.reply(
-        "\n".join(lines),
+        return
+    await progress.edit_text(
+        f"<b>Found:</b> <code>{len(results)}</code> result(s)\n"
+        "The search page expires in <code>5 minutes</code>.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(buttons),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Click here to view results", url=url)]]
+        ),
         disable_web_page_preview=True,
     )
 
