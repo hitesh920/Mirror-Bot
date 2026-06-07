@@ -52,10 +52,101 @@ def drive_storage_quota(config: Config) -> dict:
     return about.get("storageQuota", {})
 
 
+def escape_drive_query(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def drive_link(file_id: str, is_folder: bool = False) -> str:
     if is_folder:
         return f"https://drive.google.com/drive/folders/{file_id}"
     return f"https://drive.google.com/uc?id={file_id}&export=download"
+
+
+def drive_item_link(item: dict) -> str:
+    link = item.get("webViewLink")
+    if link:
+        return link
+    return drive_link(item["id"], item.get("mimeType") == FOLDER_MIME_TYPE)
+
+
+def drive_item_info(config: Config, file_id: str) -> dict:
+    return (
+        drive_service(config)
+        .files()
+        .get(
+            fileId=file_id,
+            supportsAllDrives=True,
+            fields="id,name,mimeType,size,webViewLink",
+        )
+        .execute()
+    )
+
+
+def delete_drive_item(config: Config, file_id: str) -> dict:
+    service = drive_service(config)
+    item = drive_item_info(config, file_id)
+    service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    return item
+
+
+def search_drive_items(config: Config, query: str, limit: int = 10) -> list[dict]:
+    safe_query = escape_drive_query(query.strip())
+    if not safe_query:
+        return []
+    response = (
+        drive_service(config)
+        .files()
+        .list(
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            q=f"name contains '{safe_query}' and trashed = false",
+            spaces="drive",
+            pageSize=max(1, min(limit, 20)),
+            fields="files(id,name,mimeType,size,webViewLink)",
+            orderBy="folder,name",
+        )
+        .execute()
+    )
+    return response.get("files", [])
+
+
+def unique_drive_name(service, parent_id: str, name: str) -> str:
+    safe_name = name.strip() or "Mirror-Bot"
+    escaped_parent = escape_drive_query(parent_id)
+    existing = set()
+    page_token = None
+    while True:
+        response = (
+            service.files()
+            .list(
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                q=(
+                    f"'{escaped_parent}' in parents and trashed = false"
+                ),
+                spaces="drive",
+                pageSize=100,
+                fields="nextPageToken,files(name)",
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        existing.update(item["name"] for item in response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if page_token is None:
+            break
+    if safe_name not in existing:
+        return safe_name
+
+    path = Path(safe_name)
+    stem = path.stem if path.suffix else safe_name
+    suffix = path.suffix
+    index = 1
+    while True:
+        candidate = f"{stem} ({index}){suffix}"
+        if candidate not in existing:
+            return candidate
+        index += 1
 
 
 class GoogleDriveUploader:
@@ -70,8 +161,9 @@ class GoogleDriveUploader:
         self.started = monotonic()
 
     def create_folder(self, name: str, parent_id: str) -> str:
+        upload_name = unique_drive_name(self.service, parent_id, name)
         metadata = {
-            "name": name,
+            "name": upload_name,
             "mimeType": FOLDER_MIME_TYPE,
             "description": "Uploaded by Mirror-Bot",
         }
@@ -126,13 +218,19 @@ class GoogleDriveUploader:
 
         try:
             if self.path.is_file():
-                file_id = await self.upload_file(
-                    self.path,
-                    self.path.name,
+                upload_name = await asyncio.to_thread(
+                    unique_drive_name,
+                    self.service,
                     self.config.google_drive_folder_id,
                     self.path.name,
                 )
-                self.task.result_name = self.path.name
+                file_id = await self.upload_file(
+                    self.path,
+                    upload_name,
+                    self.config.google_drive_folder_id,
+                    self.path.name,
+                )
+                self.task.result_name = upload_name
                 self.task.result_files.append(self.path.name)
                 self.task.result_links.append(drive_link(file_id))
             else:
@@ -142,8 +240,13 @@ class GoogleDriveUploader:
                     root_name,
                     self.config.google_drive_folder_id,
                 )
-                self.task.result_name = root_name
-                self.task.result_folders.append(root_name)
+                uploaded_root = await asyncio.to_thread(
+                    drive_item_info,
+                    self.config,
+                    root_id,
+                )
+                self.task.result_name = uploaded_root["name"]
+                self.task.result_folders.append(uploaded_root["name"])
                 self.task.result_links.append(drive_link(root_id, is_folder=True))
                 await self.upload_folder(self.path, root_id)
 

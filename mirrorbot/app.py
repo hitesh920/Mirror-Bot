@@ -15,9 +15,16 @@ from .core.logging_config import setup_logging
 from .core.models import Destination, Source, SourceType, TaskPhase
 from .core.parser import parse_add_text
 from .core.source_detector import detect_source
+from .downloaders.gdrive import drive_id_from_url
 from .services.status import format_status, human_size
 from .services.task_manager import TaskManager
-from .services.google_drive_delivery import drive_storage_quota, load_credentials
+from .services.google_drive_delivery import (
+    delete_drive_item,
+    drive_item_link,
+    drive_storage_quota,
+    load_credentials,
+    search_drive_items,
+)
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -27,6 +34,7 @@ pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
 delete_targets: dict[str, Path] = {}
+pending_drive_delete_chats: set[int] = set()
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
@@ -311,7 +319,7 @@ async def start(_, message: Message):
 async def help_cmd(_, message: Message):
     await message.reply(
         "/add <link> [-z|-zp pass|-e|-ep pass|-n name]\n"
-        "/status\n/stats\n/gdstats\n/cancel <task-id>\n/cancelall\n/delete"
+        "/status\n/stats\n/gdstats\n/search <name>\n/cancel <task-id>\n/cancelall\n/delete"
     )
 
 
@@ -664,10 +672,30 @@ async def cancel_selector(_, query):
 @app.on_message(filters.command("delete") & owner_filter)
 async def delete_cmd(_, message: Message):
     LOGGER.info("Received /delete")
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1:
+        await delete_google_drive_link(message, parts[1].strip())
+        return
     await message.reply(
         "Choose delete target:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Local", callback_data="delete:local")]]),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Local", callback_data="delete:local"),
+                    InlineKeyboardButton("Google Drive", callback_data="delete:gdrive"),
+                ]
+            ]
+        ),
     )
+
+
+@app.on_callback_query(filters.regex(r"^delete:gdrive$"))
+async def delete_gdrive(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    pending_drive_delete_chats.add(query.message.chat.id)
+    await query.message.edit("Send the Google Drive link or file ID to delete.")
 
 
 @app.on_callback_query(filters.regex(r"^delete:local$"))
@@ -726,6 +754,88 @@ async def delete_item(_, query):
     LOGGER.info("Deleting local folder path=%s", target)
     rmtree(target, ignore_errors=True)
     await query.message.edit(f"Deleted `{target}`")
+
+
+@app.on_message(filters.command("search") & owner_filter)
+async def search_cmd(_, message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply("Usage: /search <name>")
+        return
+    query_text = parts[1].strip()
+    LOGGER.info("Received /search query=%s", query_text)
+    try:
+        results = await asyncio.to_thread(search_drive_items, config, query_text, 10)
+    except Exception as exc:
+        LOGGER.exception("Google Drive search failed")
+        await message.reply(
+            f"Google Drive search failed:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    if not results:
+        await message.reply("No Google Drive results found.")
+        return
+
+    lines = [f"<b>Google Drive search:</b> <code>{escape(query_text[:80])}</code>"]
+    buttons = []
+    for index, item in enumerate(results, 1):
+        name = escape(item.get("name", "Untitled")[:80])
+        kind = "folder" if item.get("mimeType") == "application/vnd.google-apps.folder" else "file"
+        size = human_size(int(item.get("size") or 0)) if item.get("size") else "-"
+        lines.append(
+            f"<b>{index}.</b> <code>{name}</code> "
+            f"<code>{kind}</code> <code>{size}</code>"
+        )
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"Open {index}",
+                    url=drive_item_link(item),
+                )
+            ]
+        )
+    await message.reply(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        disable_web_page_preview=True,
+    )
+
+
+@app.on_message(filters.text & owner_filter)
+async def pending_drive_delete(_, message: Message):
+    if message.chat.id not in pending_drive_delete_chats:
+        return
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+    pending_drive_delete_chats.discard(message.chat.id)
+    await delete_google_drive_link(message, text)
+
+
+async def delete_google_drive_link(message: Message, link: str) -> None:
+    try:
+        file_id = drive_id_from_url(link)
+    except ValueError as exc:
+        await message.reply(str(exc))
+        return
+    try:
+        item = await asyncio.to_thread(delete_drive_item, config, file_id)
+    except Exception as exc:
+        LOGGER.exception("Google Drive delete failed")
+        await message.reply(
+            f"Google Drive delete failed:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    LOGGER.info("Deleted Google Drive item id=%s name=%s", file_id, item.get("name"))
+    await message.reply(
+        "<b>Google Drive item deleted</b>\n"
+        f"<b>Name:</b> <code>{escape(item.get('name', 'Untitled'))}</code>\n"
+        f"<b>ID:</b> <code>{escape(file_id)}</code>",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @app.on_message(filters.command("ping") & owner_filter)
