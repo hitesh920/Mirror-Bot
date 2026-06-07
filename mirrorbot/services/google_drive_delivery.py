@@ -89,12 +89,66 @@ def delete_drive_item(config: Config, file_id: str) -> dict:
     return item
 
 
+def resolve_drive_shortcut(item: dict) -> tuple[str, str]:
+    shortcut = item.get("shortcutDetails")
+    if shortcut:
+        return shortcut["targetId"], shortcut["targetMimeType"]
+    return item["id"], item.get("mimeType", "")
+
+
+def drive_folder_children(service, folder_id: str) -> list[dict]:
+    page_token = None
+    files = []
+    while True:
+        response = (
+            service.files()
+            .list(
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                q=f"'{escape_drive_query(folder_id)}' in parents and trashed = false",
+                spaces="drive",
+                pageSize=200,
+                fields="nextPageToken,files(id,name,mimeType,size,shortcutDetails)",
+                orderBy="folder,name",
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        files.extend(response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if page_token is None:
+            return files
+
+
+def drive_folder_size(service, folder_id: str) -> int:
+    total = 0
+    for item in drive_folder_children(service, folder_id):
+        file_id, mime_type = resolve_drive_shortcut(item)
+        if mime_type == FOLDER_MIME_TYPE:
+            total += drive_folder_size(service, file_id)
+        elif item.get("shortcutDetails"):
+            meta = (
+                service.files()
+                .get(
+                    fileId=file_id,
+                    supportsAllDrives=True,
+                    fields="size",
+                )
+                .execute()
+            )
+            total += int(meta.get("size") or 0)
+        else:
+            total += int(item.get("size") or 0)
+    return total
+
+
 def search_drive_items(config: Config, query: str, limit: int = 100) -> list[dict]:
     safe_query = escape_drive_query(query.strip())
     if not safe_query:
         return []
+    service = drive_service(config)
     response = (
-        drive_service(config)
+        service
         .files()
         .list(
             supportsAllDrives=True,
@@ -102,12 +156,27 @@ def search_drive_items(config: Config, query: str, limit: int = 100) -> list[dic
             q=f"name contains '{safe_query}' and trashed = false",
             spaces="drive",
             pageSize=max(1, min(limit, 100)),
-            fields="files(id,name,mimeType,size,webViewLink)",
+            fields="files(id,name,mimeType,size,webViewLink,shortcutDetails)",
             orderBy="folder,name",
         )
         .execute()
     )
-    return response.get("files", [])
+    results = response.get("files", [])
+    for item in results:
+        file_id, mime_type = resolve_drive_shortcut(item)
+        if mime_type != FOLDER_MIME_TYPE:
+            continue
+        try:
+            item["size"] = str(drive_folder_size(service, file_id))
+            item["sizeCalculated"] = True
+        except Exception:
+            LOGGER.debug(
+                "Could not calculate Google Drive folder size id=%s",
+                file_id,
+                exc_info=True,
+            )
+            item["sizeCalculated"] = False
+    return results
 
 
 def unique_drive_name(service, parent_id: str, name: str) -> str:

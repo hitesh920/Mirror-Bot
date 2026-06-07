@@ -115,7 +115,7 @@ def render_search_page(query: str, results: list[dict]) -> str:
         name = html.escape(item.get("name") or "Untitled")
         mime_type = item.get("mimeType", "")
         kind = "Folder" if mime_type == FOLDER_MIME_TYPE else "File"
-        size = human_size(int(item.get("size") or 0)) if item.get("size") else "-"
+        size = human_size(int(item.get("size") or 0)) if item.get("size") is not None else "-"
         link = html.escape(drive_item_link(item), quote=True)
         rows.append(
             "<tr>"
