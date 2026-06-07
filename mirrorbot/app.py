@@ -9,6 +9,7 @@ from shutil import rmtree
 import psutil
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
+from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .core.config import Config
@@ -1056,12 +1057,15 @@ async def jellyfin_action(_, query):
         )
         return
     await query.answer(label)
-    await query.message.edit_text(
-        format_jellyfin_status(status, label),
-        parse_mode=ParseMode.HTML,
-        reply_markup=jellyfin_buttons(),
-        disable_web_page_preview=True,
-    )
+    try:
+        await query.message.edit_text(
+            format_jellyfin_status(status, label),
+            parse_mode=ParseMode.HTML,
+            reply_markup=jellyfin_buttons(),
+            disable_web_page_preview=True,
+        )
+    except MessageNotModified:
+        LOGGER.debug("Jellyfin %s produced unchanged status message", action)
 
 
 def ensure_jellyfin_running() -> None:
