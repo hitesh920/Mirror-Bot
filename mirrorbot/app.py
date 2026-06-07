@@ -49,6 +49,36 @@ status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 PENDING_ADD_TIMEOUT = 120
+ADD_USAGE = (
+    "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
+    "You can also reply to a Telegram file or link with <code>/add</code>."
+)
+HELP_TEXT = "\n".join(
+    [
+        "<b>Mirror-Bot commands</b>",
+        "",
+        "<b>Add</b>",
+        "<code>/add &lt;link&gt;</code> - add a link",
+        "<code>/add</code> - use the replied file/link",
+        "<code>-z</code> zip, <code>-zp pass</code> password zip",
+        "<code>-e</code> extract, <code>-ep pass</code> password extract",
+        "<code>-n name</code> custom task name",
+        "",
+        "<b>Status</b>",
+        "<code>/status</code> - live task status",
+        "<code>/stats</code> - bot/server stats",
+        "<code>/gdstats</code> - Google Drive auth and quota",
+        "",
+        "<b>Manage</b>",
+        "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
+        "<code>/cancelall</code> - cancel all active tasks",
+        "<code>/delete</code> - delete Local or Google Drive items",
+        "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
+        "",
+        "<b>Google Drive</b>",
+        "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
+    ]
+)
 
 app = Client(
     "mirrorbot",
@@ -356,15 +386,12 @@ def completion_message(task) -> str:
 
 @app.on_message(filters.command("start") & owner_filter)
 async def start(_, message: Message):
-    await message.reply("Bot is online. Use /add to start a task.")
+    await message.reply("Bot is online. Use /help to see commands.")
 
 
 @app.on_message(filters.command("help") & owner_filter)
 async def help_cmd(_, message: Message):
-    await message.reply(
-        "/add <link> [-z|-zp pass|-e|-ep pass|-n name]\n"
-        "/status\n/stats\n/gdstats\n/search <name>\n/cancel <task-id>\n/cancelall\n/delete"
-    )
+    await message.reply(HELP_TEXT, parse_mode=ParseMode.HTML)
 
 
 @app.on_message(filters.command("add") & owner_filter)
@@ -372,7 +399,10 @@ async def add(_, message: Message):
     try:
         link, options = parse_add_text(message.text or "")
     except ValueError as exc:
-        await message.reply(str(exc))
+        await message.reply(
+            f"{escape(str(exc))}\n\n{ADD_USAGE}",
+            parse_mode=ParseMode.HTML,
+        )
         return
     reply = message.reply_to_message
     source = None
@@ -400,12 +430,15 @@ async def add(_, message: Message):
 
     if source is None:
         if not link:
-            await message.reply("Send a link with /add or reply to a Telegram file/link.")
+            await message.reply(ADD_USAGE, parse_mode=ParseMode.HTML)
             return
         source = detect_source(link)
 
     if source.type == SourceType.UNSUPPORTED:
-        await message.reply("Unsupported source.")
+        await message.reply(
+            "Unsupported source. Send a supported URL, magnet, Google Drive link, "
+            "or reply to a Telegram file/link."
+        )
         return
 
     LOGGER.info("Prepared /add message_id=%s source=%s", message.id, source.type.value)
@@ -681,14 +714,14 @@ async def gdstats(_, message: Message):
 async def cancel(_, message: Message):
     parts = (message.text or "").split()
     if len(parts) < 2:
-        await message.reply("Usage: /cancel <task-id>")
+        await message.reply("Usage: <code>/cancel &lt;task-id&gt;</code>", parse_mode=ParseMode.HTML)
         return
     if manager.cancel(parts[1]):
         LOGGER.info("Received /cancel task=%s", parts[1])
         await manager.close_active_selector(parts[1])
         await message.reply("Cancel requested.")
     else:
-        await message.reply("Task not found.")
+        await message.reply("Task not found or already finished.")
 
 
 @app.on_message(filters.command("cancelall") & owner_filter)
@@ -804,7 +837,7 @@ async def delete_item(_, query):
 async def search_cmd(_, message: Message):
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
-        await message.reply("Usage: /search <name>")
+        await message.reply("Usage: <code>/search &lt;name&gt;</code>", parse_mode=ParseMode.HTML)
         return
     query_text = parts[1].strip()
     LOGGER.info("Received /search query=%s", query_text)

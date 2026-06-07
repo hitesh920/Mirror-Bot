@@ -5,7 +5,9 @@ services:
     env_file:
       - .env
     ports:
+      # Torrent selector
       - "8000:8000"
+      # Google Drive search pages
       - "8001:8001"
     volumes:
       - ./data/downloads:/app/downloads

@@ -119,6 +119,7 @@ class TorrentSelector:
     async def cancel(self, torrent_hash: str) -> None:
         selection = self.selection
         if selection and selection.torrent_hash == torrent_hash:
+            selection.cancelled = True
             selection.submitted.set()
             try:
                 await asyncio.wait_for(selection.closed.wait(), timeout=5)
