@@ -15,3 +15,16 @@ services:
       - ./credentials.json:/app/data/google/credentials.json:ro
       - ./token.pickle:/app/data/google/token.pickle
       - ./downloads:/media
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: mirror-bot-jellyfin
+    restart: unless-stopped
+    ports:
+      - "${JELLYFIN_PORT:-8096}:8096"
+    volumes:
+      - ${JELLYFIN_CONFIG_DIR:-./data/jellyfin/config}:/config
+      - ${JELLYFIN_CACHE_DIR:-./data/jellyfin/cache}:/cache
+      - ${JELLYFIN_MEDIA_DIR:-./downloads}:/media:ro
+    environment:
+      - TZ=${TZ:-Asia/Kolkata}
