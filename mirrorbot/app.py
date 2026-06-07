@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
+from html import escape
 from pathlib import Path
 from shutil import rmtree
 
@@ -46,7 +47,11 @@ owner_filter = filters.create(owner_only)
 
 
 def chat_tasks(chat_id: int):
-    return [task for task in manager.active_tasks() if task.chat_id == chat_id]
+    return [
+        task
+        for task in manager.active_tasks()
+        if task.chat_id == chat_id and task.status_visible
+    ]
 
 
 async def update_status_message(chat_id: int) -> None:
@@ -166,6 +171,45 @@ def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     )
 
 
+def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
+    if not items:
+        return ""
+    limit = 20
+    lines = [f"<b>{escape(title)}:</b>"]
+    for index, name in enumerate(items[:limit]):
+        safe_name = escape(name[:120])
+        if links and index < len(links) and links[index]:
+            lines.append(f'<a href="{escape(links[index], quote=True)}">Open</a> - <code>{safe_name}</code>')
+        else:
+            lines.append(f"<code>{safe_name}</code>")
+    if len(items) > limit:
+        lines.append(f"<i>...and {len(items) - limit} more</i>")
+    return "\n".join(lines)
+
+
+def completion_message(task) -> str:
+    name = escape(task.result_name or task.name or task.source.type.value)
+    if task.destination == Destination.TELEGRAM:
+        sections = [
+            "<b>Task complete</b>",
+            f"<b>Name:</b> <code>{name}</code>",
+            "<b>Uploaded to:</b> <code>Telegram</code>",
+            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            result_list("Uploaded files", task.result_files, task.result_links),
+        ]
+    else:
+        sections = [
+            "<b>Task complete</b>",
+            f"<b>Name:</b> <code>{name}</code>",
+            f"<b>Uploaded to:</b> <code>{escape(str(task.result_path or 'Local'))}</code>",
+            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
+            result_list("Files", task.result_files),
+            result_list("Folders", task.result_folders),
+        ]
+    return "\n".join(section for section in sections if section)
+
+
 @app.on_message(filters.command("start") & owner_filter)
 async def start(_, message: Message):
     await message.reply("Bot is online. Use /add to start a task.")
@@ -267,10 +311,18 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
         await query.answer("Expired task", show_alert=True)
         return
     source, options, reply = pending
-    task = manager.create_task(query.from_user.id, query.message.chat.id, query.message.id, source, destination, options)
+    task = manager.create_task(
+        query.from_user.id,
+        query.message.chat.id,
+        int(token),
+        source,
+        destination,
+        options,
+    )
     LOGGER.info("Task %s: selected destination=%s", task.short_id(), destination.value)
     is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
     if is_torrent:
+        task.status_visible = False
         await query.message.edit("Collecting torrent metadata...")
 
     async def runner():
@@ -283,7 +335,20 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
                 task.chat_id,
                 "Torrent files are ready for review.",
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("Click here to review files", url=selected_task.selection_url)]]
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Click here to review files",
+                                url=selected_task.selection_url,
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "Cancel",
+                                callback_data=f"selcancel:{selected_task.short_id()}",
+                            )
+                        ],
+                    ]
                 ),
                 disable_web_page_preview=True,
             )
@@ -294,7 +359,13 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             except Exception:
                 pass
             if task.phase == TaskPhase.DOWNLOADING:
-                await send_live_status(task.chat_id)
+                task.status_visible = True
+                await replace_status_message(task.chat_id)
+                job = status_jobs.get(task.chat_id)
+                if job is None or job.done():
+                    status_jobs[task.chat_id] = asyncio.create_task(
+                        status_loop(task.chat_id)
+                    )
 
         await manager.run_task(
             task,
@@ -309,18 +380,41 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             except Exception:
                 pass
         if task.phase.value == "complete":
-            if task.destination != Destination.TELEGRAM:
-                await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
+            await app.send_message(
+                task.chat_id,
+                completion_message(task),
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=task.message_id,
+                disable_web_page_preview=True,
+            )
         elif task.error:
-            await app.send_message(task.chat_id, f"Task `{task.short_id()}` failed:\n`{task.error}`")
+            await app.send_message(
+                task.chat_id,
+                f"Task {task.short_id()} failed:\n{task.error}",
+                parse_mode=ParseMode.DISABLED,
+                reply_to_message_id=task.message_id,
+            )
         else:
-            await app.send_message(task.chat_id, f"Task `{task.short_id()}` {task.phase.value}.")
+            await app.send_message(
+                task.chat_id,
+                f"Task {task.short_id()} {task.phase.value}.",
+                parse_mode=ParseMode.DISABLED,
+                reply_to_message_id=task.message_id,
+            )
         await update_status_message(task.chat_id)
 
     asyncio.create_task(runner())
     if not is_torrent:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+    if not is_torrent:
         await asyncio.sleep(0)
-        await start_live_status(task.chat_id, query.message)
+        await replace_status_message(task.chat_id)
+        job = status_jobs.get(task.chat_id)
+        if job is None or job.done():
+            status_jobs[task.chat_id] = asyncio.create_task(status_loop(task.chat_id))
 
 
 @app.on_callback_query(filters.regex(r"^local:"))
@@ -370,6 +464,7 @@ async def cancel(_, message: Message):
         return
     if manager.cancel(parts[1]):
         LOGGER.info("Received /cancel task=%s", parts[1])
+        await manager.close_active_selector(parts[1])
         await message.reply("Cancel requested.")
     else:
         await message.reply("Task not found.")
@@ -380,7 +475,21 @@ async def cancel_all(_, message: Message):
     LOGGER.info("Received /cancelall active_tasks=%s", len(manager.active_tasks()))
     for task in manager.active_tasks():
         manager.cancel(task.id)
+    await manager.close_active_selector()
     await message.reply("Cancel requested for all active tasks.")
+
+
+@app.on_callback_query(filters.regex(r"^selcancel:"))
+async def cancel_selector(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    _, task_id = query.data.split(":", 1)
+    if not manager.cancel(task_id):
+        await query.answer("Task is no longer active", show_alert=True)
+        return
+    await query.answer("Cancel requested")
+    await manager.close_active_selector(task_id)
 
 
 @app.on_message(filters.command("delete") & owner_filter)
@@ -467,8 +576,26 @@ async def log_cmd(_, message: Message):
 
 
 def run():
-    config.download_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_abandoned_downloads()
     (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)
     (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
     LOGGER.info("Starting bot")
     app.run()
+
+
+def cleanup_abandoned_downloads() -> None:
+    root = config.download_dir.resolve()
+    local_root = config.local_download_root.resolve()
+    if root == Path(root.anchor) or root == local_root or root in local_root.parents:
+        raise RuntimeError(f"Unsafe temporary download directory: {root}")
+
+    root.mkdir(parents=True, exist_ok=True)
+    removed = 0
+    for item in root.iterdir():
+        if item.is_symlink() or item.is_file():
+            item.unlink(missing_ok=True)
+        elif item.is_dir():
+            rmtree(item)
+        removed += 1
+    if removed:
+        LOGGER.info("Removed %s abandoned download workspace(s)", removed)

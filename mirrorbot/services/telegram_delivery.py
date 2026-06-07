@@ -13,6 +13,10 @@ from ..core.models import Task
 from ..downloaders.process import path_size
 
 LOGGER = logging.getLogger(__name__)
+VIDEO_EXTENSIONS = {".mkv", ".m4v", ".mov", ".mp4", ".webm"}
+AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
+PHOTO_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+ANIMATION_EXTENSIONS = {".gif"}
 
 
 def upload_files(path: Path) -> list[tuple[Path, str]]:
@@ -23,6 +27,55 @@ def upload_files(path: Path) -> list[tuple[Path, str]]:
         for item in sorted(path.rglob("*"))
         if item.is_file()
     ]
+
+
+def telegram_media_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
+    if suffix in PHOTO_EXTENSIONS:
+        return "photo"
+    if suffix in ANIMATION_EXTENSIONS:
+        return "animation"
+    return "document"
+
+
+async def send_telegram_file(
+    client: Client,
+    task: Task,
+    item: Path,
+    caption: str,
+    progress,
+    media_type: str,
+):
+    common = {
+        "chat_id": task.chat_id,
+        "caption": caption,
+        "parse_mode": ParseMode.DISABLED,
+        "disable_notification": True,
+        "progress": progress,
+        "reply_to_message_id": task.message_id,
+    }
+    if media_type == "video":
+        return await client.send_video(
+            video=str(item),
+            supports_streaming=True,
+            no_sound=False,
+            **common,
+        )
+    if media_type == "audio":
+        return await client.send_audio(audio=str(item), **common)
+    if media_type == "photo":
+        return await client.send_photo(photo=str(item), **common)
+    if media_type == "animation":
+        return await client.send_animation(animation=str(item), **common)
+    return await client.send_document(
+        document=str(item),
+        force_document=True,
+        **common,
+    )
 
 
 async def split_file(
@@ -91,6 +144,9 @@ async def upload_to_telegram(
     started = monotonic()
     uploaded = 0
     sent = 0
+    task.result_files = []
+    task.result_folders = []
+    task.result_links = []
 
     try:
         for source, relative_name in files:
@@ -123,20 +179,23 @@ async def upload_to_telegram(
                     )
 
                 caption = task.name[:1024]
+                media_type = (
+                    telegram_media_type(item) if len(outgoing) == 1 else "document"
+                )
                 LOGGER.info(
-                    "Task %s: uploading Telegram file name=%r size=%s",
+                    "Task %s: uploading Telegram file name=%r size=%s type=%s",
                     task.short_id(),
                     task.name,
                     item.stat().st_size,
+                    media_type,
                 )
-                message = await client.send_document(
-                    task.chat_id,
-                    str(item),
-                    caption=caption,
-                    parse_mode=ParseMode.DISABLED,
-                    force_document=True,
-                    disable_notification=True,
-                    progress=progress,
+                message = await send_telegram_file(
+                    client,
+                    task,
+                    item,
+                    caption,
+                    progress,
+                    media_type,
                 )
                 if message is None:
                     raise asyncio.CancelledError()
@@ -144,6 +203,14 @@ async def upload_to_telegram(
                 task.downloaded = min(total_size, uploaded)
                 task.progress = task.downloaded / total_size if total_size else 1
                 sent += 1
+                task.result_files.append(task.name)
+                task.result_links.append(
+                    message.link
+                    or (
+                        f"tg://openmessage?user_id={task.chat_id}"
+                        f"&message_id={message.id}"
+                    )
+                )
                 LOGGER.info(
                     "Task %s: Telegram upload complete name=%r",
                     task.short_id(),

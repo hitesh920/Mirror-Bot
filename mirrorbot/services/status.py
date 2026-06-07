@@ -65,9 +65,26 @@ def task_status(task: Task) -> str:
     return "\n".join(lines)
 
 
+def brief_task_status(task: Task) -> str:
+    name = (task.name or task.source.type.value).replace("\n", " ")[:35]
+    progress = f"{task.progress * 100:.0f}%" if task.size else "--"
+    return (
+        f"{escape(name)} - "
+        f"<b>{escape(task.phase.value.title())}</b> - "
+        f"<code>{escape(progress)}</code> "
+        f"- <code>{escape(task.short_id())}</code>"
+    )
+
+
 def format_status(tasks: list[Task]) -> str:
     if not tasks:
         return "No active tasks."
-    sections = [task_status(task) for task in tasks]
+    sections = [task_status(task) for task in tasks[:3]]
+    remaining = tasks[3:]
+    if remaining:
+        sections.append(
+            "<b>Other active tasks:</b>\n"
+            + "\n".join(brief_task_status(task) for task in remaining)
+        )
     sections.append(field("Active tasks", str(len(tasks))))
     return "\n\n".join(sections)

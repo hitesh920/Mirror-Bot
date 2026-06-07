@@ -76,14 +76,17 @@ class TaskManager:
                 self._raise_if_cancelled(task)
                 task.phase = TaskPhase.DOWNLOADING
                 LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
-                task.source = await resolve_source(task.source)
+                task.source = await self._run_or_cancel(task, resolve_source(task.source))
                 self._raise_if_cancelled(task)
-                downloaded = await self._download(
+                downloaded = await self._run_or_cancel(
                     task,
-                    telegram_reply,
-                    telegram_client,
-                    on_selector_ready,
-                    on_selector_done,
+                    self._download(
+                        task,
+                        telegram_reply,
+                        telegram_client,
+                        on_selector_ready,
+                        on_selector_done,
+                    ),
                 )
 
                 self._raise_if_cancelled(task)
@@ -105,6 +108,7 @@ class TaskManager:
                     )
                     self._raise_if_cancelled(task)
 
+                self._record_result_manifest(task, downloaded)
                 self._raise_if_cancelled(task)
                 if task.destination in {
                     Destination.LOCAL_MOVIES,
@@ -125,11 +129,14 @@ class TaskManager:
                         raise RuntimeError("Telegram client is unavailable")
                     task.phase = TaskPhase.UPLOADING
                     LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
-                    await upload_to_telegram(
+                    await self._run_or_cancel(
                         task,
-                        downloaded,
-                        telegram_client,
-                        self.config.telegram_leech_split_size,
+                        upload_to_telegram(
+                            task,
+                            downloaded,
+                            telegram_client,
+                            self.config.telegram_leech_split_size,
+                        ),
                     )
                 else:
                     raise NotImplementedError(
@@ -158,9 +165,13 @@ class TaskManager:
             task.error = str(exc)
             LOGGER.warning("Task %s: %s", task.short_id(), task.error)
         except Exception as exc:
-            task.phase = TaskPhase.ERROR
-            task.error = str(exc)
-            LOGGER.exception("Task %s: failed", task.short_id())
+            if task.cancelled:
+                task.phase = TaskPhase.CANCELLED
+                LOGGER.info("Task %s: cancelled during shutdown", task.short_id())
+            else:
+                task.phase = TaskPhase.ERROR
+                task.error = str(exc)
+                LOGGER.exception("Task %s: failed", task.short_id())
         finally:
             if task.torrent_hash and task.phase in {
                 TaskPhase.CANCELLED,
@@ -230,6 +241,14 @@ class TaskManager:
         LOGGER.info("Task %s: cancellation requested", task.short_id())
         return True
 
+    async def close_active_selector(self, task_id: str = "") -> None:
+        if task_id:
+            task = self.get(task_id)
+            if task and task.torrent_hash:
+                await self.torrent_selector.cancel(task.torrent_hash)
+            return
+        await self.torrent_selector.cancel_all()
+
     def get(self, task_id_or_short: str) -> Task | None:
         if task_id_or_short in self.tasks:
             return self.tasks[task_id_or_short]
@@ -241,6 +260,24 @@ class TaskManager:
     def active_tasks(self) -> list[Task]:
         return [task for task in self.tasks.values() if task.phase not in {TaskPhase.COMPLETE, TaskPhase.CANCELLED, TaskPhase.ERROR}]
 
+    @staticmethod
+    def _record_result_manifest(task: Task, path: Path) -> None:
+        task.result_name = path.name
+        if path.is_file():
+            task.result_files = [path.name]
+            task.result_folders = []
+            return
+        task.result_files = [
+            item.relative_to(path).as_posix()
+            for item in sorted(path.rglob("*"))
+            if item.is_file()
+        ]
+        task.result_folders = [
+            item.relative_to(path).as_posix()
+            for item in sorted(path.rglob("*"))
+            if item.is_dir()
+        ]
+
     def _cleanup(self, path: Path) -> None:
         if path.exists():
             rmtree(path, ignore_errors=True)
@@ -249,6 +286,21 @@ class TaskManager:
     def _raise_if_cancelled(task: Task) -> None:
         if task.cancelled:
             raise asyncio.CancelledError()
+
+    async def _run_or_cancel(self, task: Task, awaitable):
+        self._raise_if_cancelled(task)
+        operation = asyncio.create_task(awaitable)
+        cancelled = asyncio.create_task(task.cancel_event.wait())
+        done, _ = await asyncio.wait(
+            {operation, cancelled}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancelled in done or task.cancelled:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            raise asyncio.CancelledError()
+        cancelled.cancel()
+        await asyncio.gather(cancelled, return_exceptions=True)
+        return await operation
 
     @asynccontextmanager
     async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):

@@ -75,9 +75,14 @@ class Task:
     eta: int = 0
     error: str = ""
     result_path: Path | None = None
+    result_name: str = ""
+    result_files: list[str] = field(default_factory=list)
+    result_folders: list[str] = field(default_factory=list)
+    result_links: list[str] = field(default_factory=list)
     torrent_hash: str = ""
     selection_url: str = ""
     created_at: float = field(default_factory=time)
+    status_visible: bool = True
     cancelled: bool = False
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 

@@ -67,6 +67,8 @@ class Selection:
     torrent_hash: str
     files: list[dict]
     submitted: asyncio.Event
+    closed: asyncio.Event
+    cancelled: bool = False
 
 
 class TorrentSelector:
@@ -88,7 +90,13 @@ class TorrentSelector:
     async def select(self, torrent_hash: str, files: list[dict]) -> str:
         async with self.lock:
             token = secrets.token_urlsafe(32)
-            selection = Selection(token, torrent_hash, files, asyncio.Event())
+            selection = Selection(
+                token,
+                torrent_hash,
+                files,
+                asyncio.Event(),
+                asyncio.Event(),
+            )
             await self._start_server()
             self.selection = selection
             url = f"{self.public_base_url}/select/{token}"
@@ -97,17 +105,30 @@ class TorrentSelector:
                 await asyncio.wait_for(
                     self.selection.submitted.wait(), timeout=self.timeout
                 )
+                if selection.cancelled:
+                    raise asyncio.CancelledError()
                 return url
             except TimeoutError as exc:
                 raise TimeoutError("Torrent file selection timed out") from exc
             finally:
                 await self._stop_server()
+                selection.closed.set()
                 self.selection = None
                 LOGGER.info("Torrent selector closed hash=%s", torrent_hash[:8])
 
     async def cancel(self, torrent_hash: str) -> None:
-        if self.selection and self.selection.torrent_hash == torrent_hash:
-            self.selection.submitted.set()
+        selection = self.selection
+        if selection and selection.torrent_hash == torrent_hash:
+            selection.submitted.set()
+            try:
+                await asyncio.wait_for(selection.closed.wait(), timeout=5)
+            except TimeoutError:
+                await self._stop_server()
+
+    async def cancel_all(self) -> None:
+        selection = self.selection
+        if selection:
+            await self.cancel(selection.torrent_hash)
 
     async def _start_server(self) -> None:
         app = web.Application()
@@ -146,10 +167,10 @@ ul{{list-style:none;margin:0;padding:0}} .row{{display:grid;grid-template-column
 .name{{overflow-wrap:anywhere}} small{{color:#667085}} .expand{{width:24px;height:24px;padding:0;margin:0;background:#eef1f5;color:#17202a;border:1px solid #ccd3dc}}
 .folder-name{{padding:0;text-align:left;background:transparent;color:#17202a}}
 .spacer{{width:24px}} button{{padding:9px 14px;background:#1769e0;color:white;border:0;cursor:pointer}}
-.secondary{{background:#eef1f5;color:#17202a;border:1px solid #ccd3dc}} .submit{{margin:16px}}
+.secondary{{background:#eef1f5;color:#17202a;border:1px solid #ccd3dc}} .submit{{margin:16px 4px 16px 16px}} .cancel{{background:#b42318;margin:16px 16px 16px 4px}}
 </style></head><body><main><h1>Select torrent files</h1>
 <form method="post"><div class="tools"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div>
-<ul>{rows}</ul><button class="submit" type="submit">Start download</button></form>
+<ul>{rows}</ul><button class="submit" type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></form>
 <script>
 const setChildren=(folder,checked)=>folder.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=checked;box.indeterminate=false;}});
 const updateParents=element=>{{
@@ -182,6 +203,13 @@ document.getElementById('uncheck-all').addEventListener('click',()=>document.que
         if not self._valid(request):
             raise web.HTTPNotFound()
         form = await request.post()
+        if form.get("action") == "cancel":
+            self.selection.cancelled = True
+            self.selection.submitted.set()
+            return web.Response(
+                text="Torrent cancelled. You can close this page.",
+                content_type="text/plain",
+            )
         all_ids = {file["index"] for file in self.selection.files}
         selected = {
             int(value) for value in form.getall("file", []) if value.isdecimal()
