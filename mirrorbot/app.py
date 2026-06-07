@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import secrets
 from collections import defaultdict
 from html import escape
 from pathlib import Path
@@ -20,6 +21,7 @@ from .services.status import format_status, human_size
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
     delete_drive_item,
+    drive_item_info,
     drive_storage_quota,
     load_credentials,
     search_drive_items,
@@ -35,6 +37,8 @@ pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
 delete_targets: dict[str, Path] = {}
 pending_drive_delete_chats: set[int] = set()
+pending_drive_delete_items: dict[str, dict] = {}
+pending_drive_delete_expiry_jobs: dict[str, asyncio.Task] = {}
 drive_search_pages = DriveSearchPages(
     config.public_base_url,
     config.torrent_selection_port + 1,
@@ -115,6 +119,41 @@ async def answer_expired_selection(query) -> None:
         await query.message.edit("Selection expired. Send /add again.")
     except Exception:
         pass
+
+
+async def expire_drive_delete(token: str, message: Message) -> None:
+    try:
+        await asyncio.sleep(PENDING_ADD_TIMEOUT)
+        item = pending_drive_delete_items.pop(token, None)
+        if item is None:
+            return
+        LOGGER.info("Expired Google Drive delete confirmation id=%s", item.get("id"))
+        try:
+            await message.edit("Google Drive delete request expired.")
+        except Exception:
+            LOGGER.debug(
+                "Could not edit expired Google Drive delete confirmation",
+                exc_info=True,
+            )
+    finally:
+        pending_drive_delete_expiry_jobs.pop(token, None)
+
+
+def start_drive_delete_expiry(token: str, message: Message) -> None:
+    old_job = pending_drive_delete_expiry_jobs.pop(token, None)
+    if old_job:
+        old_job.cancel()
+    pending_drive_delete_expiry_jobs[token] = asyncio.create_task(
+        expire_drive_delete(token, message)
+    )
+
+
+def take_pending_drive_delete(token: str) -> dict | None:
+    item = pending_drive_delete_items.pop(token, None)
+    job = pending_drive_delete_expiry_jobs.pop(token, None)
+    if job:
+        job.cancel()
+    return item
 
 
 async def update_status_message(chat_id: int) -> None:
@@ -820,19 +859,72 @@ async def delete_google_drive_link(message: Message, link: str) -> None:
         await message.reply(str(exc))
         return
     try:
-        item = await asyncio.to_thread(delete_drive_item, config, file_id)
+        item = await asyncio.to_thread(drive_item_info, config, file_id)
+    except Exception as exc:
+        LOGGER.exception("Google Drive item lookup failed")
+        await message.reply(
+            f"Google Drive item lookup failed:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    token = secrets.token_urlsafe(16)
+    pending_drive_delete_items[token] = item
+    item_type = "folder" if item.get("mimeType") == "application/vnd.google-apps.folder" else "file"
+    prompt = await message.reply(
+        "<b>Confirm Google Drive delete</b>\n"
+        f"<b>Name:</b> <code>{escape(item.get('name', 'Untitled'))}</code>\n"
+        f"<b>Type:</b> <code>{item_type}</code>\n"
+        f"<b>ID:</b> <code>{escape(file_id)}</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Delete", callback_data=f"dgddel:{token}"),
+                    InlineKeyboardButton("Cancel", callback_data=f"dgdcancel:{token}"),
+                ]
+            ]
+        ),
+    )
+    start_drive_delete_expiry(token, prompt)
+
+
+@app.on_callback_query(filters.regex(r"^dgd"))
+async def confirm_drive_delete(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    action, token = query.data.split(":", 1)
+    item = take_pending_drive_delete(token)
+    if item is None:
+        await query.answer("Expired delete request", show_alert=True)
+        try:
+            await query.message.edit("Delete request expired.")
+        except Exception:
+            pass
+        return
+    if action == "dgdcancel":
+        await query.answer("Cancelled")
+        await query.message.edit("Google Drive delete cancelled.")
+        return
+    await query.answer("Deleting")
+    try:
+        deleted = await asyncio.to_thread(delete_drive_item, config, item["id"])
     except Exception as exc:
         LOGGER.exception("Google Drive delete failed")
-        await message.reply(
+        await query.message.edit(
             f"Google Drive delete failed:\n{exc}",
             parse_mode=ParseMode.DISABLED,
         )
         return
-    LOGGER.info("Deleted Google Drive item id=%s name=%s", file_id, item.get("name"))
-    await message.reply(
+    LOGGER.info(
+        "Deleted Google Drive item id=%s name=%s",
+        deleted.get("id"),
+        deleted.get("name"),
+    )
+    await query.message.edit(
         "<b>Google Drive item deleted</b>\n"
-        f"<b>Name:</b> <code>{escape(item.get('name', 'Untitled'))}</code>\n"
-        f"<b>ID:</b> <code>{escape(file_id)}</code>",
+        f"<b>Name:</b> <code>{escape(deleted.get('name', 'Untitled'))}</code>\n"
+        f"<b>ID:</b> <code>{escape(deleted.get('id', item['id']))}</code>",
         parse_mode=ParseMode.HTML,
     )
 
