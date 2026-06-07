@@ -9,7 +9,6 @@ services:
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
-      - ./data/rclone:/app/data/rclone
       - ./credentials.json:/app/data/google/credentials.json:ro
       - ./token.pickle:/app/data/google/token.pickle
       - ./downloads:/media

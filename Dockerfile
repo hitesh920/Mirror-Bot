@@ -14,7 +14,6 @@ RUN sed -i 's/Components: main/Components: main non-free/g' /etc/apt/sources.lis
         7zip \
         unrar \
         qbittorrent-nox \
-        rclone \
         ca-certificates \
         build-essential \
     && rm -rf /var/lib/apt/lists/*

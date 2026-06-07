@@ -33,6 +33,25 @@ def load_credentials(config: Config) -> Credentials:
     return credentials
 
 
+def drive_service(config: Config):
+    return build(
+        "drive",
+        "v3",
+        credentials=load_credentials(config),
+        cache_discovery=False,
+    )
+
+
+def drive_storage_quota(config: Config) -> dict:
+    about = (
+        drive_service(config)
+        .about()
+        .get(fields="storageQuota")
+        .execute()
+    )
+    return about.get("storageQuota", {})
+
+
 def drive_link(file_id: str, is_folder: bool = False) -> str:
     if is_folder:
         return f"https://drive.google.com/drive/folders/{file_id}"
@@ -44,12 +63,7 @@ class GoogleDriveUploader:
         self.task = task
         self.path = path
         self.config = config
-        self.service = build(
-            "drive",
-            "v3",
-            credentials=load_credentials(config),
-            cache_discovery=False,
-        )
+        self.service = drive_service(config)
         self.created_ids: list[str] = []
         self.total_size = path_size(path)
         self.uploaded_base = 0

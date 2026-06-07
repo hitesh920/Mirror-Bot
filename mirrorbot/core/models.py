@@ -13,7 +13,6 @@ class SourceType(str, Enum):
     TORRENT_FILE = "torrent_file"
     YTDLP = "ytdlp"
     GOOGLE_DRIVE = "google_drive"
-    RCLONE = "rclone"
     UNSUPPORTED = "unsupported"
 
 

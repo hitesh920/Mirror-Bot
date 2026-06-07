@@ -15,9 +15,9 @@ from .core.logging_config import setup_logging
 from .core.models import Destination, Source, SourceType, TaskPhase
 from .core.parser import parse_add_text
 from .core.source_detector import detect_source
-from .services.status import format_status
+from .services.status import format_status, human_size
 from .services.task_manager import TaskManager
-from .services.google_drive_delivery import load_credentials
+from .services.google_drive_delivery import drive_storage_quota, load_credentials
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -311,7 +311,7 @@ async def start(_, message: Message):
 async def help_cmd(_, message: Message):
     await message.reply(
         "/add <link> [-z|-zp pass|-e|-ep pass|-n name]\n"
-        "/status\n/stats\n/gdstatus\n/cancel <task-id>\n/cancelall\n/delete"
+        "/status\n/stats\n/gdstats\n/cancel <task-id>\n/cancelall\n/delete"
     )
 
 
@@ -587,24 +587,42 @@ async def stats(_, message: Message):
     )
 
 
-@app.on_message(filters.command("gdstatus") & owner_filter)
-async def gdstatus(_, message: Message):
-    LOGGER.info("Received /gdstatus")
+@app.on_message(filters.command("gdstats") & owner_filter)
+async def gdstats(_, message: Message):
+    LOGGER.info("Received /gdstats")
     credentials_exists = config.google_credentials_file.is_file()
     token_exists = config.google_token_file.is_file()
+    folder_configured = bool(config.google_drive_folder_id)
+    lines = [
+        "<b>Google Drive stats</b>",
+        f"<b>Credentials:</b> <code>{'found' if credentials_exists else 'missing'}</code>",
+        f"<b>Token:</b> <code>{'found' if token_exists else 'missing'}</code>",
+        f"<b>Upload folder:</b> <code>{'configured' if folder_configured else 'missing'}</code>",
+    ]
     if not credentials_exists or not token_exists:
-        await message.reply(
-            "Google Drive auth:\n"
-            f"credentials.json: {'found' if credentials_exists else 'missing'}\n"
-            f"token.pickle: {'found' if token_exists else 'missing'}"
-        )
+        await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     try:
         await asyncio.to_thread(load_credentials, config)
+        quota = await asyncio.to_thread(drive_storage_quota, config)
     except Exception as exc:
-        await message.reply(f"Google Drive auth failed:\n{exc}")
+        lines.append("<b>Auth:</b> <code>failed</code>")
+        lines.append(f"<b>Error:</b> <code>{escape(str(exc))}</code>")
+        await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
         return
-    await message.reply("Google Drive auth is ready.")
+
+    used = int(quota.get("usage") or 0)
+    trash = int(quota.get("usageInDriveTrash") or 0)
+    limit = int(quota.get("limit") or 0)
+    lines.append("<b>Auth:</b> <code>ready</code>")
+    lines.append(f"<b>Used:</b> <code>{human_size(used)}</code>")
+    if limit:
+        lines.append(f"<b>Limit:</b> <code>{human_size(limit)}</code>")
+        lines.append(f"<b>Free:</b> <code>{human_size(max(0, limit - used))}</code>")
+    else:
+        lines.append("<b>Limit:</b> <code>Unlimited</code>")
+    lines.append(f"<b>Trash:</b> <code>{human_size(trash)}</code>")
+    await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 @app.on_message(filters.command("cancel") & owner_filter)

@@ -20,7 +20,6 @@ class Config:
     telegram_api_hash: str
     local_download_root: Path
     google_drive_folder_id: str
-    rclone_remote_path: str
     task_limit: int
     status_update_interval: int
     public_base_url: str
@@ -35,7 +34,6 @@ class Config:
     ytdlp_audio_quality: str = "320"
     zip_compression_level: int = 5
     log_file: str = "logs/bot.log"
-    rclone_config_file: Path = Path("/app/data/rclone/rclone.conf")
     google_credentials_file: Path = Path("/app/data/google/credentials.json")
     google_token_file: Path = Path("/app/data/google/token.pickle")
 
@@ -63,7 +61,6 @@ class Config:
             telegram_api_hash=getenv("TELEGRAM_API_HASH", ""),
             local_download_root=Path(getenv("LOCAL_DOWNLOAD_ROOT", "")),
             google_drive_folder_id=getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
-            rclone_remote_path=getenv("RCLONE_REMOTE_PATH", ""),
             task_limit=max(1, _int("TASK_LIMIT", 10)),
             status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
             public_base_url=getenv("PUBLIC_BASE_URL", "http://localhost:8000"),

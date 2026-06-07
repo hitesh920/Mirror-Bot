@@ -1,4 +1,3 @@
-from re import search
 from urllib.parse import urlparse
 
 from yt_dlp import YoutubeDL
@@ -16,12 +15,6 @@ def is_google_drive_url(value: str) -> bool:
 def is_telegram_url(value: str) -> bool:
     host = urlparse(value).netloc.lower()
     return host in {"t.me", "telegram.me"} or host.endswith(".t.me")
-
-
-def is_rclone_path(value: str) -> bool:
-    if "://" in value or value.startswith("magnet:"):
-        return False
-    return bool(search(r"^[\w.-]+:.+", value))
 
 
 def looks_like_url(value: str) -> bool:
@@ -48,8 +41,6 @@ def detect_source(value: str, filename: str = "") -> Source:
         return Source(SourceType.MAGNET, value)
     if is_google_drive_url(value):
         return Source(SourceType.GOOGLE_DRIVE, value)
-    if is_rclone_path(value):
-        return Source(SourceType.RCLONE, value)
     if is_telegram_url(value):
         return Source(SourceType.UNSUPPORTED, value)
     if is_resolvable_url(value):

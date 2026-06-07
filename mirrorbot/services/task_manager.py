@@ -17,7 +17,6 @@ from ..core.models import Destination, SourceType, Task, TaskPhase
 from ..downloaders.direct import download_direct
 from ..downloaders.gdrive import download_gdrive
 from ..downloaders.qbittorrent import QBittorrentClient
-from ..downloaders.rclone import download_rclone
 from ..downloaders.telegram import download_telegram_file
 from ..downloaders.torrent import DuplicateTorrentError, download_torrent
 from ..downloaders.torrent_selector import TorrentSelector
@@ -248,8 +247,6 @@ class TaskManager:
             return await download_ytdlp(task)
         if task.source.type == SourceType.GOOGLE_DRIVE:
             return await download_gdrive(task, self.config)
-        if task.source.type == SourceType.RCLONE:
-            return await download_rclone(task, self.config.rclone_config_file)
         raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")
 
     def cancel(self, task_id: str) -> bool:
