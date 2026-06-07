@@ -30,7 +30,7 @@ status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-PENDING_ADD_TIMEOUT = 300
+PENDING_ADD_TIMEOUT = 120
 
 app = Client(
     "mirrorbot",

@@ -14,6 +14,7 @@ from .torrent_selector import TorrentSelector
 LOGGER = logging.getLogger(__name__)
 FINISHED_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP"}
 ERROR_STATES = {"error", "missingFiles", "unknown"}
+TORRENT_METADATA_TIMEOUT = 300
 
 
 class DuplicateTorrentError(RuntimeError):
@@ -76,7 +77,7 @@ async def _wait_for_torrent(
 
 
 async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, list[dict]]:
-    for _ in range(300):
+    for _ in range(TORRENT_METADATA_TIMEOUT):
         if task.cancelled:
             raise asyncio.CancelledError()
         torrents = await qb.info(torrent_hash=task.torrent_hash)
@@ -92,7 +93,10 @@ async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, l
         if files and torrent.get("state") not in {"metaDL", "checkingResumeData"}:
             return torrent, files
         await asyncio.sleep(1)
-    raise TimeoutError("Torrent metadata download timed out")
+    raise TimeoutError(
+        "Torrent metadata download timed out after 5 minutes. "
+        "The torrent may be dead or unavailable."
+    )
 
 
 async def download_torrent(

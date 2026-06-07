@@ -56,7 +56,6 @@ async def send_telegram_file(
         "parse_mode": ParseMode.DISABLED,
         "disable_notification": True,
         "progress": progress,
-        "reply_to_message_id": task.message_id,
     }
     if media_type == "video":
         return await client.send_video(
