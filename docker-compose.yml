@@ -1,9 +1,12 @@
 services:
   bot:
     build: .
+    container_name: mirror-bot
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      - jellyfin
     ports:
       # Torrent selector
       - "8000:8000"
@@ -15,13 +18,14 @@ services:
       - ./credentials.json:/app/data/google/credentials.json:ro
       - ./token.pickle:/app/data/google/token.pickle
       - ./downloads:/media
+      - /var/run/docker.sock:/var/run/docker.sock
 
   jellyfin:
     image: jellyfin/jellyfin:latest
-    container_name: mirror-bot-jellyfin
+    container_name: ${JELLYFIN_CONTAINER_NAME:-jellyfin}
     restart: unless-stopped
     ports:
-      - "${JELLYFIN_PORT:-8096}:8096"
+      - "${JELLYFIN_PORT:-8002}:8096"
     volumes:
       - ${JELLYFIN_CONFIG_DIR:-./data/jellyfin/config}:/config
       - ${JELLYFIN_CACHE_DIR:-./data/jellyfin/cache}:/cache

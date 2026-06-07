@@ -28,11 +28,13 @@ from .services.google_drive_delivery import (
 )
 from .services.drive_search_pages import DriveSearchPages
 from .services.public_url import public_base_url
+from .services.jellyfin import JellyfinControlError, JellyfinManager
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
 config = Config.load()
 manager = TaskManager(config)
+jellyfin = JellyfinManager(config.jellyfin_container_name)
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
@@ -69,6 +71,7 @@ HELP_TEXT = "\n".join(
         "<code>/status</code> - live task status",
         "<code>/stats</code> - bot/server stats",
         "<code>/gdstats</code> - Google Drive auth and quota",
+        "<code>/jellyfin</code> - manage Jellyfin",
         "",
         "<b>Manage</b>",
         "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
@@ -963,6 +966,121 @@ async def confirm_drive_delete(_, query):
     )
 
 
+def jellyfin_url() -> str:
+    return public_base_url(config.jellyfin_port, config.public_base_url)
+
+
+def jellyfin_buttons() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Open Jellyfin", url=jellyfin_url())],
+            [
+                InlineKeyboardButton("Start", callback_data="jf:start"),
+                InlineKeyboardButton("Stop", callback_data="jf:stop"),
+            ],
+            [
+                InlineKeyboardButton("Restart", callback_data="jf:restart"),
+                InlineKeyboardButton("Refresh", callback_data="jf:refresh"),
+            ],
+        ]
+    )
+
+
+def format_jellyfin_status(status, action: str = "Status") -> str:
+    running = "yes" if status.running else "no"
+    return "\n".join(
+        [
+            "<b>Jellyfin</b>",
+            f"<b>Action:</b> <code>{escape(action)}</code>",
+            f"<b>Container:</b> <code>{escape(status.name)}</code>",
+            f"<b>State:</b> <code>{escape(status.state)}</code>",
+            f"<b>Health:</b> <code>{escape(status.health)}</code>",
+            f"<b>Running:</b> <code>{running}</code>",
+            f"<b>URL:</b> <code>{escape(jellyfin_url())}</code>",
+        ]
+    )
+
+
+async def jellyfin_status_text(action: str = "Status") -> str:
+    status = await asyncio.to_thread(jellyfin.status)
+    return format_jellyfin_status(status, action)
+
+
+@app.on_message(filters.command("jellyfin") & owner_filter)
+async def jellyfin_cmd(_, message: Message):
+    LOGGER.info("Received /jellyfin")
+    try:
+        text = await jellyfin_status_text()
+    except Exception as exc:
+        LOGGER.exception("Jellyfin status failed")
+        await message.reply(
+            f"Jellyfin control failed:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    await message.reply(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=jellyfin_buttons(),
+        disable_web_page_preview=True,
+    )
+
+
+@app.on_callback_query(filters.regex(r"^jf:"))
+async def jellyfin_action(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    action = query.data.split(":", 1)[1]
+    try:
+        if action == "start":
+            status = await asyncio.to_thread(jellyfin.start)
+            label = "Started"
+        elif action == "stop":
+            status = await asyncio.to_thread(jellyfin.stop)
+            label = "Stopped"
+        elif action == "restart":
+            status = await asyncio.to_thread(jellyfin.restart)
+            label = "Restarted"
+        else:
+            status = await asyncio.to_thread(jellyfin.status)
+            label = "Status"
+    except Exception as exc:
+        LOGGER.exception("Jellyfin %s failed", action)
+        await query.answer("Jellyfin action failed", show_alert=True)
+        await query.message.edit_text(
+            f"Jellyfin control failed:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+            reply_markup=jellyfin_buttons(),
+            disable_web_page_preview=True,
+        )
+        return
+    await query.answer(label)
+    await query.message.edit_text(
+        format_jellyfin_status(status, label),
+        parse_mode=ParseMode.HTML,
+        reply_markup=jellyfin_buttons(),
+        disable_web_page_preview=True,
+    )
+
+
+def ensure_jellyfin_running() -> None:
+    if not config.jellyfin_ensure_running:
+        return
+    try:
+        status = jellyfin.ensure_running()
+        LOGGER.info(
+            "Jellyfin ensure running: container=%s state=%s health=%s",
+            status.name,
+            status.state,
+            status.health,
+        )
+    except JellyfinControlError:
+        LOGGER.exception("Jellyfin ensure running failed")
+    except Exception:
+        LOGGER.exception("Unexpected Jellyfin startup check failure")
+
+
 @app.on_message(filters.command("ping") & owner_filter)
 async def ping(_, message: Message):
     LOGGER.info("Received /ping")
@@ -980,6 +1098,7 @@ async def log_cmd(_, message: Message):
 
 
 def run():
+    ensure_jellyfin_running()
     cleanup_abandoned_downloads()
     (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)
     (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
