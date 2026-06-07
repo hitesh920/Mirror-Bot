@@ -1,16 +1,38 @@
 import asyncio
+import base64
+import binascii
 import logging
 from pathlib import Path
 from shutil import rmtree
+from urllib.parse import parse_qs, urlparse
 
-from ..models import Task, TaskPhase
-from ..paths import ensure_inside
-from ..qbittorrent import QBittorrentClient
-from ..torrent_selector import TorrentSelector
+from ..core.models import Task, TaskPhase
+from ..services.paths import ensure_inside
+from .qbittorrent import QBittorrentClient
+from .torrent_selector import TorrentSelector
 
 LOGGER = logging.getLogger(__name__)
 FINISHED_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP"}
 ERROR_STATES = {"error", "missingFiles", "unknown"}
+
+
+class DuplicateTorrentError(RuntimeError):
+    pass
+
+
+def magnet_info_hash(magnet: str) -> str:
+    for value in parse_qs(urlparse(magnet).query).get("xt", []):
+        if not value.lower().startswith("urn:btih:"):
+            continue
+        info_hash = value.rsplit(":", 1)[-1]
+        if len(info_hash) == 40:
+            return info_hash.lower()
+        if len(info_hash) == 32:
+            try:
+                return base64.b32decode(info_hash.upper()).hex()
+            except binascii.Error:
+                return ""
+    return ""
 
 
 def _clean_skipped_files(task: Task, torrent: dict, files: list[dict]) -> None:
@@ -30,11 +52,25 @@ def _clean_skipped_files(task: Task, torrent: dict, files: list[dict]) -> None:
         rmtree(unwanted, ignore_errors=True)
 
 
-async def _wait_for_torrent(qb: QBittorrentClient, task: Task) -> dict:
+async def _wait_for_torrent(
+    qb: QBittorrentClient, task: Task, expected_hash: str = ""
+) -> dict:
     for _ in range(60):
+        if task.cancelled:
+            raise asyncio.CancelledError()
         torrents = await qb.info(tag=task.id)
         if torrents:
             return torrents[0]
+        if expected_hash:
+            existing = await qb.info(torrent_hash=expected_hash)
+            if existing and task.id not in {
+                tag.strip()
+                for tag in str(existing[0].get("tags", "")).split(",")
+                if tag.strip()
+            }:
+                raise DuplicateTorrentError(
+                    "This torrent is already active in qBittorrent"
+                )
         await asyncio.sleep(1)
     raise TimeoutError("qBittorrent did not add the torrent")
 
@@ -69,8 +105,13 @@ async def download_torrent(
 ) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
     source = torrent_file or task.source.value
+    info_hash = ""
+    if isinstance(source, str):
+        info_hash = magnet_info_hash(source)
+        if info_hash and await qb.info(torrent_hash=info_hash):
+            raise DuplicateTorrentError("This torrent is already active in qBittorrent")
     await qb.add(source, task.work_dir, task.id)
-    torrent = await _wait_for_torrent(qb, task)
+    torrent = await _wait_for_torrent(qb, task, info_hash)
     task.torrent_hash = torrent["hash"]
     task.name = task.options.name or torrent["name"]
     task.phase = TaskPhase.METADATA

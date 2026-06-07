@@ -2,7 +2,7 @@ import logging
 
 import aiohttp
 
-from ..models import Source, SourceType
+from ..core.models import Source, SourceType
 from .base import USER_AGENT, ResolvedCollection, ResolverError, resolved_source
 from .direct_hosts import (
     KrakenFilesResolver,
@@ -12,11 +12,15 @@ from .direct_hosts import (
     StreamTapeResolver,
     UploadEeResolver,
 )
+from .doodstream import DoodstreamResolver
+from .fichier import FichierResolver
 from .gofile import GoFileResolver
+from .linkbox import LinkboxResolver
 from .mediafire import MediaFireResolver
 from .onedrive import OneDriveResolver
 from .ouo import OuoResolver
 from .pixeldrain import PixelDrainResolver
+from .racaty import RacatyResolver
 from .redirects import RedirectResolver
 from .wetransfer import WeTransferResolver
 
@@ -35,6 +39,10 @@ RESOLVERS = (
     PCloudResolver(),
     SendCmResolver(),
     KrakenFilesResolver(),
+    FichierResolver(),
+    RacatyResolver(),
+    DoodstreamResolver(),
+    LinkboxResolver(),
 )
 
 
@@ -78,7 +86,7 @@ async def resolve_source(source: Source) -> Source:
             if isinstance(result, ResolvedCollection):
                 return current
             if resolver.name == "redirect":
-                from ..source_detector import detect_source
+                from ..core.source_detector import detect_source
 
                 detected = detect_source(current.value, current.filename)
                 if detected.type != SourceType.DIRECT_URL:

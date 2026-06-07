@@ -7,7 +7,7 @@ from urllib.parse import unquote, urlparse
 
 import aiohttp
 
-from ..models import Task
+from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
 
 LOGGER = logging.getLogger(__name__)

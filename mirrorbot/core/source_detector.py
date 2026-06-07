@@ -5,7 +5,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.extractor import gen_extractors
 
 from .models import Source, SourceType
-from .resolvers import is_resolvable_url
+from ..resolvers import is_resolvable_url
 
 
 def is_google_drive_url(value: str) -> bool:

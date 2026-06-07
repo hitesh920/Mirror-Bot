@@ -1,10 +1,11 @@
+import asyncio
 from asyncio import to_thread
 import logging
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
-from ..models import Task
+from ..core.models import Task
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ def _format_for(task: Task) -> dict:
 
 def _progress_hook(task: Task):
     def update(data):
+        if task.cancelled:
+            raise asyncio.CancelledError()
         if data.get("status") != "downloading":
             return
         task.downloaded = int(data.get("downloaded_bytes") or 0)
@@ -91,5 +94,7 @@ async def download_ytdlp(task: Task) -> Path:
         return files[0]
 
     result = await to_thread(run)
+    if task.cancelled:
+        raise asyncio.CancelledError()
     LOGGER.info("Task %s: yt-dlp download complete path=%s", task.short_id(), result)
     return result

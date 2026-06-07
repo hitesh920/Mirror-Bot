@@ -5,7 +5,7 @@ from time import monotonic
 from pyrogram import Client
 from pyrogram.types import Message
 
-from ..models import Task
+from ..core.models import Task
 from ..resolvers.base import safe_name
 
 

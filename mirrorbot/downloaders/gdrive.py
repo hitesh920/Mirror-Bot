@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from time import monotonic
 
-from ..models import Task, TaskPhase
+from ..core.models import Task, TaskPhase
 from ..resolvers.base import safe_name
 from .process import path_size, terminate_process
 
@@ -16,7 +16,7 @@ def gdown_command(url: str, work_dir: Path) -> list[str]:
     command = [
         "python",
         "-m",
-        "mirrorbot.gdown_worker",
+        "mirrorbot.downloaders.gdown_worker",
         url,
         f"{work_dir}/",
     ]

@@ -9,13 +9,13 @@ from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from .config import Config
-from .logging_config import setup_logging
-from .models import Destination, Source, SourceType
-from .parser import parse_add_text
-from .source_detector import detect_source
-from .status import format_status
-from .task_manager import TaskManager
+from .core.config import Config
+from .core.logging_config import setup_logging
+from .core.models import Destination, Source, SourceType, TaskPhase
+from .core.parser import parse_add_text
+from .core.source_detector import detect_source
+from .services.status import format_status
+from .services.task_manager import TaskManager
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -102,11 +102,25 @@ async def status_loop(chat_id: int) -> None:
         status_jobs.pop(chat_id, None)
 
 
-async def ensure_live_status(chat_id: int) -> None:
-    try:
-        await update_status_message(chat_id)
-    except Exception:
-        LOGGER.exception("Could not create live status message chat=%s", chat_id)
+async def start_live_status(chat_id: int, message: Message) -> None:
+    async with status_locks[chat_id]:
+        old_message = status_messages.get(chat_id)
+        text = format_status(chat_tasks(chat_id))
+        await message.edit_text(text, parse_mode=ParseMode.HTML)
+        status_messages[chat_id] = message
+        status_text[chat_id] = text
+        if old_message and old_message.id != message.id:
+            try:
+                await old_message.delete()
+            except Exception:
+                pass
+    job = status_jobs.get(chat_id)
+    if job is None or job.done():
+        status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
+
+
+async def send_live_status(chat_id: int) -> None:
+    await update_status_message(chat_id)
     job = status_jobs.get(chat_id)
     if job is None or job.done():
         status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
@@ -166,7 +180,11 @@ async def help_cmd(_, message: Message):
 
 @app.on_message(filters.command("add") & owner_filter)
 async def add(_, message: Message):
-    link, options = parse_add_text(message.text or "")
+    try:
+        link, options = parse_add_text(message.text or "")
+    except ValueError as exc:
+        await message.reply(str(exc))
+        return
     reply = message.reply_to_message
     source = None
     LOGGER.info(
@@ -256,13 +274,15 @@ async def local_choice(_, query):
     is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
     if is_torrent:
         await query.message.edit("Collecting torrent metadata...")
-    else:
-        await query.message.edit(f"Started local task `{task.short_id()}` for {category}.")
-        await ensure_live_status(task.chat_id)
 
     async def runner():
         async def selector_ready(selected_task):
-            return await query.message.edit(
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            return await app.send_message(
+                task.chat_id,
                 "Torrent files are ready for review.",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("Click here to review files", url=selected_task.selection_url)]]
@@ -275,11 +295,8 @@ async def local_choice(_, query):
                 await selector_message.delete()
             except Exception:
                 pass
-            await app.send_message(
-                task.chat_id,
-                f"Started local task `{task.short_id()}` for {category}.",
-            )
-            await ensure_live_status(task.chat_id)
+            if task.phase == TaskPhase.DOWNLOADING:
+                await send_live_status(task.chat_id)
 
         await manager.run_local_task(
             task,
@@ -288,6 +305,11 @@ async def local_choice(_, query):
             on_selector_ready=selector_ready,
             on_selector_done=selector_done,
         )
+        if is_torrent:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
         if task.phase.value == "complete":
             await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
         elif task.error:
@@ -297,6 +319,9 @@ async def local_choice(_, query):
         await update_status_message(task.chat_id)
 
     asyncio.create_task(runner())
+    if not is_torrent:
+        await asyncio.sleep(0)
+        await start_live_status(task.chat_id, query.message)
 
 
 @app.on_message(filters.command("status") & owner_filter)
@@ -345,7 +370,7 @@ async def cancel(_, message: Message):
 async def cancel_all(_, message: Message):
     LOGGER.info("Received /cancelall active_tasks=%s", len(manager.active_tasks()))
     for task in manager.active_tasks():
-        task.cancelled = True
+        manager.cancel(task.id)
     await message.reply("Cancel requested for all active tasks.")
 
 

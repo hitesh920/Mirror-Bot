@@ -1,22 +1,23 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
 from uuid import uuid4
 
-from .archive import extract_path, zip_path
-from .config import Config
-from .downloaders.direct import download_direct
-from .downloaders.gdrive import download_gdrive
-from .downloaders.rclone import download_rclone
-from .downloaders.telegram import download_telegram_file
-from .downloaders.torrent import download_torrent
-from .downloaders.ytdlp import download_ytdlp
-from .models import Destination, SourceType, Task, TaskPhase
-from .paths import deliver_to_local
-from .qbittorrent import QBittorrentClient
-from .resolvers import resolve_source
-from .torrent_selector import TorrentSelector
+from .archive import ArchivePasswordError, extract_path, zip_path
+from ..core.config import Config
+from ..core.models import Destination, SourceType, Task, TaskPhase
+from ..downloaders.direct import download_direct
+from ..downloaders.gdrive import download_gdrive
+from ..downloaders.qbittorrent import QBittorrentClient
+from ..downloaders.rclone import download_rclone
+from ..downloaders.telegram import download_telegram_file
+from ..downloaders.torrent import DuplicateTorrentError, download_torrent
+from ..downloaders.torrent_selector import TorrentSelector
+from ..downloaders.ytdlp import download_ytdlp
+from ..resolvers import resolve_source
+from .local_delivery import deliver_to_local
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,8 +26,7 @@ class TaskManager:
     def __init__(self, config: Config):
         self.config = config
         self.tasks: dict[str, Task] = {}
-        self.download_sem = asyncio.Semaphore(config.queue_download_limit)
-        self.upload_sem = asyncio.Semaphore(config.queue_upload_limit)
+        self.task_sem = asyncio.Semaphore(config.task_limit)
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
             self.qb,
@@ -65,10 +65,12 @@ class TaskManager:
         on_selector_done=None,
     ) -> Task:
         try:
-            async with self.download_sem:
+            async with self._queue_slot(self.task_sem, task):
+                self._raise_if_cancelled(task)
                 task.phase = TaskPhase.DOWNLOADING
                 LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 task.source = await resolve_source(task.source)
+                self._raise_if_cancelled(task)
                 downloaded = await self._download(
                     task,
                     telegram_reply,
@@ -77,21 +79,33 @@ class TaskManager:
                     on_selector_done,
                 )
 
-            task.phase = TaskPhase.PROCESSING
-            LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
-            if task.options.extract:
-                LOGGER.info("Task %s: extracting archive", task.short_id())
-                downloaded = await extract_path(downloaded, task.options.extract_password)
-            if task.options.zip:
-                LOGGER.info("Task %s: creating zip archive", task.short_id())
-                downloaded = await zip_path(downloaded, task.options.zip_password)
+                self._raise_if_cancelled(task)
+                task.phase = TaskPhase.PROCESSING
+                LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
+                if task.options.extract:
+                    LOGGER.info("Task %s: extracting archive", task.short_id())
+                    downloaded = await extract_path(
+                        downloaded, task, task.options.extract_password
+                    )
+                    self._raise_if_cancelled(task)
+                if task.options.zip:
+                    LOGGER.info("Task %s: creating zip archive", task.short_id())
+                    downloaded = await zip_path(
+                        downloaded,
+                        task,
+                        task.options.zip_password,
+                        self.config.zip_compression_level,
+                    )
+                    self._raise_if_cancelled(task)
 
-            async with self.upload_sem:
+                self._raise_if_cancelled(task)
                 task.phase = TaskPhase.DELIVERING
                 LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                 category = "movies" if task.destination == Destination.LOCAL_MOVIES else "series"
-                task.result_path = deliver_to_local(downloaded, self.config.local_download_root, category)
-            task.phase = TaskPhase.COMPLETE
+                task.result_path = await deliver_to_local(
+                    task, downloaded, self.config.local_download_root, category
+                )
+                task.phase = TaskPhase.COMPLETE
             LOGGER.info(
                 "Task %s: complete result=%s",
                 task.short_id(),
@@ -101,6 +115,14 @@ class TaskManager:
             task.phase = TaskPhase.CANCELLED
             task.cancelled = True
             LOGGER.info("Task %s: cancelled", task.short_id())
+        except ArchivePasswordError as exc:
+            task.phase = TaskPhase.ERROR
+            task.error = str(exc)
+            LOGGER.warning("Task %s: %s", task.short_id(), task.error)
+        except DuplicateTorrentError as exc:
+            task.phase = TaskPhase.ERROR
+            task.error = str(exc)
+            LOGGER.warning("Task %s: %s", task.short_id(), task.error)
         except Exception as exc:
             task.phase = TaskPhase.ERROR
             task.error = str(exc)
@@ -163,9 +185,14 @@ class TaskManager:
 
     def cancel(self, task_id: str) -> bool:
         task = self.get(task_id)
-        if task is None:
+        if task is None or task.phase in {
+            TaskPhase.COMPLETE,
+            TaskPhase.CANCELLED,
+            TaskPhase.ERROR,
+        }:
             return False
         task.cancelled = True
+        task.cancel_event.set()
         LOGGER.info("Task %s: cancellation requested", task.short_id())
         return True
 
@@ -183,3 +210,33 @@ class TaskManager:
     def _cleanup(self, path: Path) -> None:
         if path.exists():
             rmtree(path, ignore_errors=True)
+
+    @staticmethod
+    def _raise_if_cancelled(task: Task) -> None:
+        if task.cancelled:
+            raise asyncio.CancelledError()
+
+    @asynccontextmanager
+    async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):
+        self._raise_if_cancelled(task)
+        acquire = asyncio.create_task(semaphore.acquire())
+        cancelled = asyncio.create_task(task.cancel_event.wait())
+        done, _ = await asyncio.wait(
+            {acquire, cancelled}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancelled in done or task.cancelled:
+            if acquire.done() and not acquire.cancelled():
+                semaphore.release()
+            else:
+                acquire.cancel()
+                await asyncio.gather(acquire, return_exceptions=True)
+            if not cancelled.done():
+                cancelled.cancel()
+                await asyncio.gather(cancelled, return_exceptions=True)
+            raise asyncio.CancelledError()
+        cancelled.cancel()
+        await asyncio.gather(cancelled, return_exceptions=True)
+        try:
+            yield
+        finally:
+            semaphore.release()

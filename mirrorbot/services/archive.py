@@ -1,0 +1,71 @@
+import asyncio
+import logging
+from asyncio.subprocess import PIPE
+from pathlib import Path
+
+from ..core.models import Task
+from ..downloaders.process import terminate_process
+
+LOGGER = logging.getLogger(__name__)
+
+
+class ArchivePasswordError(RuntimeError):
+    pass
+
+
+async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        cwd=cwd,
+        stdout=PIPE,
+        stderr=PIPE,
+    )
+    communication = asyncio.create_task(process.communicate())
+    while not communication.done():
+        if task.cancelled:
+            await terminate_process(process)
+            await communication
+            raise asyncio.CancelledError()
+        await asyncio.sleep(0.25)
+    stdout, stderr = await communication
+    if process.returncode:
+        detail = stderr.decode(errors="replace").strip() or stdout.decode(
+            errors="replace"
+        ).strip()
+        if "Break signaled" in detail or "Wrong password" in detail:
+            raise ArchivePasswordError(
+                "Archive is password-protected or the password is incorrect. "
+                "Use -ep <password>."
+            )
+        LOGGER.error("Archive command failed command=%s detail=%s", args[0], detail)
+        raise RuntimeError(f"Archive command failed: {detail[-500:]}")
+
+
+async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -> Path:
+    if task.cancelled:
+        raise asyncio.CancelledError()
+    output = path.with_suffix(".zip")
+    if output == path:
+        output = path.with_name(f"{path.name}.zip")
+    output.unlink(missing_ok=True)
+    command = ["7z", "a", "-tzip", f"-mx={level}", "-y"]
+    if password:
+        command.extend([f"-p{password}", "-mem=AES256"])
+    command.extend([str(output), path.name])
+    await _run(task, *command, cwd=path.parent)
+    return output
+
+
+async def extract_path(path: Path, task: Task, password: str = "") -> Path:
+    if task.cancelled:
+        raise asyncio.CancelledError()
+    output_dir = path.parent / path.stem
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = ["7z", "x", "-y", f"-o{output_dir}"]
+    if password:
+        command.append(f"-p{password}")
+    else:
+        command.append("-p-")
+    command.append(str(path))
+    await _run(task, *command)
+    return output_dir

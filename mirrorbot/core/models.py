@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -77,6 +78,7 @@ class Task:
     selection_url: str = ""
     created_at: float = field(default_factory=time)
     cancelled: bool = False
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def short_id(self) -> str:
         return self.id.split("-", 1)[0]

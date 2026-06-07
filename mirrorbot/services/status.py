@@ -1,6 +1,6 @@
 from html import escape
 
-from .models import Task, TaskPhase
+from ..core.models import Task, TaskPhase
 
 
 def human_size(size: int) -> str:
@@ -46,9 +46,7 @@ def task_status(task: Task) -> str:
         lines.append("<i>Waiting for file selection</i>")
     elif task.phase == TaskPhase.METADATA:
         lines.append("<i>Waiting for metadata</i>")
-    elif task.phase == TaskPhase.QUEUED:
-        lines.append("<i>Waiting in download queue</i>")
-    elif task.phase == TaskPhase.DOWNLOADING:
+    elif task.phase in {TaskPhase.DOWNLOADING, TaskPhase.DELIVERING}:
         if task.size:
             percent = f"{task.progress * 100:.1f}%"
         else:

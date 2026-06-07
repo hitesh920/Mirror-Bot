@@ -21,8 +21,7 @@ class Config:
     local_download_root: Path
     google_drive_folder_id: str
     rclone_remote_path: str
-    queue_download_limit: int
-    queue_upload_limit: int
+    task_limit: int
     status_update_interval: int
     public_base_url: str
     torrent_selection_port: int
@@ -63,9 +62,8 @@ class Config:
             local_download_root=Path(getenv("LOCAL_DOWNLOAD_ROOT", "")),
             google_drive_folder_id=getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
             rclone_remote_path=getenv("RCLONE_REMOTE_PATH", ""),
-            queue_download_limit=_int("QUEUE_DOWNLOAD_LIMIT", 2),
-            queue_upload_limit=_int("QUEUE_UPLOAD_LIMIT", 2),
-            status_update_interval=_int("STATUS_UPDATE_INTERVAL", 5),
+            task_limit=max(1, _int("TASK_LIMIT", 10)),
+            status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
             public_base_url=getenv("PUBLIC_BASE_URL", "http://localhost:8000"),
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8000),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),

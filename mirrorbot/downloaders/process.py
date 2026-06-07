@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from ..models import Task
+from ..core.models import Task
 
 
 def path_size(path: Path) -> int:

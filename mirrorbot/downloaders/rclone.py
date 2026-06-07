@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from ..models import Task
+from ..core.models import Task
 from ..resolvers.base import safe_name
 from .process import terminate_process
 

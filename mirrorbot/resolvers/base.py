@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from ..models import Source, SourceType
+from ..core.models import Source, SourceType
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
