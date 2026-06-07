@@ -8,3 +8,6 @@ downloads/
 *.session
 *.session-journal
 logs/
+credentials.json
+token.pickle
+token.pickel

@@ -17,6 +17,7 @@ from .core.parser import parse_add_text
 from .core.source_detector import detect_source
 from .services.status import format_status
 from .services.task_manager import TaskManager
+from .services.google_drive_delivery import load_credentials
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -274,6 +275,20 @@ def completion_message(task) -> str:
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             result_list("Uploaded files", task.result_files, task.result_links),
         ]
+    elif task.destination == Destination.GOOGLE_DRIVE:
+        drive_link = (
+            f'<b>Drive link:</b> <a href="{escape(task.result_links[0], quote=True)}">Open</a>'
+            if task.result_links
+            else ""
+        )
+        sections = [
+            "<b>Task complete</b>",
+            f"<b>Name:</b> <code>{name}</code>",
+            "<b>Uploaded to:</b> <code>Google Drive</code>",
+            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
+            drive_link,
+        ]
     else:
         sections = [
             "<b>Task complete</b>",
@@ -296,7 +311,7 @@ async def start(_, message: Message):
 async def help_cmd(_, message: Message):
     await message.reply(
         "/add <link> [-z|-zp pass|-e|-ep pass|-n name]\n"
-        "/status\n/stats\n/cancel <task-id>\n/cancelall\n/delete"
+        "/status\n/stats\n/gdstatus\n/cancel <task-id>\n/cancelall\n/delete"
     )
 
 
@@ -415,7 +430,10 @@ async def destination_choice(_, query):
     if dest == "telegram":
         await launch_selected_task(query, token, Destination.TELEGRAM)
         return
-    await query.answer("This destination is planned for a later step.", show_alert=True)
+    if dest == "gdrive":
+        await launch_selected_task(query, token, Destination.GOOGLE_DRIVE)
+        return
+    await query.answer("Unknown destination", show_alert=True)
 
 
 async def launch_selected_task(query, token: str, destination: Destination) -> None:
@@ -567,6 +585,26 @@ async def stats(_, message: Message):
         f"Local free: {disk.free // (1024 ** 3)} GiB\n"
         f"Tasks: {len(manager.active_tasks())}"
     )
+
+
+@app.on_message(filters.command("gdstatus") & owner_filter)
+async def gdstatus(_, message: Message):
+    LOGGER.info("Received /gdstatus")
+    credentials_exists = config.google_credentials_file.is_file()
+    token_exists = config.google_token_file.is_file()
+    if not credentials_exists or not token_exists:
+        await message.reply(
+            "Google Drive auth:\n"
+            f"credentials.json: {'found' if credentials_exists else 'missing'}\n"
+            f"token.pickle: {'found' if token_exists else 'missing'}"
+        )
+        return
+    try:
+        await asyncio.to_thread(load_credentials, config)
+    except Exception as exc:
+        await message.reply(f"Google Drive auth failed:\n{exc}")
+        return
+    await message.reply("Google Drive auth is ready.")
 
 
 @app.on_message(filters.command("cancel") & owner_filter)

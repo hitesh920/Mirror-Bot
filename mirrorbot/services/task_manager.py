@@ -24,6 +24,7 @@ from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
 from ..resolvers import resolve_source
 from .local_delivery import deliver_to_local
+from .google_drive_delivery import upload_to_gdrive
 from .telegram_delivery import upload_to_telegram
 
 LOGGER = logging.getLogger(__name__)
@@ -152,6 +153,14 @@ class TaskManager:
                             self.config.telegram_leech_split_size,
                         ),
                     )
+                elif task.destination == Destination.GOOGLE_DRIVE:
+                    task.phase = TaskPhase.UPLOADING
+                    task.current_file = downloaded.name
+                    LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
+                    await self._run_or_cancel(
+                        task,
+                        upload_to_gdrive(task, downloaded, self.config),
+                    )
                 else:
                     raise NotImplementedError(
                         f"{task.destination.value} delivery is not implemented"
@@ -238,7 +247,7 @@ class TaskManager:
         if task.source.type == SourceType.YTDLP:
             return await download_ytdlp(task)
         if task.source.type == SourceType.GOOGLE_DRIVE:
-            return await download_gdrive(task)
+            return await download_gdrive(task, self.config)
         if task.source.type == SourceType.RCLONE:
             return await download_rclone(task, self.config.rclone_config_file)
         raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")

@@ -36,6 +36,8 @@ class Config:
     zip_compression_level: int = 5
     log_file: str = "logs/bot.log"
     rclone_config_file: Path = Path("/app/data/rclone/rclone.conf")
+    google_credentials_file: Path = Path("/app/data/google/credentials.json")
+    google_token_file: Path = Path("/app/data/google/token.pickle")
 
     @classmethod
     def load(cls) -> "Config":

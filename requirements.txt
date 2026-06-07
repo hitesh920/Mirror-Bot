@@ -1,7 +1,9 @@
 aiofiles
 aiohttp
 curl_cffi
-gdown
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
 aioshutil
 python-dotenv
 kurigram
