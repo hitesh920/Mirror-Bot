@@ -33,6 +33,7 @@ app = Client(
     api_id=config.telegram_api_id,
     api_hash=config.telegram_api_hash,
     bot_token=config.bot_token,
+    max_concurrent_transmissions=config.task_limit,
 )
 
 
@@ -254,23 +255,20 @@ async def destination_choice(_, query):
     if dest == "local":
         await query.message.edit("Choose local category:", reply_markup=local_buttons(token))
         return
+    if dest == "telegram":
+        await launch_selected_task(query, token, Destination.TELEGRAM)
+        return
     await query.answer("This destination is planned for a later step.", show_alert=True)
 
 
-@app.on_callback_query(filters.regex(r"^local:"))
-async def local_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, category, token = query.data.split(":", 2)
+async def launch_selected_task(query, token: str, destination: Destination) -> None:
     pending = pending_adds.pop(token, None)
     if pending is None:
         await query.answer("Expired task", show_alert=True)
         return
     source, options, reply = pending
-    destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
     task = manager.create_task(query.from_user.id, query.message.chat.id, query.message.id, source, destination, options)
-    LOGGER.info("Task %s: selected local category=%s", task.short_id(), category)
+    LOGGER.info("Task %s: selected destination=%s", task.short_id(), destination.value)
     is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
     if is_torrent:
         await query.message.edit("Collecting torrent metadata...")
@@ -298,7 +296,7 @@ async def local_choice(_, query):
             if task.phase == TaskPhase.DOWNLOADING:
                 await send_live_status(task.chat_id)
 
-        await manager.run_local_task(
+        await manager.run_task(
             task,
             telegram_reply=reply,
             telegram_client=app,
@@ -311,7 +309,8 @@ async def local_choice(_, query):
             except Exception:
                 pass
         if task.phase.value == "complete":
-            await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
+            if task.destination != Destination.TELEGRAM:
+                await app.send_message(task.chat_id, f"Saved locally:\n`{task.result_path}`")
         elif task.error:
             await app.send_message(task.chat_id, f"Task `{task.short_id()}` failed:\n`{task.error}`")
         else:
@@ -322,6 +321,16 @@ async def local_choice(_, query):
     if not is_torrent:
         await asyncio.sleep(0)
         await start_live_status(task.chat_id, query.message)
+
+
+@app.on_callback_query(filters.regex(r"^local:"))
+async def local_choice(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    _, category, token = query.data.split(":", 2)
+    destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
+    await launch_selected_task(query, token, destination)
 
 
 @app.on_message(filters.command("status") & owner_filter)

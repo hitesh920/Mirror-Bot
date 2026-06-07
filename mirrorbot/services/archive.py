@@ -13,6 +13,14 @@ class ArchivePasswordError(RuntimeError):
     pass
 
 
+class ArchiveUnsupportedError(RuntimeError):
+    pass
+
+
+class ArchiveCorruptError(RuntimeError):
+    pass
+
+
 async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
     process = await asyncio.create_subprocess_exec(
         *args,
@@ -32,10 +40,29 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
         detail = stderr.decode(errors="replace").strip() or stdout.decode(
             errors="replace"
         ).strip()
-        if "Break signaled" in detail or "Wrong password" in detail:
+        if (
+            "Break signaled" in detail
+            or "Wrong password" in detail
+            or "Incorrect password" in detail
+        ):
             raise ArchivePasswordError(
                 "Archive is password-protected or the password is incorrect. "
                 "Use -ep <password>."
+            )
+        if "Unsupported Method" in detail:
+            raise ArchiveUnsupportedError(
+                "This archive uses a compression method that the installed extractor "
+                "does not support."
+            )
+        if (
+            "Attempted to read more data than was available" in detail
+            or "Unexpected end of archive" in detail
+            or "Unexpected end of file" in detail
+            or "CRC failed" in detail
+            or "checksum error" in detail.lower()
+        ):
+            raise ArchiveCorruptError(
+                "The archive is incomplete or corrupted and could not be extracted."
             )
         LOGGER.error("Archive command failed command=%s detail=%s", args[0], detail)
         raise RuntimeError(f"Archive command failed: {detail[-500:]}")
@@ -61,11 +88,20 @@ async def extract_path(path: Path, task: Task, password: str = "") -> Path:
         raise asyncio.CancelledError()
     output_dir = path.parent / path.stem
     output_dir.mkdir(parents=True, exist_ok=True)
-    command = ["7z", "x", "-y", f"-o{output_dir}"]
-    if password:
-        command.append(f"-p{password}")
+    if path.suffix.lower() == ".rar":
+        command = ["unrar", "x", "-o+", "-idq"]
+        if password:
+            command.append(f"-p{password}")
+        else:
+            command.append("-p-")
+        command.append(str(path))
+        command.append(f"{output_dir}/")
     else:
-        command.append("-p-")
-    command.append(str(path))
+        command = ["7z", "x", "-y", f"-o{output_dir}"]
+        if password:
+            command.append(f"-p{password}")
+        else:
+            command.append("-p-")
+        command.append(str(path))
     await _run(task, *command)
     return output_dir

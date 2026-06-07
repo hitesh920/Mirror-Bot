@@ -46,13 +46,18 @@ def task_status(task: Task) -> str:
         lines.append("<i>Waiting for file selection</i>")
     elif task.phase == TaskPhase.METADATA:
         lines.append("<i>Waiting for metadata</i>")
-    elif task.phase in {TaskPhase.DOWNLOADING, TaskPhase.DELIVERING}:
+    elif task.phase in {
+        TaskPhase.DOWNLOADING,
+        TaskPhase.DELIVERING,
+        TaskPhase.UPLOADING,
+    }:
         if task.size:
             percent = f"{task.progress * 100:.1f}%"
         else:
             percent = "--"
         lines.append(f"<code>{progress_bar(task.progress)}</code> <b>{percent}</b>")
-        lines.append(field("Processed", human_size(task.downloaded)))
+        processed_label = "Uploaded" if task.phase == TaskPhase.UPLOADING else "Processed"
+        lines.append(field(processed_label, human_size(task.downloaded)))
         lines.append(field("Size", human_size(task.size) if task.size else "Unknown"))
         lines.append(field("Speed", f"{human_size(task.speed)}/s" if task.speed else "-"))
         lines.append(field("ETA", human_time(task.eta)))

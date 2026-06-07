@@ -5,7 +5,13 @@ from pathlib import Path
 from shutil import rmtree
 from uuid import uuid4
 
-from .archive import ArchivePasswordError, extract_path, zip_path
+from .archive import (
+    ArchiveCorruptError,
+    ArchivePasswordError,
+    ArchiveUnsupportedError,
+    extract_path,
+    zip_path,
+)
 from ..core.config import Config
 from ..core.models import Destination, SourceType, Task, TaskPhase
 from ..downloaders.direct import download_direct
@@ -18,6 +24,7 @@ from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
 from ..resolvers import resolve_source
 from .local_delivery import deliver_to_local
+from .telegram_delivery import upload_to_telegram
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +63,7 @@ class TaskManager:
         )
         return task
 
-    async def run_local_task(
+    async def run_task(
         self,
         task: Task,
         telegram_reply=None,
@@ -99,12 +106,35 @@ class TaskManager:
                     self._raise_if_cancelled(task)
 
                 self._raise_if_cancelled(task)
-                task.phase = TaskPhase.DELIVERING
-                LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
-                category = "movies" if task.destination == Destination.LOCAL_MOVIES else "series"
-                task.result_path = await deliver_to_local(
-                    task, downloaded, self.config.local_download_root, category
-                )
+                if task.destination in {
+                    Destination.LOCAL_MOVIES,
+                    Destination.LOCAL_SERIES,
+                }:
+                    task.phase = TaskPhase.DELIVERING
+                    LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
+                    category = (
+                        "movies"
+                        if task.destination == Destination.LOCAL_MOVIES
+                        else "series"
+                    )
+                    task.result_path = await deliver_to_local(
+                        task, downloaded, self.config.local_download_root, category
+                    )
+                elif task.destination == Destination.TELEGRAM:
+                    if telegram_client is None:
+                        raise RuntimeError("Telegram client is unavailable")
+                    task.phase = TaskPhase.UPLOADING
+                    LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
+                    await upload_to_telegram(
+                        task,
+                        downloaded,
+                        telegram_client,
+                        self.config.telegram_leech_split_size,
+                    )
+                else:
+                    raise NotImplementedError(
+                        f"{task.destination.value} delivery is not implemented"
+                    )
                 task.phase = TaskPhase.COMPLETE
             LOGGER.info(
                 "Task %s: complete result=%s",
@@ -115,7 +145,11 @@ class TaskManager:
             task.phase = TaskPhase.CANCELLED
             task.cancelled = True
             LOGGER.info("Task %s: cancelled", task.short_id())
-        except ArchivePasswordError as exc:
+        except (
+            ArchiveCorruptError,
+            ArchivePasswordError,
+            ArchiveUnsupportedError,
+        ) as exc:
             task.phase = TaskPhase.ERROR
             task.error = str(exc)
             LOGGER.warning("Task %s: %s", task.short_id(), task.error)

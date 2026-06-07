@@ -7,10 +7,12 @@ WORKDIR /app
 
 COPY --from=deno /deno /usr/local/bin/deno
 
-RUN apt-get update \
+RUN sed -i 's/Components: main/Components: main non-free/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
-        p7zip-full \
+        7zip \
+        unrar \
         qbittorrent-nox \
         rclone \
         ca-certificates \

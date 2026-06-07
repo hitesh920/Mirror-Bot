@@ -31,6 +31,7 @@ class TaskPhase(str, Enum):
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
     DELIVERING = "delivering"
+    UPLOADING = "uploading"
     COMPLETE = "complete"
     CANCELLED = "cancelled"
     ERROR = "error"
