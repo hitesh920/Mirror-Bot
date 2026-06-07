@@ -878,7 +878,7 @@ async def search_cmd(_, message: Message):
     )
 
 
-@app.on_message(filters.text & owner_filter)
+@app.on_message(filters.text & ~filters.regex(r"^/") & owner_filter)
 async def pending_drive_delete(_, message: Message):
     if message.chat.id not in pending_drive_delete_chats:
         return
