@@ -90,15 +90,20 @@ class TaskManager:
                 )
 
                 self._raise_if_cancelled(task)
-                task.phase = TaskPhase.PROCESSING
+                task.phase = TaskPhase.PREPARING
+                if not task.name:
+                    task.name = downloaded.name
+                task.current_file = downloaded.name
                 LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
                 if task.options.extract:
+                    self._start_processing_phase(task, TaskPhase.EXTRACTING, downloaded)
                     LOGGER.info("Task %s: extracting archive", task.short_id())
                     downloaded = await extract_path(
                         downloaded, task, task.options.extract_password
                     )
                     self._raise_if_cancelled(task)
                 if task.options.zip:
+                    self._start_processing_phase(task, TaskPhase.ARCHIVING, downloaded)
                     LOGGER.info("Task %s: creating zip archive", task.short_id())
                     downloaded = await zip_path(
                         downloaded,
@@ -108,13 +113,21 @@ class TaskManager:
                     )
                     self._raise_if_cancelled(task)
 
-                self._record_result_manifest(task, downloaded)
+                task.phase = TaskPhase.SCANNING
+                task.current_file = downloaded.name
+                task.progress = 0
+                task.downloaded = 0
+                task.speed = 0
+                task.eta = 0
+                LOGGER.info("Task %s: phase=%s path=%s", task.short_id(), task.phase.value, downloaded)
+                await asyncio.to_thread(self._record_result_manifest, task, downloaded)
                 self._raise_if_cancelled(task)
                 if task.destination in {
                     Destination.LOCAL_MOVIES,
                     Destination.LOCAL_SERIES,
                 }:
-                    task.phase = TaskPhase.DELIVERING
+                    task.phase = TaskPhase.MOVING
+                    task.current_file = downloaded.name
                     LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                     category = (
                         "movies"
@@ -128,6 +141,7 @@ class TaskManager:
                     if telegram_client is None:
                         raise RuntimeError("Telegram client is unavailable")
                     task.phase = TaskPhase.UPLOADING
+                    task.current_file = downloaded.name
                     LOGGER.info("Task %s: phase=%s", task.short_id(), task.phase.value)
                     await self._run_or_cancel(
                         task,
@@ -143,6 +157,7 @@ class TaskManager:
                         f"{task.destination.value} delivery is not implemented"
                     )
                 task.phase = TaskPhase.COMPLETE
+                task.current_file = ""
             LOGGER.info(
                 "Task %s: complete result=%s",
                 task.short_id(),
@@ -263,24 +278,34 @@ class TaskManager:
     @staticmethod
     def _record_result_manifest(task: Task, path: Path) -> None:
         task.result_name = path.name
+        task.result_files = []
+        task.result_folders = []
         if path.is_file():
             task.result_files = [path.name]
-            task.result_folders = []
             return
-        task.result_files = [
-            item.relative_to(path).as_posix()
-            for item in sorted(path.rglob("*"))
-            if item.is_file()
-        ]
-        task.result_folders = [
-            item.relative_to(path).as_posix()
-            for item in sorted(path.rglob("*"))
-            if item.is_dir()
-        ]
+        for item in sorted(path.rglob("*")):
+            relative = item.relative_to(path).as_posix()
+            task.current_file = relative
+            if item.is_file():
+                task.result_files.append(relative)
+            elif item.is_dir():
+                task.result_folders.append(relative)
 
     def _cleanup(self, path: Path) -> None:
         if path.exists():
             rmtree(path, ignore_errors=True)
+
+    @staticmethod
+    def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
+        task.phase = phase
+        task.current_file = path.name
+        task.size = path.stat().st_size if path.is_file() else sum(
+            item.stat().st_size for item in path.rglob("*") if item.is_file()
+        )
+        task.downloaded = 0
+        task.progress = 0
+        task.speed = 0
+        task.eta = 0
 
     @staticmethod
     def _raise_if_cancelled(task: Task) -> None:

@@ -26,13 +26,14 @@ class YtDlpLogger:
 
 def _format_for(task: Task) -> dict:
     if task.options.ytdlp_kind == "audio":
+        quality = task.options.ytdlp_quality or "320"
         return {
             "format": "bestaudio/best",
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": "320",
+                    "preferredquality": quality,
                 }
             ],
         }

@@ -59,6 +59,7 @@ async def deliver_to_local(
 
 
 async def _copy_file(task: Task, source: Path, destination: Path, started: float) -> None:
+    task.current_file = source.name
     destination.parent.mkdir(parents=True, exist_ok=True)
     async with aiofiles.open(source, "rb") as input_file:
         async with aiofiles.open(destination, "wb") as output_file:

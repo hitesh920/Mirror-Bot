@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from asyncio.subprocess import PIPE
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from ..core.models import Task
 from ..downloaders.process import terminate_process
 
 LOGGER = logging.getLogger(__name__)
+PROGRESS_PATTERN = re.compile(rb"(?<!\d)(\d{1,3})%")
 
 
 class ArchivePasswordError(RuntimeError):
@@ -28,18 +30,30 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
         stdout=PIPE,
         stderr=PIPE,
     )
-    communication = asyncio.create_task(process.communicate())
-    while not communication.done():
+    output: list[bytes] = []
+
+    async def read_stream(stream) -> None:
+        while chunk := await stream.read(4096):
+            output.append(chunk)
+            matches = PROGRESS_PATTERN.findall(chunk)
+            if matches:
+                percent = min(100, int(matches[-1]))
+                task.progress = percent / 100
+                task.downloaded = int(task.size * task.progress)
+
+    readers = [
+        asyncio.create_task(read_stream(process.stdout)),
+        asyncio.create_task(read_stream(process.stderr)),
+    ]
+    while process.returncode is None:
         if task.cancelled:
             await terminate_process(process)
-            await communication
+            await asyncio.gather(*readers, return_exceptions=True)
             raise asyncio.CancelledError()
         await asyncio.sleep(0.25)
-    stdout, stderr = await communication
+    await asyncio.gather(*readers)
+    detail = b"".join(output).decode(errors="replace").strip()
     if process.returncode:
-        detail = stderr.decode(errors="replace").strip() or stdout.decode(
-            errors="replace"
-        ).strip()
         if (
             "Break signaled" in detail
             or "Wrong password" in detail
@@ -66,6 +80,8 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
             )
         LOGGER.error("Archive command failed command=%s detail=%s", args[0], detail)
         raise RuntimeError(f"Archive command failed: {detail[-500:]}")
+    task.progress = 1
+    task.downloaded = task.size
 
 
 async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -> Path:
@@ -75,7 +91,7 @@ async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -
     if output == path:
         output = path.with_name(f"{path.name}.zip")
     output.unlink(missing_ok=True)
-    command = ["7z", "a", "-tzip", f"-mx={level}", "-y"]
+    command = ["7z", "a", "-tzip", f"-mx={level}", "-y", "-bsp1"]
     if password:
         command.extend([f"-p{password}", "-mem=AES256"])
     command.extend([str(output), path.name])
@@ -89,7 +105,7 @@ async def extract_path(path: Path, task: Task, password: str = "") -> Path:
     output_dir = path.parent / path.stem
     output_dir.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".rar":
-        command = ["unrar", "x", "-o+", "-idq"]
+        command = ["unrar", "x", "-o+"]
         if password:
             command.append(f"-p{password}")
         else:
@@ -97,7 +113,7 @@ async def extract_path(path: Path, task: Task, password: str = "") -> Path:
         command.append(str(path))
         command.append(f"{output_dir}/")
     else:
-        command = ["7z", "x", "-y", f"-o{output_dir}"]
+        command = ["7z", "x", "-y", "-bsp1", f"-o{output_dir}"]
         if password:
             command.append(f"-p{password}")
         else:

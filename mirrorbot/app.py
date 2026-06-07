@@ -23,11 +23,14 @@ LOGGER = logging.getLogger(__name__)
 config = Config.load()
 manager = TaskManager(config)
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
+pending_add_messages: dict[str, Message] = {}
+pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
 delete_targets: dict[str, Path] = {}
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+PENDING_ADD_TIMEOUT = 300
 
 app = Client(
     "mirrorbot",
@@ -52,6 +55,52 @@ def chat_tasks(chat_id: int):
         for task in manager.active_tasks()
         if task.chat_id == chat_id and task.status_visible
     ]
+
+
+async def expire_pending_add(token: str) -> None:
+    try:
+        await asyncio.sleep(PENDING_ADD_TIMEOUT)
+        pending = pending_adds.pop(token, None)
+        message = pending_add_messages.pop(token, None)
+        if pending is None:
+            return
+        LOGGER.info("Expired pending /add selection message_id=%s", token)
+        if message:
+            try:
+                await message.edit("Selection expired. Send /add again.")
+            except Exception:
+                LOGGER.debug(
+                    "Could not edit expired /add selection message_id=%s",
+                    token,
+                    exc_info=True,
+                )
+    finally:
+        pending_add_expiry_jobs.pop(token, None)
+
+
+def start_pending_add_expiry(token: str, message: Message) -> None:
+    pending_add_messages[token] = message
+    old_job = pending_add_expiry_jobs.pop(token, None)
+    if old_job:
+        old_job.cancel()
+    pending_add_expiry_jobs[token] = asyncio.create_task(expire_pending_add(token))
+
+
+def take_pending_add(token: str):
+    pending = pending_adds.pop(token, None)
+    pending_add_messages.pop(token, None)
+    job = pending_add_expiry_jobs.pop(token, None)
+    if job:
+        job.cancel()
+    return pending
+
+
+async def answer_expired_selection(query) -> None:
+    await query.answer("Expired task", show_alert=True)
+    try:
+        await query.message.edit("Selection expired. Send /add again.")
+    except Exception:
+        pass
 
 
 async def update_status_message(chat_id: int) -> None:
@@ -158,7 +207,17 @@ def local_buttons(token: str) -> InlineKeyboardMarkup:
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Audio 320kbps MP3", callback_data=f"yt:audio:320:{token}")],
+            [
+                InlineKeyboardButton("Video", callback_data=f"ytkind:video:{token}"),
+                InlineKeyboardButton("Audio", callback_data=f"ytkind:audio:{token}"),
+            ],
+        ]
+    )
+
+
+def ytdlp_video_buttons(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
             [
                 InlineKeyboardButton("360p", callback_data=f"yt:video:360:{token}"),
                 InlineKeyboardButton("480p", callback_data=f"yt:video:480:{token}"),
@@ -167,6 +226,24 @@ def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("720p", callback_data=f"yt:video:720:{token}"),
                 InlineKeyboardButton("1080p", callback_data=f"yt:video:1080:{token}"),
             ],
+            [InlineKeyboardButton("Back", callback_data=f"ytkind:back:{token}")],
+        ]
+    )
+
+
+def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("64 kbps", callback_data=f"yt:audio:64:{token}"),
+                InlineKeyboardButton("128 kbps", callback_data=f"yt:audio:128:{token}"),
+            ],
+            [
+                InlineKeyboardButton("192 kbps", callback_data=f"yt:audio:192:{token}"),
+                InlineKeyboardButton("256 kbps", callback_data=f"yt:audio:256:{token}"),
+            ],
+            [InlineKeyboardButton("320 kbps", callback_data=f"yt:audio:320:{token}")],
+            [InlineKeyboardButton("Back", callback_data=f"ytkind:back:{token}")],
         ]
     )
 
@@ -188,7 +265,7 @@ def result_list(title: str, items: list[str], links: list[str] | None = None) ->
 
 
 def completion_message(task) -> str:
-    name = escape(task.result_name or task.name or task.source.type.value)
+    name = escape(task.name or task.result_name or task.source.type.value)
     if task.destination == Destination.TELEGRAM:
         sections = [
             "<b>Task complete</b>",
@@ -268,9 +345,42 @@ async def add(_, message: Message):
     token = str(message.id)
     pending_adds[token] = (source, options, reply)
     if source.type == SourceType.YTDLP:
-        await message.reply("Choose yt-dlp download type:", reply_markup=ytdlp_buttons(token))
+        prompt = await message.reply(
+            "Choose download type:",
+            reply_markup=ytdlp_buttons(token),
+        )
     else:
-        await message.reply("Choose destination:", reply_markup=destination_buttons(token))
+        prompt = await message.reply(
+            "Choose destination:",
+            reply_markup=destination_buttons(token),
+        )
+    start_pending_add_expiry(token, prompt)
+
+
+@app.on_callback_query(filters.regex(r"^ytkind:"))
+async def ytdlp_kind_choice(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    _, kind, token = query.data.split(":", 2)
+    if token not in pending_adds:
+        await answer_expired_selection(query)
+        return
+    if kind == "video":
+        await query.message.edit(
+            "Choose video resolution:",
+            reply_markup=ytdlp_video_buttons(token),
+        )
+    elif kind == "audio":
+        await query.message.edit(
+            "Choose MP3 quality:",
+            reply_markup=ytdlp_audio_buttons(token),
+        )
+    else:
+        await query.message.edit(
+            "Choose download type:",
+            reply_markup=ytdlp_buttons(token),
+        )
 
 
 @app.on_callback_query(filters.regex(r"^yt:"))
@@ -281,7 +391,7 @@ async def ytdlp_choice(_, query):
     _, kind, quality, token = query.data.split(":", 3)
     pending = pending_adds.get(token)
     if pending is None:
-        await query.answer("Expired task", show_alert=True)
+        await answer_expired_selection(query)
         return
     source, options, reply = pending
     options.ytdlp_kind = kind
@@ -296,6 +406,9 @@ async def destination_choice(_, query):
         await query.answer("Not allowed", show_alert=True)
         return
     _, dest, token = query.data.split(":", 2)
+    if token not in pending_adds:
+        await answer_expired_selection(query)
+        return
     if dest == "local":
         await query.message.edit("Choose local category:", reply_markup=local_buttons(token))
         return
@@ -306,9 +419,9 @@ async def destination_choice(_, query):
 
 
 async def launch_selected_task(query, token: str, destination: Destination) -> None:
-    pending = pending_adds.pop(token, None)
+    pending = take_pending_add(token)
     if pending is None:
-        await query.answer("Expired task", show_alert=True)
+        await answer_expired_selection(query)
         return
     source, options, reply = pending
     task = manager.create_task(

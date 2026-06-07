@@ -30,6 +30,12 @@ class TaskPhase(str, Enum):
     SELECTING = "selecting"
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
+    PREPARING = "preparing"
+    SCANNING = "scanning"
+    EXTRACTING = "extracting"
+    ARCHIVING = "archiving"
+    SPLITTING = "splitting"
+    MOVING = "moving"
     DELIVERING = "delivering"
     UPLOADING = "uploading"
     COMPLETE = "complete"
@@ -68,6 +74,7 @@ class Task:
     work_dir: Path
     phase: TaskPhase = TaskPhase.QUEUED
     name: str = ""
+    current_file: str = ""
     progress: float = 0
     size: int = 0
     downloaded: int = 0
