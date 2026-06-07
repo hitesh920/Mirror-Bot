@@ -27,6 +27,7 @@ from .services.google_drive_delivery import (
     search_drive_items,
 )
 from .services.drive_search_pages import DriveSearchPages
+from .services.public_url import public_base_url
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ pending_drive_delete_chats: set[int] = set()
 pending_drive_delete_items: dict[str, dict] = {}
 pending_drive_delete_expiry_jobs: dict[str, asyncio.Task] = {}
 drive_search_pages = DriveSearchPages(
-    config.public_base_url,
+    public_base_url(config.torrent_selection_port + 1, config.public_base_url),
     config.torrent_selection_port + 1,
     300,
 )

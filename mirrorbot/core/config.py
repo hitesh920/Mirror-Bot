@@ -63,7 +63,7 @@ class Config:
             google_drive_folder_id=getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
             task_limit=max(1, _int("TASK_LIMIT", 10)),
             status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
-            public_base_url=getenv("PUBLIC_BASE_URL", "http://localhost:8000"),
+            public_base_url=getenv("PUBLIC_BASE_URL", ""),
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8000),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
         )

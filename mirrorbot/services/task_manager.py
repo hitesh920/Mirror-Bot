@@ -25,6 +25,7 @@ from ..resolvers import resolve_source
 from .local_delivery import deliver_to_local
 from .google_drive_delivery import upload_to_gdrive
 from .telegram_delivery import upload_to_telegram
+from .public_url import public_base_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class TaskManager:
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
             self.qb,
-            config.public_base_url,
+            public_base_url(config.torrent_selection_port, config.public_base_url),
             config.torrent_selection_port,
             config.torrent_selection_timeout,
         )
