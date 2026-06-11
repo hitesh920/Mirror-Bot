@@ -26,6 +26,7 @@ from .local_delivery import deliver_to_local
 from .google_drive_delivery import upload_to_gdrive
 from .telegram_delivery import upload_to_telegram
 from .public_url import public_base_url
+from .media_library import media_identity_name, resolve_media
 
 LOGGER = logging.getLogger(__name__)
 
@@ -135,8 +136,12 @@ class TaskManager:
                         if task.destination == Destination.LOCAL_MOVIES
                         else "series"
                     )
+                    media_match = await asyncio.to_thread(
+                        resolve_media, media_identity_name(downloaded, category), category, self.config.tmdb_api_key
+                    )
+                    task.name = media_match.folder_name
                     task.result_path = await deliver_to_local(
-                        task, downloaded, self.config.local_download_root, category
+                        task, downloaded, self.config.local_download_root, category, media_match
                     )
                 elif task.destination == Destination.TELEGRAM:
                     if telegram_client is None:
@@ -207,6 +212,35 @@ class TaskManager:
                     LOGGER.exception(
                         "Task %s: failed to clean qBittorrent task", task.short_id()
                     )
+            self._cleanup(task.work_dir)
+        return task
+
+    async def run_local_upload(self, task: Task, path: Path, telegram_client) -> Task:
+        try:
+            async with self._queue_slot(self.task_sem, task):
+                task.phase = TaskPhase.SCANNING
+                task.name = path.name
+                task.current_file = path.name
+                await asyncio.to_thread(self._record_result_manifest, task, path)
+                self._raise_if_cancelled(task)
+                task.phase = TaskPhase.UPLOADING
+                await self._run_or_cancel(
+                    task,
+                    upload_to_telegram(
+                        task, path, telegram_client, self.config.telegram_leech_split_size
+                    ),
+                )
+                task.phase = TaskPhase.COMPLETE
+                task.current_file = ""
+        except asyncio.CancelledError:
+            task.phase = TaskPhase.CANCELLED
+            task.cancelled = True
+            LOGGER.info("Task %s: local upload cancelled", task.short_id())
+        except Exception as exc:
+            task.phase = TaskPhase.ERROR
+            task.error = str(exc)
+            LOGGER.exception("Task %s: local upload failed", task.short_id())
+        finally:
             self._cleanup(task.work_dir)
         return task
 

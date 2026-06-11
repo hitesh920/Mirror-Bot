@@ -12,6 +12,8 @@ services:
       - "8000:8000"
       # Google Drive search pages
       - "8001:8001"
+      # Temporary local file explorer
+      - "8003:8003"
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
@@ -22,13 +24,13 @@ services:
 
   jellyfin:
     image: jellyfin/jellyfin:latest
-    container_name: ${JELLYFIN_CONTAINER_NAME:-jellyfin}
+    container_name: jellyfin
     restart: unless-stopped
     ports:
-      - "${JELLYFIN_PORT:-8002}:8096"
+      - "8002:8096"
     volumes:
-      - ${JELLYFIN_CONFIG_DIR:-./data/jellyfin/config}:/config
-      - ${JELLYFIN_CACHE_DIR:-./data/jellyfin/cache}:/cache
-      - ${JELLYFIN_MEDIA_DIR:-./downloads}:/media:ro
+      - ./data/jellyfin/config:/config
+      - ./data/jellyfin/cache:/cache
+      - ./downloads:/media:ro
     environment:
       - TZ=${TZ:-Asia/Kolkata}

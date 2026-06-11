@@ -32,9 +32,8 @@ class Config:
     public_base_url: str
     torrent_selection_port: int
     torrent_selection_timeout: int
-    jellyfin_port: int
-    jellyfin_container_name: str
-    jellyfin_ensure_running: bool
+    jellyfin_api_key: str
+    tmdb_api_key: str
 
     download_dir: Path = Path("/app/downloads")
     qb_host: str = "http://localhost:8080"
@@ -76,7 +75,6 @@ class Config:
             public_base_url=getenv("PUBLIC_BASE_URL", ""),
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8000),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
-            jellyfin_port=_int("JELLYFIN_PORT", 8002),
-            jellyfin_container_name=getenv("JELLYFIN_CONTAINER_NAME", "jellyfin"),
-            jellyfin_ensure_running=_bool("JELLYFIN_ENSURE_RUNNING", True),
+            jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
+            tmdb_api_key=getenv("TMDB_API_KEY", ""),
         )

@@ -14,7 +14,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .core.config import Config
 from .core.logging_config import setup_logging
-from .core.models import Destination, Source, SourceType, TaskPhase
+from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .core.parser import parse_add_text
 from .core.source_detector import detect_source
 from .downloaders.gdrive import drive_id_from_url
@@ -30,16 +30,20 @@ from .services.google_drive_delivery import (
 from .services.drive_search_pages import DriveSearchPages
 from .services.public_url import public_base_url
 from .services.jellyfin import JellyfinControlError, JellyfinManager
+from .services.jellyfin_api import JellyfinApi
+from .services.file_explorer import FileExplorer
+from .services.media_library import apply_media_permissions
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
 config = Config.load()
 manager = TaskManager(config)
-jellyfin = JellyfinManager(config.jellyfin_container_name)
+jellyfin = JellyfinManager("jellyfin")
+jellyfin_api = JellyfinApi(config.jellyfin_api_key)
+file_explorer = None
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
-delete_targets: dict[str, Path] = {}
 pending_drive_delete_chats: set[int] = set()
 pending_drive_delete_items: dict[str, dict] = {}
 pending_drive_delete_expiry_jobs: dict[str, asyncio.Task] = {}
@@ -73,6 +77,7 @@ HELP_TEXT = "\n".join(
         "<code>/stats</code> - bot/server stats",
         "<code>/gdstats</code> - Google Drive auth and quota",
         "<code>/jellyfin</code> - manage Jellyfin",
+        "<code>/local</code> - temporary local file explorer",
         "",
         "<b>Manage</b>",
         "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
@@ -385,6 +390,7 @@ def completion_message(task) -> str:
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
             result_list("Files", task.result_files),
             result_list("Folders", task.result_folders),
+            f'<b>Jellyfin:</b> <a href="{escape(jellyfin_url(), quote=True)}">Open</a>',
         ]
     return "\n".join(section for section in sections if section)
 
@@ -595,6 +601,11 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             on_selector_ready=selector_ready,
             on_selector_done=selector_done,
         )
+        if task.phase == TaskPhase.COMPLETE and task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
+            try:
+                await asyncio.to_thread(jellyfin_api.scan_library)
+            except Exception:
+                LOGGER.exception("Task %s: Jellyfin scan request failed", task.short_id())
         if is_torrent:
             try:
                 await query.message.delete()
@@ -753,89 +764,13 @@ async def cancel_selector(_, query):
 
 @app.on_message(filters.command("delete") & owner_filter)
 async def delete_cmd(_, message: Message):
-    LOGGER.info("Received /delete")
+    LOGGER.info("Received /delete for Google Drive")
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1:
         await delete_google_drive_link(message, parts[1].strip())
         return
-    await message.reply(
-        "Choose delete target:",
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Local", callback_data="delete:local"),
-                    InlineKeyboardButton("Google Drive", callback_data="delete:gdrive"),
-                ]
-            ]
-        ),
-    )
-
-
-@app.on_callback_query(filters.regex(r"^delete:gdrive$"))
-async def delete_gdrive(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    pending_drive_delete_chats.add(query.message.chat.id)
-    await query.message.edit("Send the Google Drive link or file ID to delete.")
-
-
-@app.on_callback_query(filters.regex(r"^delete:local$"))
-async def delete_local(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    await query.message.edit("Choose local category:", reply_markup=InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Movies", callback_data="dellist:movies:0"),
-            InlineKeyboardButton("Series", callback_data="dellist:series:0"),
-        ]
-    ]))
-
-
-@app.on_callback_query(filters.regex(r"^dellist:"))
-async def delete_list(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, category, page_text = query.data.split(":", 2)
-    page = int(page_text)
-    root = config.local_download_root / category
-    root.mkdir(parents=True, exist_ok=True)
-    folders = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name.lower())
-    chunk = folders[page * 8 : page * 8 + 8]
-    buttons = []
-    for folder in chunk:
-        token = f"{category}:{page}:{len(delete_targets)}"
-        delete_targets[token] = folder
-        buttons.append([InlineKeyboardButton(folder.name[:60], callback_data=f"delitem:{token}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("Back", callback_data=f"dellist:{category}:{page - 1}"))
-    if (page + 1) * 8 < len(folders):
-        nav.append(InlineKeyboardButton("Next", callback_data=f"dellist:{category}:{page + 1}"))
-    if nav:
-        buttons.append(nav)
-    await query.message.edit(f"{category.title()} folders:", reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
-
-
-@app.on_callback_query(filters.regex(r"^delitem:"))
-async def delete_item(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, token = query.data.split(":", 1)
-    target = delete_targets.pop(token, None)
-    if target is None:
-        await query.answer("Expired folder selection", show_alert=True)
-        return
-    root = config.local_download_root.resolve()
-    if root not in target.resolve().parents:
-        await query.answer("Invalid path", show_alert=True)
-        return
-    LOGGER.info("Deleting local folder path=%s", target)
-    rmtree(target, ignore_errors=True)
-    await query.message.edit(f"Deleted `{target}`")
+    pending_drive_delete_chats.add(message.chat.id)
+    await message.reply("Send the Google Drive link or file ID to delete.")
 
 
 @app.on_message(filters.command("search") & owner_filter)
@@ -968,7 +903,7 @@ async def confirm_drive_delete(_, query):
 
 
 def jellyfin_url() -> str:
-    return public_base_url(config.jellyfin_port, config.public_base_url)
+    return public_base_url(8002, config.public_base_url)
 
 
 def jellyfin_buttons() -> InlineKeyboardMarkup:
@@ -983,28 +918,45 @@ def jellyfin_buttons() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Restart", callback_data="jf:restart"),
                 InlineKeyboardButton("Refresh", callback_data="jf:refresh"),
             ],
+            [
+                InlineKeyboardButton("Scan Library", callback_data="jf:scan"),
+            ],
         ]
     )
 
 
-def format_jellyfin_status(status, action: str = "Status") -> str:
+def format_jellyfin_status(status, action: str = "Status", server_info: dict | None = None) -> str:
     running = "yes" if status.running else "no"
-    return "\n".join(
-        [
-            "<b>Jellyfin</b>",
-            f"<b>Action:</b> <code>{escape(action)}</code>",
-            f"<b>Container:</b> <code>{escape(status.name)}</code>",
-            f"<b>State:</b> <code>{escape(status.state)}</code>",
-            f"<b>Health:</b> <code>{escape(status.health)}</code>",
-            f"<b>Running:</b> <code>{running}</code>",
-            f"<b>URL:</b> <code>{escape(jellyfin_url())}</code>",
-        ]
-    )
+    lines = [
+        "<b>Jellyfin</b>",
+        f"<b>Action:</b> <code>{escape(action)}</code>",
+        f"<b>Container:</b> <code>{escape(status.name)}</code>",
+        f"<b>State:</b> <code>{escape(status.state)}</code>",
+        f"<b>Health:</b> <code>{escape(status.health)}</code>",
+        f"<b>Running:</b> <code>{running}</code>",
+    ]
+    if server_info:
+        lines.extend([
+            f"<b>Server:</b> <code>{escape(server_info.get('ServerName', 'unknown'))}</code>",
+            f"<b>Version:</b> <code>{escape(server_info.get('Version', 'unknown'))}</code>",
+        ])
+    lines.append(f"<b>URL:</b> <code>{escape(jellyfin_url())}</code>")
+    return "\n".join(lines)
+
+
+async def jellyfin_server_info(status) -> dict:
+    if not status.running:
+        return {}
+    try:
+        return await asyncio.to_thread(jellyfin_api.system_info)
+    except Exception as exc:
+        LOGGER.warning("Jellyfin server information failed error=%s", type(exc).__name__)
+        return {}
 
 
 async def jellyfin_status_text(action: str = "Status") -> str:
     status = await asyncio.to_thread(jellyfin.status)
-    return format_jellyfin_status(status, action)
+    return format_jellyfin_status(status, action, await jellyfin_server_info(status))
 
 
 @app.on_message(filters.command("jellyfin") & owner_filter)
@@ -1033,8 +985,13 @@ async def jellyfin_action(_, query):
         await query.answer("Not allowed", show_alert=True)
         return
     action = query.data.split(":", 1)[1]
+    LOGGER.info("Received /jellyfin action=%s", action)
     try:
-        if action == "start":
+        if action == "scan":
+            await asyncio.to_thread(jellyfin_api.scan_library)
+            status = await asyncio.to_thread(jellyfin.status)
+            label = "Library scan requested"
+        elif action == "start":
             status = await asyncio.to_thread(jellyfin.start)
             label = "Started"
         elif action == "stop":
@@ -1056,10 +1013,11 @@ async def jellyfin_action(_, query):
             disable_web_page_preview=True,
         )
         return
+    LOGGER.info("Jellyfin action=%s result=%s state=%s health=%s", action, label, status.state, status.health)
     await query.answer(label)
     try:
         await query.message.edit_text(
-            format_jellyfin_status(status, label),
+            format_jellyfin_status(status, label, await jellyfin_server_info(status)),
             parse_mode=ParseMode.HTML,
             reply_markup=jellyfin_buttons(),
             disable_web_page_preview=True,
@@ -1069,8 +1027,6 @@ async def jellyfin_action(_, query):
 
 
 def ensure_jellyfin_running() -> None:
-    if not config.jellyfin_ensure_running:
-        return
     try:
         status = jellyfin.ensure_running()
         LOGGER.info(
@@ -1083,6 +1039,62 @@ def ensure_jellyfin_running() -> None:
         LOGGER.exception("Jellyfin ensure running failed")
     except Exception:
         LOGGER.exception("Unexpected Jellyfin startup check failure")
+
+
+async def explorer_scan() -> None:
+    await asyncio.to_thread(jellyfin_api.scan_library)
+
+
+async def explorer_upload(chat_id: int, paths: list[Path]) -> None:
+    for path in paths:
+        task = manager.create_task(
+            config.owner_id,
+            chat_id,
+            0,
+            Source(SourceType.LOCAL_PATH, str(path), path.name),
+            Destination.TELEGRAM,
+            AddOptions(),
+        )
+
+        async def runner(upload_task=task, upload_path=path):
+            await manager.run_local_upload(upload_task, upload_path, app)
+            if upload_task.phase == TaskPhase.COMPLETE:
+                await app.send_message(chat_id, completion_message(upload_task), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            elif upload_task.error:
+                await app.send_message(chat_id, f"Task {upload_task.short_id()} failed:\n{upload_task.error}", parse_mode=ParseMode.DISABLED)
+            await update_status_message(chat_id)
+
+        asyncio.create_task(runner())
+    await send_live_status(chat_id)
+
+
+def get_file_explorer() -> FileExplorer:
+    global file_explorer
+    if file_explorer is None:
+        file_explorer = FileExplorer(
+            config.local_download_root,
+            public_base_url(8003, config.public_base_url),
+            explorer_upload,
+            explorer_scan,
+        )
+    return file_explorer
+
+
+@app.on_message(filters.command("local") & owner_filter)
+async def local_explorer_cmd(_, message: Message):
+    LOGGER.info("Received /local")
+    try:
+        url = await get_file_explorer().create(message.chat.id)
+    except Exception as exc:
+        LOGGER.exception("Could not create local file explorer")
+        await message.reply(f"Could not create local file explorer:\n{exc}", parse_mode=ParseMode.DISABLED)
+        return
+    await message.reply(
+        "Local file explorer expires in <code>5 minutes</code>.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open local files", url=url)]]),
+        disable_web_page_preview=True,
+    )
 
 
 @app.on_message(filters.command("ping") & owner_filter)
@@ -1106,6 +1118,8 @@ def run():
     cleanup_abandoned_downloads()
     (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)
     (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
+    apply_media_permissions(config.local_download_root, config.local_download_root / "movies")
+    apply_media_permissions(config.local_download_root, config.local_download_root / "series")
     LOGGER.info("Starting bot")
     app.run()
 
