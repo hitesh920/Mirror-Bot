@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..core.models import Task, TaskPhase
 from ..services.paths import ensure_inside
+from ..services.transfer_guard import ensure_disk_space
 from .qbittorrent import QBittorrentClient
 from .torrent_selector import TorrentSelector
 
@@ -118,12 +119,12 @@ async def download_torrent(
     torrent = await _wait_for_torrent(qb, task, info_hash)
     task.torrent_hash = torrent["hash"]
     task.name = task.options.name or torrent["name"]
-    task.phase = TaskPhase.METADATA
+    task.transition(TaskPhase.METADATA)
     LOGGER.info("Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8])
 
     torrent, files = await _wait_for_metadata(qb, task)
     await qb.stop(task.torrent_hash)
-    task.phase = TaskPhase.SELECTING
+    task.transition(TaskPhase.SELECTING)
     task.size = sum(file.get("size", 0) for file in files)
 
     selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
@@ -159,7 +160,9 @@ async def download_torrent(
                 raise asyncio.CancelledError()
             await asyncio.sleep(1)
         await selection_job
-        task.phase = TaskPhase.DOWNLOADING
+        task.transition(TaskPhase.DOWNLOADING)
+        selected_size = sum(file.get("size", 0) for file in files if file.get("priority", 0) != 0)
+        ensure_disk_space(task.work_dir, selected_size)
     finally:
         if on_selector_done and selector_message:
             await on_selector_done(selector_message)

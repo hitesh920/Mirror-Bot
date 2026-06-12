@@ -14,6 +14,7 @@ from ..core.config import Config
 from ..core.models import Task, TaskPhase
 from ..resolvers.base import safe_name
 from ..services.google_drive_delivery import FOLDER_MIME_TYPE, load_credentials
+from ..services.transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 EXPORT_MAP = {
@@ -125,7 +126,7 @@ class GoogleDriveDownloader:
         file_id = drive_id_from_url(self.task.source.value)
         meta = self.metadata(file_id)
         self.task.name = safe_name(self.task.options.name or meta["name"], "Google Drive")
-        self.task.phase = TaskPhase.DOWNLOADING
+        self.task.transition(TaskPhase.DOWNLOADING)
         self.task.downloaded = 0
         self.task.progress = 0
         self.task.speed = 0
@@ -135,11 +136,13 @@ class GoogleDriveDownloader:
         try:
             if meta.get("mimeType") == FOLDER_MIME_TYPE:
                 self.task.size = self.folder_size(file_id)
+                ensure_disk_space(self.task.work_dir, self.task.size)
                 target = self.task.work_dir / self.task.name
                 target.mkdir(parents=True, exist_ok=True)
                 self.download_folder(file_id, target)
                 return target
 
+            ensure_disk_space(self.task.work_dir, int(meta.get("size") or 0))
             target = self.download_file(
                 file_id,
                 self.task.work_dir,

@@ -11,6 +11,8 @@ from aiohttp import web
 
 from .media_library import apply_media_permissions
 from .status import human_size
+from .transfer_guard import ensure_disk_space
+from ..downloaders.process import path_size
 
 LOGGER = logging.getLogger(__name__)
 
@@ -182,6 +184,8 @@ class FileExplorer:
                 if source.is_dir() and (destination == source or source in destination.parents):
                     raise web.HTTPBadRequest(text=f"Cannot place {source.name} inside itself")
                 if target.exists(): raise web.HTTPConflict(text=f"Destination already exists: {source.name}")
+            if action == "copy":
+                ensure_disk_space(destination, sum(path_size(source) for source in sources))
             for source, target in zip(sources, targets):
                 if action == "copy":
                     shutil.copytree(source, target) if source.is_dir() else shutil.copy2(source, target)

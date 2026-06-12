@@ -7,6 +7,7 @@ from pyrogram.types import Message
 
 from ..core.models import Task
 from ..resolvers.base import safe_name
+from ..services.transfer_guard import ensure_disk_space
 
 
 async def download_telegram_file(
@@ -34,8 +35,13 @@ async def download_telegram_file(
     task.name = filename
 
     started = monotonic()
+    checked_total = 0
 
     async def progress(current: int, total: int):
+        nonlocal checked_total
+        if total and total != checked_total:
+            ensure_disk_space(target, total)
+            checked_total = total
         if task.cancelled:
             if client is None:
                 raise asyncio.CancelledError()

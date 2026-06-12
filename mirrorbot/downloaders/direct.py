@@ -9,6 +9,7 @@ import aiohttp
 
 from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
+from ..services.transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def download_direct(task: Task) -> Path:
             target = task.work_dir / filename
             task.name = filename
             task.size = total
+            ensure_disk_space(target, total)
             started = monotonic()
             with target.open("wb") as file:
                 async for chunk in response.content.iter_chunked(1024 * 512):
@@ -93,6 +95,7 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     root.mkdir(parents=True, exist_ok=True)
     task.name = root.name
     task.size = collection.total_size
+    ensure_disk_space(root, task.size)
     started = monotonic()
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(3)

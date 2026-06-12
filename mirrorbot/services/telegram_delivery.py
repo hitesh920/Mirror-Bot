@@ -11,6 +11,7 @@ from pyrogram.enums import ParseMode
 
 from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
+from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = {".mkv", ".m4v", ".mov", ".mp4", ".webm"}
@@ -87,13 +88,13 @@ async def split_file(
         source.stat().st_size,
         part_size,
     )
+    ensure_disk_space(parts_dir, source.stat().st_size)
     key = sha1(str(source).encode(), usedforsecurity=False).hexdigest()[:12]
     target_dir = parts_dir / key
     target_dir.mkdir(parents=True, exist_ok=True)
     parts = []
     index = 1
-    task.phase = TaskPhase.SPLITTING
-    task.current_file = source.name
+    task.transition(TaskPhase.SPLITTING, source.name)
     task.size = source.stat().st_size
     task.downloaded = 0
     task.progress = 0
@@ -170,7 +171,7 @@ async def upload_to_telegram(
                 raise asyncio.CancelledError()
             if source.stat().st_size > split_size:
                 outgoing = await split_file(task, source, parts_dir, split_size)
-                task.phase = TaskPhase.UPLOADING
+                task.transition(TaskPhase.UPLOADING)
                 task.size = total_size
                 task.downloaded = uploaded
                 task.progress = uploaded / total_size if total_size else 0

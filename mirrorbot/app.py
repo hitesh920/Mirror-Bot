@@ -7,7 +7,7 @@ from pathlib import Path
 from shutil import rmtree
 
 import psutil
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -33,6 +33,8 @@ from .services.jellyfin import JellyfinControlError, JellyfinManager
 from .services.jellyfin_api import JellyfinApi
 from .services.file_explorer import FileExplorer
 from .services.media_library import apply_media_permissions
+from .services.background import BackgroundTasks
+from .services.runtime import RuntimeCoordinator
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -41,6 +43,9 @@ manager = TaskManager(config)
 jellyfin = JellyfinManager("jellyfin")
 jellyfin_api = JellyfinApi(config.jellyfin_api_key)
 file_explorer = None
+background = BackgroundTasks()
+runtime = RuntimeCoordinator(manager, background)
+shutting_down = False
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
@@ -101,7 +106,7 @@ app = Client(
 
 def owner_only(_, __, message: Message) -> bool:
     user = message.from_user or message.sender_chat
-    return bool(user and user.id == config.owner_id)
+    return bool(not shutting_down and user and user.id == config.owner_id)
 
 
 owner_filter = filters.create(owner_only)
@@ -141,7 +146,7 @@ def start_pending_add_expiry(token: str, message: Message) -> None:
     old_job = pending_add_expiry_jobs.pop(token, None)
     if old_job:
         old_job.cancel()
-    pending_add_expiry_jobs[token] = asyncio.create_task(expire_pending_add(token))
+    pending_add_expiry_jobs[token] = background.create(expire_pending_add(token), name="expire-add")
 
 
 def take_pending_add(token: str):
@@ -183,9 +188,7 @@ def start_drive_delete_expiry(token: str, message: Message) -> None:
     old_job = pending_drive_delete_expiry_jobs.pop(token, None)
     if old_job:
         old_job.cancel()
-    pending_drive_delete_expiry_jobs[token] = asyncio.create_task(
-        expire_drive_delete(token, message)
-    )
+    pending_drive_delete_expiry_jobs[token] = background.create(expire_drive_delete(token, message), name="expire-drive-delete")
 
 
 def take_pending_drive_delete(token: str) -> dict | None:
@@ -264,14 +267,14 @@ async def start_live_status(chat_id: int, message: Message) -> None:
                 pass
     job = status_jobs.get(chat_id)
     if job is None or job.done():
-        status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
+        status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
 
 
 async def send_live_status(chat_id: int) -> None:
     await update_status_message(chat_id)
     job = status_jobs.get(chat_id)
     if job is None or job.done():
-        status_jobs[chat_id] = asyncio.create_task(status_loop(chat_id))
+        status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
 
 
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
@@ -590,8 +593,8 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
                 await replace_status_message(task.chat_id)
                 job = status_jobs.get(task.chat_id)
                 if job is None or job.done():
-                    status_jobs[task.chat_id] = asyncio.create_task(
-                        status_loop(task.chat_id)
+                    status_jobs[task.chat_id] = background.create(
+                        status_loop(task.chat_id), name="status-loop"
                     )
 
         await manager.run_task(
@@ -635,7 +638,7 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             )
         await update_status_message(task.chat_id)
 
-    asyncio.create_task(runner())
+    manager.spawn(runner(), name="transfer-task")
     if not is_torrent:
         try:
             await query.message.delete()
@@ -646,7 +649,7 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
         await replace_status_message(task.chat_id)
         job = status_jobs.get(task.chat_id)
         if job is None or job.done():
-            status_jobs[task.chat_id] = asyncio.create_task(status_loop(task.chat_id))
+            status_jobs[task.chat_id] = background.create(status_loop(task.chat_id), name="status-loop")
 
 
 @app.on_callback_query(filters.regex(r"^local:"))
@@ -672,7 +675,7 @@ async def status(_, message: Message):
         pass
     job = status_jobs.get(message.chat.id)
     if job is None or job.done():
-        status_jobs[message.chat.id] = asyncio.create_task(status_loop(message.chat.id))
+        status_jobs[message.chat.id] = background.create(status_loop(message.chat.id), name="status-loop")
 
 
 @app.on_message(filters.command("stats") & owner_filter)
@@ -1064,7 +1067,7 @@ async def explorer_upload(chat_id: int, paths: list[Path]) -> None:
                 await app.send_message(chat_id, f"Task {upload_task.short_id()} failed:\n{upload_task.error}", parse_mode=ParseMode.DISABLED)
             await update_status_message(chat_id)
 
-        asyncio.create_task(runner())
+        manager.spawn(runner(), name="transfer-task")
     await send_live_status(chat_id)
 
 
@@ -1113,15 +1116,41 @@ async def log_cmd(_, message: Message):
         await message.reply("No log file yet.")
 
 
-def run():
-    ensure_jellyfin_running()
+async def close_file_explorer() -> None:
+    if file_explorer is not None:
+        await file_explorer.close_all()
+
+
+async def shutdown_bot() -> None:
+    global shutting_down
+    if shutting_down:
+        return
+    shutting_down = True
+    LOGGER.info("Graceful shutdown started")
+    for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()) + list(status_jobs.values()):
+        job.cancel()
+    await runtime.shutdown((drive_search_pages.close_all, close_file_explorer))
+    LOGGER.info("Graceful shutdown complete")
+
+
+async def main() -> None:
+    await asyncio.to_thread(ensure_jellyfin_running)
     cleanup_abandoned_downloads()
     (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)
     (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
     apply_media_permissions(config.local_download_root, config.local_download_root / "movies")
     apply_media_permissions(config.local_download_root, config.local_download_root / "series")
     LOGGER.info("Starting bot")
-    app.run()
+    await app.start()
+    try:
+        await idle()
+    finally:
+        await shutdown_bot()
+        await app.stop()
+
+
+def run():
+    app.loop.run_until_complete(main())
 
 
 def cleanup_abandoned_downloads() -> None:

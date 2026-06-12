@@ -10,6 +10,7 @@ from ..core.models import Task
 from ..downloaders.process import path_size
 from .paths import ensure_inside, local_category_root
 from .media_library import MediaMatch, apply_media_permissions, clean_release_title, media_target
+from .transfer_guard import ensure_disk_space
 
 
 async def deliver_to_local(
@@ -26,6 +27,7 @@ async def deliver_to_local(
     staging.mkdir(parents=True)
 
     task.size = path_size(downloaded)
+    ensure_disk_space(staging, task.size)
     task.downloaded = 0
     task.progress = 0
     task.speed = 0

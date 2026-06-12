@@ -10,3 +10,5 @@ kurigram
 tgcrypto
 yt-dlp[default]
 psutil
+pytest
+pytest-asyncio

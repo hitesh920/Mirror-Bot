@@ -5,7 +5,8 @@ from asyncio.subprocess import PIPE
 from pathlib import Path
 
 from ..core.models import Task
-from ..downloaders.process import terminate_process
+from ..downloaders.process import path_size, terminate_process
+from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 PROGRESS_PATTERN = re.compile(rb"(?<!\d)(\d{1,3})%")
@@ -29,6 +30,7 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
         cwd=cwd,
         stdout=PIPE,
         stderr=PIPE,
+        start_new_session=True,
     )
     output: list[bytes] = []
 
@@ -91,6 +93,7 @@ async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -
     if output == path:
         output = path.with_name(f"{path.name}.zip")
     output.unlink(missing_ok=True)
+    ensure_disk_space(output, path_size(path))
     command = ["7z", "a", "-tzip", f"-mx={level}", "-y", "-bsp1"]
     if password:
         command.extend([f"-p{password}", "-mem=AES256"])
@@ -103,6 +106,7 @@ async def extract_path(path: Path, task: Task, password: str = "") -> Path:
     if task.cancelled:
         raise asyncio.CancelledError()
     output_dir = path.parent / path.stem
+    ensure_disk_space(output_dir, path_size(path))
     output_dir.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".rar":
         command = ["unrar", "x", "-o+"]

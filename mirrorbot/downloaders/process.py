@@ -1,4 +1,6 @@
 import asyncio
+import os
+import signal
 from pathlib import Path
 
 from ..core.models import Task
@@ -15,11 +17,17 @@ def path_size(path: Path) -> int:
 async def terminate_process(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
-    process.terminate()
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
     try:
         await asyncio.wait_for(process.wait(), timeout=5)
     except asyncio.TimeoutError:
-        process.kill()
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         await process.wait()
 
 
