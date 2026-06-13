@@ -250,12 +250,27 @@ class TaskManager:
                 await asyncio.to_thread(self._record_result_manifest, task, path)
                 self._raise_if_cancelled(task)
                 task.transition(TaskPhase.UPLOADING)
-                await self._run_or_cancel(
-                    task,
-                    upload_to_telegram(
-                        task, path, telegram_client, self.config.telegram_leech_split_size
-                    ),
-                )
+                if task.destination == Destination.TELEGRAM:
+                    if telegram_client is None:
+                        raise RuntimeError("Telegram client is unavailable")
+                    await self._run_or_cancel(
+                        task,
+                        upload_to_telegram(
+                            task,
+                            path,
+                            telegram_client,
+                            self.config.telegram_leech_split_size,
+                        ),
+                    )
+                elif task.destination == Destination.GOOGLE_DRIVE:
+                    await self._run_or_cancel(
+                        task,
+                        upload_to_gdrive(task, path, self.config),
+                    )
+                else:
+                    raise NotImplementedError(
+                        f"{task.destination.value} local upload is not implemented"
+                    )
                 task.transition(TaskPhase.COMPLETE)
                 task.current_file = ""
         except asyncio.CancelledError:

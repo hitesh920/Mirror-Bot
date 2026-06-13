@@ -668,14 +668,19 @@ async def explorer_scan() -> None:
     await asyncio.to_thread(jellyfin_api.scan_library)
 
 
-async def explorer_upload(chat_id: int, paths: list[Path]) -> None:
+async def explorer_upload(
+    chat_id: int,
+    paths: list[Path],
+    destination_name: str,
+) -> None:
+    destination = Destination(destination_name)
     for path in paths:
         task = manager.create_task(
             config.owner_id,
             chat_id,
             0,
             Source(SourceType.LOCAL_PATH, str(path), path.name),
-            Destination.TELEGRAM,
+            destination,
             AddOptions(),
         )
 
