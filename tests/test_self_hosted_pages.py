@@ -58,3 +58,5 @@ async def test_torrent_selector_page_has_search_and_selected_count():
     assert 'id="count">0 files selected' in page
     assert "Nothing is selected by default" in page
     assert "Start download" in page
+    assert ".folder-name{padding:2px 0" in page
+    assert "font-weight:650;border:0" in page

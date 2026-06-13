@@ -168,7 +168,8 @@ main{{max-width:920px;margin:18px auto;padding:0 16px}} form{{background:white;b
 .tools input{{flex:1;min-width:200px;padding:8px 10px;border:1px solid #c5ccd5;border-radius:6px;font:inherit}}
 ul{{list-style:none;margin:0;padding:0}} .row{{display:grid;grid-template-columns:28px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid #e7eaee;align-items:center}}
 .row:hover{{background:#f8fafc}}.name{{overflow-wrap:anywhere}} small{{color:#667085;white-space:nowrap}} .expand{{width:26px;height:26px;padding:0;margin:0;background:#f4f6f8;color:#182230;border:1px solid #ccd3dc;border-radius:5px}}
-.folder-name{{padding:0;text-align:left;background:transparent;color:#182230;font-weight:650}}
+.folder-name{{padding:2px 0;text-align:left;background:transparent;color:#182230;font-weight:650;border:0;border-radius:2px}}
+.folder-name:focus{{outline:0}}.folder-name:focus-visible{{outline:2px solid #1769e0;outline-offset:2px}}
 .spacer{{width:26px}} button{{padding:8px 11px;background:#1769e0;color:white;border:1px solid #1769e0;border-radius:6px;cursor:pointer;font:inherit;font-weight:650}}
 .secondary{{background:#fff;color:#182230;border-color:#c5ccd5}}.footer{{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:10px;background:#fff;border-top:1px solid #d8dde4}}.footer .count{{margin-right:auto;color:#667085}}.cancel{{background:#fff;color:#b42318;border-color:#d0d5dd}}
 @media(max-width:650px){{.top{{padding:16px 10px 11px}}main{{margin:10px auto;padding:0 6px}}.row{{padding-left:calc(7px + var(--depth) * 13px)}}small{{display:none}}.tools input{{order:-1;flex-basis:100%}}}}
