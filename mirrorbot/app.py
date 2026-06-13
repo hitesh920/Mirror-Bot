@@ -6,10 +6,8 @@ from html import escape
 from pathlib import Path
 from shutil import rmtree
 
-import psutil
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
-from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .core.config import Config
@@ -18,14 +16,11 @@ from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .core.parser import parse_add_text
 from .core.source_detector import detect_source
 from .downloaders.gdrive import drive_id_from_url
-from .services.status import format_status, human_size
+from .services.status import format_status
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
     delete_drive_item,
     drive_item_info,
-    drive_storage_quota,
-    load_credentials,
-    search_drive_items,
 )
 from .services.drive_search_pages import DriveSearchPages
 from .services.public_url import public_base_url
@@ -398,141 +393,16 @@ def completion_message(task) -> str:
     return "\n".join(section for section in sections if section)
 
 
-@app.on_message(filters.command("start") & owner_filter)
-async def start(_, message: Message):
-    await message.reply("Bot is online. Use /help to see commands.")
 
 
-@app.on_message(filters.command("help") & owner_filter)
-async def help_cmd(_, message: Message):
-    await message.reply(HELP_TEXT, parse_mode=ParseMode.HTML)
 
 
-@app.on_message(filters.command("add") & owner_filter)
-async def add(_, message: Message):
-    try:
-        link, options = parse_add_text(message.text or "")
-    except ValueError as exc:
-        await message.reply(
-            f"{escape(str(exc))}\n\n{ADD_USAGE}",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-    reply = message.reply_to_message
-    source = None
-    LOGGER.info(
-        "Received /add message_id=%s reply=%s flags=zip:%s extract:%s custom_name:%s",
-        message.id,
-        bool(reply),
-        options.zip,
-        options.extract,
-        bool(options.name),
-    )
-
-    if reply and not link:
-        media = reply.document or reply.video or reply.audio or reply.photo or reply.animation
-        if media:
-            filename = getattr(media, "file_name", "") or ""
-            source_type = (
-                SourceType.TORRENT_FILE
-                if filename.lower().endswith(".torrent")
-                else SourceType.TELEGRAM_FILE
-            )
-            source = Source(source_type, "", filename)
-        elif reply.text:
-            link = reply.text.split()[0]
-
-    if source is None:
-        if not link:
-            await message.reply(ADD_USAGE, parse_mode=ParseMode.HTML)
-            return
-        source = detect_source(link)
-
-    if source.type == SourceType.UNSUPPORTED:
-        await message.reply(
-            "Unsupported source. Send a supported URL, magnet, Google Drive link, "
-            "or reply to a Telegram file/link."
-        )
-        return
-
-    LOGGER.info("Prepared /add message_id=%s source=%s", message.id, source.type.value)
-    token = str(message.id)
-    pending_adds[token] = (source, options, reply)
-    if source.type == SourceType.YTDLP:
-        prompt = await message.reply(
-            "Choose download type:",
-            reply_markup=ytdlp_buttons(token),
-        )
-    else:
-        prompt = await message.reply(
-            "Choose destination:",
-            reply_markup=destination_buttons(token),
-        )
-    start_pending_add_expiry(token, prompt)
 
 
-@app.on_callback_query(filters.regex(r"^ytkind:"))
-async def ytdlp_kind_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, kind, token = query.data.split(":", 2)
-    if token not in pending_adds:
-        await answer_expired_selection(query)
-        return
-    if kind == "video":
-        await query.message.edit(
-            "Choose video resolution:",
-            reply_markup=ytdlp_video_buttons(token),
-        )
-    elif kind == "audio":
-        await query.message.edit(
-            "Choose MP3 quality:",
-            reply_markup=ytdlp_audio_buttons(token),
-        )
-    else:
-        await query.message.edit(
-            "Choose download type:",
-            reply_markup=ytdlp_buttons(token),
-        )
 
 
-@app.on_callback_query(filters.regex(r"^yt:"))
-async def ytdlp_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, kind, quality, token = query.data.split(":", 3)
-    pending = pending_adds.get(token)
-    if pending is None:
-        await answer_expired_selection(query)
-        return
-    source, options, reply = pending
-    options.ytdlp_kind = kind
-    options.ytdlp_quality = quality
-    pending_adds[token] = (source, options, reply)
-    await query.message.edit("Choose destination:", reply_markup=destination_buttons(token))
 
 
-@app.on_callback_query(filters.regex(r"^dest:"))
-async def destination_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, dest, token = query.data.split(":", 2)
-    if token not in pending_adds:
-        await answer_expired_selection(query)
-        return
-    if dest == "local":
-        await query.message.edit("Choose local category:", reply_markup=local_buttons(token))
-        return
-    if dest == "telegram":
-        await launch_selected_task(query, token, Destination.TELEGRAM)
-        return
-    if dest == "gdrive":
-        await launch_selected_task(query, token, Destination.GOOGLE_DRIVE)
-        return
-    await query.answer("Unknown destination", show_alert=True)
 
 
 async def launch_selected_task(query, token: str, destination: Destination) -> None:
@@ -652,180 +522,24 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             status_jobs[task.chat_id] = background.create(status_loop(task.chat_id), name="status-loop")
 
 
-@app.on_callback_query(filters.regex(r"^local:"))
-async def local_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, category, token = query.data.split(":", 2)
-    destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
-    await launch_selected_task(query, token, destination)
 
 
-@app.on_message(filters.command("status") & owner_filter)
-async def status(_, message: Message):
-    LOGGER.info("Received /status active_tasks=%s", len(manager.active_tasks()))
-    if not chat_tasks(message.chat.id):
-        await message.reply("No active tasks.")
-        return
-    await replace_status_message(message.chat.id)
-    try:
-        await message.delete()
-    except Exception:
-        pass
-    job = status_jobs.get(message.chat.id)
-    if job is None or job.done():
-        status_jobs[message.chat.id] = background.create(status_loop(message.chat.id), name="status-loop")
 
 
-@app.on_message(filters.command("stats") & owner_filter)
-async def stats(_, message: Message):
-    LOGGER.info("Received /stats active_tasks=%s", len(manager.active_tasks()))
-    disk = psutil.disk_usage(str(config.local_download_root))
-    await message.reply(
-        "Bot stats:\n"
-        f"CPU: {psutil.cpu_percent()}%\n"
-        f"RAM: {psutil.virtual_memory().percent}%\n"
-        f"Local free: {disk.free // (1024 ** 3)} GiB\n"
-        f"Tasks: {len(manager.active_tasks())}"
-    )
 
 
-@app.on_message(filters.command("gdstats") & owner_filter)
-async def gdstats(_, message: Message):
-    LOGGER.info("Received /gdstats")
-    credentials_exists = config.google_credentials_file.is_file()
-    token_exists = config.google_token_file.is_file()
-    folder_configured = bool(config.google_drive_folder_id)
-    lines = [
-        "<b>Google Drive stats</b>",
-        f"<b>Credentials:</b> <code>{'found' if credentials_exists else 'missing'}</code>",
-        f"<b>Token:</b> <code>{'found' if token_exists else 'missing'}</code>",
-        f"<b>Upload folder:</b> <code>{'configured' if folder_configured else 'missing'}</code>",
-    ]
-    if not credentials_exists or not token_exists:
-        await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
-        return
-    try:
-        await asyncio.to_thread(load_credentials, config)
-        quota = await asyncio.to_thread(drive_storage_quota, config)
-    except Exception as exc:
-        lines.append("<b>Auth:</b> <code>failed</code>")
-        lines.append(f"<b>Error:</b> <code>{escape(str(exc))}</code>")
-        await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
-        return
-
-    used = int(quota.get("usage") or 0)
-    trash = int(quota.get("usageInDriveTrash") or 0)
-    limit = int(quota.get("limit") or 0)
-    lines.append("<b>Auth:</b> <code>ready</code>")
-    lines.append(f"<b>Used:</b> <code>{human_size(used)}</code>")
-    if limit:
-        lines.append(f"<b>Limit:</b> <code>{human_size(limit)}</code>")
-        lines.append(f"<b>Free:</b> <code>{human_size(max(0, limit - used))}</code>")
-    else:
-        lines.append("<b>Limit:</b> <code>Unlimited</code>")
-    lines.append(f"<b>Trash:</b> <code>{human_size(trash)}</code>")
-    await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
-@app.on_message(filters.command("cancel") & owner_filter)
-async def cancel(_, message: Message):
-    parts = (message.text or "").split()
-    if len(parts) < 2:
-        await message.reply("Usage: <code>/cancel &lt;task-id&gt;</code>", parse_mode=ParseMode.HTML)
-        return
-    if manager.cancel(parts[1]):
-        LOGGER.info("Received /cancel task=%s", parts[1])
-        await manager.close_active_selector(parts[1])
-        await message.reply("Cancel requested.")
-    else:
-        await message.reply("Task not found or already finished.")
 
 
-@app.on_message(filters.command("cancelall") & owner_filter)
-async def cancel_all(_, message: Message):
-    LOGGER.info("Received /cancelall active_tasks=%s", len(manager.active_tasks()))
-    for task in manager.active_tasks():
-        manager.cancel(task.id)
-    await manager.close_active_selector()
-    await message.reply("Cancel requested for all active tasks.")
 
 
-@app.on_callback_query(filters.regex(r"^selcancel:"))
-async def cancel_selector(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, task_id = query.data.split(":", 1)
-    if not manager.cancel(task_id):
-        await query.answer("Task is no longer active", show_alert=True)
-        return
-    await query.answer("Cancel requested")
-    await manager.close_active_selector(task_id)
 
 
-@app.on_message(filters.command("delete") & owner_filter)
-async def delete_cmd(_, message: Message):
-    LOGGER.info("Received /delete for Google Drive")
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) > 1:
-        await delete_google_drive_link(message, parts[1].strip())
-        return
-    pending_drive_delete_chats.add(message.chat.id)
-    await message.reply("Send the Google Drive link or file ID to delete.")
 
 
-@app.on_message(filters.command("search") & owner_filter)
-async def search_cmd(_, message: Message):
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await message.reply("Usage: <code>/search &lt;name&gt;</code>", parse_mode=ParseMode.HTML)
-        return
-    query_text = parts[1].strip()
-    LOGGER.info("Received /search query=%s", query_text)
-    progress = await message.reply("Searching Google Drive...")
-    try:
-        results = await asyncio.to_thread(search_drive_items, config, query_text, 100)
-    except Exception as exc:
-        LOGGER.exception("Google Drive search failed")
-        await progress.edit_text(
-            f"Google Drive search failed:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-        )
-        return
-    if not results:
-        await progress.edit_text("No Google Drive results found.")
-        return
-    try:
-        url = await drive_search_pages.create(query_text, results)
-    except Exception as exc:
-        LOGGER.exception("Could not create Google Drive search page")
-        await progress.edit_text(
-            f"Could not create search page:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-        )
-        return
-    await progress.edit_text(
-        f"<b>Found:</b> <code>{len(results)}</code> result(s)\n"
-        "The search page expires in <code>5 minutes</code>.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Click here to view results", url=url)]]
-        ),
-        disable_web_page_preview=True,
-    )
 
 
-@app.on_message(filters.text & ~filters.regex(r"^/") & owner_filter)
-async def pending_drive_delete(_, message: Message):
-    if message.chat.id not in pending_drive_delete_chats:
-        return
-    text = (message.text or "").strip()
-    if not text or text.startswith("/"):
-        return
-    pending_drive_delete_chats.discard(message.chat.id)
-    await delete_google_drive_link(message, text)
 
 
 async def delete_google_drive_link(message: Message, link: str) -> None:
@@ -864,45 +578,6 @@ async def delete_google_drive_link(message: Message, link: str) -> None:
     start_drive_delete_expiry(token, prompt)
 
 
-@app.on_callback_query(filters.regex(r"^dgd"))
-async def confirm_drive_delete(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    action, token = query.data.split(":", 1)
-    item = take_pending_drive_delete(token)
-    if item is None:
-        await query.answer("Expired delete request", show_alert=True)
-        try:
-            await query.message.edit("Delete request expired.")
-        except Exception:
-            pass
-        return
-    if action == "dgdcancel":
-        await query.answer("Cancelled")
-        await query.message.edit("Google Drive delete cancelled.")
-        return
-    await query.answer("Deleting")
-    try:
-        deleted = await asyncio.to_thread(delete_drive_item, config, item["id"])
-    except Exception as exc:
-        LOGGER.exception("Google Drive delete failed")
-        await query.message.edit(
-            f"Google Drive delete failed:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-        )
-        return
-    LOGGER.info(
-        "Deleted Google Drive item id=%s name=%s",
-        deleted.get("id"),
-        deleted.get("name"),
-    )
-    await query.message.edit(
-        "<b>Google Drive item deleted</b>\n"
-        f"<b>Name:</b> <code>{escape(deleted.get('name', 'Untitled'))}</code>\n"
-        f"<b>ID:</b> <code>{escape(deleted.get('id', item['id']))}</code>",
-        parse_mode=ParseMode.HTML,
-    )
 
 
 def jellyfin_url() -> str:
@@ -962,71 +637,8 @@ async def jellyfin_status_text(action: str = "Status") -> str:
     return format_jellyfin_status(status, action, await jellyfin_server_info(status))
 
 
-@app.on_message(filters.command("jellyfin") & owner_filter)
-async def jellyfin_cmd(_, message: Message):
-    LOGGER.info("Received /jellyfin")
-    try:
-        text = await jellyfin_status_text()
-    except Exception as exc:
-        LOGGER.exception("Jellyfin status failed")
-        await message.reply(
-            f"Jellyfin control failed:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-        )
-        return
-    await message.reply(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=jellyfin_buttons(),
-        disable_web_page_preview=True,
-    )
 
 
-@app.on_callback_query(filters.regex(r"^jf:"))
-async def jellyfin_action(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    action = query.data.split(":", 1)[1]
-    LOGGER.info("Received /jellyfin action=%s", action)
-    try:
-        if action == "scan":
-            await asyncio.to_thread(jellyfin_api.scan_library)
-            status = await asyncio.to_thread(jellyfin.status)
-            label = "Library scan requested"
-        elif action == "start":
-            status = await asyncio.to_thread(jellyfin.start)
-            label = "Started"
-        elif action == "stop":
-            status = await asyncio.to_thread(jellyfin.stop)
-            label = "Stopped"
-        elif action == "restart":
-            status = await asyncio.to_thread(jellyfin.restart)
-            label = "Restarted"
-        else:
-            status = await asyncio.to_thread(jellyfin.status)
-            label = "Status"
-    except Exception as exc:
-        LOGGER.exception("Jellyfin %s failed", action)
-        await query.answer("Jellyfin action failed", show_alert=True)
-        await query.message.edit_text(
-            f"Jellyfin control failed:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-            reply_markup=jellyfin_buttons(),
-            disable_web_page_preview=True,
-        )
-        return
-    LOGGER.info("Jellyfin action=%s result=%s state=%s health=%s", action, label, status.state, status.health)
-    await query.answer(label)
-    try:
-        await query.message.edit_text(
-            format_jellyfin_status(status, label, await jellyfin_server_info(status)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=jellyfin_buttons(),
-            disable_web_page_preview=True,
-        )
-    except MessageNotModified:
-        LOGGER.debug("Jellyfin %s produced unchanged status message", action)
 
 
 def ensure_jellyfin_running() -> None:
@@ -1083,37 +695,13 @@ def get_file_explorer() -> FileExplorer:
     return file_explorer
 
 
-@app.on_message(filters.command("local") & owner_filter)
-async def local_explorer_cmd(_, message: Message):
-    LOGGER.info("Received /local")
-    try:
-        url = await get_file_explorer().create(message.chat.id)
-    except Exception as exc:
-        LOGGER.exception("Could not create local file explorer")
-        await message.reply(f"Could not create local file explorer:\n{exc}", parse_mode=ParseMode.DISABLED)
-        return
-    await message.reply(
-        "Local file explorer expires in <code>5 minutes</code>.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open local files", url=url)]]),
-        disable_web_page_preview=True,
-    )
+
+def register_command_handlers() -> None:
+    """Import focused handler modules after shared app state is initialized."""
+    from .commands import add, common, drive, jellyfin, local  # noqa: F401
 
 
-@app.on_message(filters.command("ping") & owner_filter)
-async def ping(_, message: Message):
-    LOGGER.info("Received /ping")
-    await message.reply("pong")
-
-
-@app.on_message(filters.command("log") & owner_filter)
-async def log_cmd(_, message: Message):
-    LOGGER.info("Received /log")
-    log_path = Path(config.log_file)
-    if log_path.exists():
-        await message.reply_document(str(log_path))
-    else:
-        await message.reply("No log file yet.")
+register_command_handlers()
 
 
 async def close_file_explorer() -> None:

@@ -297,7 +297,8 @@ Mirror-Bot includes safeguards for long-running unattended operation:
 Run the automated reliability suite inside Docker:
 
 ```bash
-docker compose run --rm --no-deps -w /app -e PYTHONPATH=/app bot pytest -q
+docker compose run --rm --no-deps -w /app -e PYTHONPATH=/app bot \
+  sh -c "pip install --no-cache-dir -r requirements-dev.txt && pytest -q"
 ```
 
 Validate the Compose configuration and startup script:
