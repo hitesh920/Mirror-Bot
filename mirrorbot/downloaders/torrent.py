@@ -107,6 +107,7 @@ async def download_torrent(
     torrent_file: Path | None = None,
     on_selector_ready=None,
     on_selector_done=None,
+    on_metadata_ready=None,
 ) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
     source = torrent_file or task.source.value
@@ -118,11 +119,14 @@ async def download_torrent(
     await qb.add(source, task.work_dir, task.id)
     torrent = await _wait_for_torrent(qb, task, info_hash)
     task.torrent_hash = torrent["hash"]
-    task.name = task.options.name or torrent["name"]
+    task.name = task.options.name
     task.transition(TaskPhase.METADATA)
     LOGGER.info("Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8])
 
     torrent, files = await _wait_for_metadata(qb, task)
+    task.name = task.options.name or torrent.get("name") or task.name
+    if on_metadata_ready:
+        await on_metadata_ready(task, torrent, files)
     await qb.stop(task.torrent_hash)
     task.transition(TaskPhase.SELECTING)
     task.size = sum(file.get("size", 0) for file in files)

@@ -26,7 +26,7 @@ from .local_delivery import deliver_to_local
 from .google_drive_delivery import upload_to_gdrive
 from .telegram_delivery import upload_to_telegram
 from .public_url import public_base_url
-from .media_library import media_identity_name, resolve_media
+from .media_library import clean_release_title, media_identity_name, resolve_media
 from .transfer_guard import TransferGuard, ensure_disk_space
 from ..core.errors import TaskFailure
 
@@ -301,6 +301,7 @@ class TaskManager:
                 torrent_file=torrent_file,
                 on_selector_ready=on_selector_ready,
                 on_selector_done=on_selector_done,
+                on_metadata_ready=self._prepare_torrent_display_name,
             )
         if task.source.type == SourceType.MAGNET:
             return await download_torrent(
@@ -309,6 +310,7 @@ class TaskManager:
                 self.torrent_selector,
                 on_selector_ready=on_selector_ready,
                 on_selector_done=on_selector_done,
+                on_metadata_ready=self._prepare_torrent_display_name,
             )
         if task.source.type == SourceType.DIRECT_URL:
             return await download_direct(task)
@@ -317,6 +319,43 @@ class TaskManager:
         if task.source.type == SourceType.GOOGLE_DRIVE:
             return await download_gdrive(task, self.config)
         raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")
+
+    async def _prepare_torrent_display_name(
+        self, task: Task, torrent: dict, files: list[dict]
+    ) -> None:
+        if task.options.name or task.destination not in {
+            Destination.LOCAL_MOVIES,
+            Destination.LOCAL_SERIES,
+        }:
+            return
+        category = (
+            "movies" if task.destination == Destination.LOCAL_MOVIES else "series"
+        )
+        fallback = str(torrent.get("name") or task.name or "torrent")
+        candidates = [file for file in files if file.get("name")]
+        if category == "series":
+            identity = next(
+                (
+                    str(file["name"])
+                    for file in candidates
+                    if clean_release_title(str(file["name"]))[2] is not None
+                ),
+                fallback,
+            )
+        else:
+            identity = str(
+                max(candidates, key=lambda file: int(file.get("size") or 0))["name"]
+            ) if candidates else fallback
+        match = await asyncio.to_thread(
+            resolve_media, identity, category, self.config.tmdb_api_key
+        )
+        task.name = match.folder_name
+        LOGGER.info(
+            "Task %s: torrent display name=%r metadata_name=%r",
+            task.short_id(),
+            task.name,
+            fallback,
+        )
 
     def cancel(self, task_id: str) -> bool:
         task = self.get(task_id)
