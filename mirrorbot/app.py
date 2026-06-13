@@ -380,9 +380,10 @@ def completion_message(task) -> str:
             drive_link,
         ]
     else:
+        local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
         sections = [
             "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
+            f"<b>Name:</b> <code>{local_name}</code>",
             f"<b>Uploaded to:</b> <code>{escape(str(task.result_path or 'Local'))}</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",

@@ -83,6 +83,7 @@ class Task:
     error: str = ""
     result_path: Path | None = None
     result_name: str = ""
+    library_name: str = ""
     result_files: list[str] = field(default_factory=list)
     result_folders: list[str] = field(default_factory=list)
     result_links: list[str] = field(default_factory=list)
