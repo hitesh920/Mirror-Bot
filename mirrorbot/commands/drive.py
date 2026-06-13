@@ -1,4 +1,4 @@
-"""Google Drive status, search, and deletion handlers."""
+"""Google Drive status, search, sharing, and deletion handlers."""
 
 import asyncio
 import secrets
@@ -11,9 +11,10 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from ..app import (
     LOGGER, app, config, delete_google_drive_link, drive_search_pages, owner_filter,
     pending_drive_delete_chats, pending_drive_delete_items,
-    start_drive_delete_expiry, take_pending_drive_delete,
+    drive_share_pages, start_drive_delete_expiry, take_pending_drive_delete,
 )
 from ..downloaders.gdrive import drive_id_from_url
+from ..services.drive_sharing import DriveShareError, build_drive_share
 from ..services.google_drive_delivery import (
     delete_drive_item, drive_item_info, drive_storage_quota, load_credentials,
     search_drive_items,
@@ -106,6 +107,64 @@ async def search_cmd(_, message: Message):
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("Click here to view results", url=url)]]
+        ),
+        disable_web_page_preview=True,
+    )
+
+
+@app.on_message(filters.command("share") & owner_filter)
+async def share_cmd(_, message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply(
+            "Usage: <code>/share &lt;public-drive-link&gt;</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    link = parts[1].strip()
+    LOGGER.info("Received /share")
+    progress = await message.reply("Preparing public Google Drive share...")
+    try:
+        file_id = drive_id_from_url(link)
+        manifest = await asyncio.to_thread(build_drive_share, config, file_id)
+        LOGGER.info(
+            "Verified public Google Drive share id=%s files=%s folders=%s",
+            file_id,
+            len(manifest.files),
+            manifest.folder_count,
+        )
+        share_url = await drive_share_pages.create(manifest)
+    except (DriveShareError, ValueError) as exc:
+        LOGGER.warning("Google Drive share rejected error=%s", exc)
+        await progress.edit_text(
+            f"Could not create public share:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    except Exception as exc:
+        LOGGER.exception("Google Drive public share failed")
+        await progress.edit_text(
+            f"Could not create public share:\n{exc}",
+            parse_mode=ParseMode.DISABLED,
+        )
+        return
+    LOGGER.info(
+        "Created temporary Drive share id=%s files=%s folders=%s url=%s",
+        file_id,
+        len(manifest.files),
+        manifest.folder_count,
+        share_url,
+    )
+    await progress.edit_text(
+        "<b>Public Google Drive share created</b>\n"
+        f"<b>Name:</b> <code>{escape(manifest.name)}</code>\n"
+        f"<b>Files:</b> <code>{len(manifest.files)}</code>\n"
+        f"<b>Folders:</b> <code>{manifest.folder_count}</code>\n"
+        "<b>Expires:</b> <code>5 minutes</code>\n\n"
+        "Anyone with the temporary link can open this page.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Open Share Page", url=share_url)]]
         ),
         disable_web_page_preview=True,
     )

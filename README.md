@@ -17,7 +17,7 @@ Mirror-Bot combines multiple transfer engines behind one `/add` workflow, provid
 - **Smart media organization:** optional TMDb matching produces Jellyfin-friendly movie, series, and season folders.
 - **Managed Jellyfin companion:** inspect, start, stop, restart, open, and scan Jellyfin from Telegram.
 - **Temporary local file explorer:** browse, download, rename, copy, move, delete, upload to Telegram, and request a Jellyfin scan.
-- **Google Drive management:** upload, download, search, quota inspection, and deletion through the official Drive API.
+- **Google Drive management:** upload, download, search, temporary public sharing, quota inspection, and deletion through the official Drive API.
 - **Reliable task lifecycle:** live status, owner-only access, cancellation, graceful shutdown, disk protection, cleanup, and stalled-transfer detection.
 
 ## Supported Sources
@@ -52,7 +52,7 @@ Files are uploaded back to the owner chat. Media-compatible files are sent as me
 
 ### Google Drive
 
-Files and folders can be downloaded from or uploaded to Google Drive using OAuth credentials and the official Drive API. Mirror-Bot also provides temporary browser-based Drive search results and Drive item deletion.
+Files and folders can be downloaded from or uploaded to Google Drive using OAuth credentials and the official Drive API. Mirror-Bot also provides temporary browser-based Drive search results, five-minute public folder share pages, and Drive item deletion.
 
 ## Architecture
 
@@ -166,6 +166,7 @@ Internal defaults intentionally remain in code: Telegram split size is 2 GB, yt-
 | `8001` | Google Drive search results | Temporary token-protected result pages |
 | `8002` | Jellyfin | Persistent Jellyfin web interface |
 | `8003` | Local file explorer | Opens while one or more temporary sessions exist |
+| `8004` | Google Drive share pages | Opens while one or more temporary shares exist |
 
 Generated temporary pages use random tokens and expire automatically. Restrict ingress to trusted IP ranges whenever practical.
 
@@ -180,6 +181,7 @@ Generated temporary pages use random tokens and expire automatically. Restrict i
 | `/cancel <task-id>` | Cancel one active task |
 | `/cancelall` | Cancel all active and pending tasks |
 | `/search <name>` | Search Google Drive on a temporary results page |
+| `/share <drive-link>` | Open a five-minute page for an already-public Drive file or folder |
 | `/delete [drive-link-or-id]` | Delete a Google Drive item with confirmation |
 | `/gdstats` | Show Google Drive authentication and storage quota |
 | `/local` | Open the temporary local file explorer |

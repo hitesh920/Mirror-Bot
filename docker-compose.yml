@@ -14,6 +14,8 @@ services:
       - "8001:8001"
       # Temporary local file explorer
       - "8003:8003"
+      # Temporary Google Drive folder share pages
+      - "8004:8004"
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs

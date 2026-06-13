@@ -23,6 +23,7 @@ from .services.google_drive_delivery import (
     drive_item_info,
 )
 from .services.drive_search_pages import DriveSearchPages
+from .services.drive_share_pages import DriveSharePages
 from .services.public_url import public_base_url
 from .services.jellyfin import JellyfinControlError, JellyfinManager
 from .services.jellyfin_api import JellyfinApi
@@ -50,6 +51,11 @@ pending_drive_delete_expiry_jobs: dict[str, asyncio.Task] = {}
 drive_search_pages = DriveSearchPages(
     public_base_url(config.torrent_selection_port + 1, config.public_base_url),
     config.torrent_selection_port + 1,
+    300,
+)
+drive_share_pages = DriveSharePages(
+    public_base_url(8004, config.public_base_url),
+    8004,
     300,
 )
 status_messages: dict[int, Message] = {}
@@ -87,6 +93,7 @@ HELP_TEXT = "\n".join(
         "",
         "<b>Google Drive</b>",
         "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
+        "<code>/share &lt;drive-link&gt;</code> - temporary public Drive share page",
     ]
 )
 
@@ -718,7 +725,7 @@ async def shutdown_bot() -> None:
     LOGGER.info("Graceful shutdown started")
     for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()) + list(status_jobs.values()):
         job.cancel()
-    await runtime.shutdown((drive_search_pages.close_all, close_file_explorer))
+    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer))
     LOGGER.info("Graceful shutdown complete")
 
 
