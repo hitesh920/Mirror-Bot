@@ -160,20 +160,26 @@ class TorrentSelector:
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Select torrent files</title>
 <style>
-body{{font:15px system-ui;margin:0;background:#f4f5f7;color:#17202a}}
-main{{max-width:760px;margin:32px auto;padding:0 16px}}
-h1{{font-size:20px}} form{{background:white;border:1px solid #d8dde4}}
-.tools{{display:flex;gap:8px;padding:12px;border-bottom:1px solid #d8dde4}}
-ul{{list-style:none;margin:0;padding:0}} .row{{display:grid;grid-template-columns:24px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid #e6e9ed;align-items:center}}
-.name{{overflow-wrap:anywhere}} small{{color:#667085}} .expand{{width:24px;height:24px;padding:0;margin:0;background:#eef1f5;color:#17202a;border:1px solid #ccd3dc}}
-.folder-name{{padding:0;text-align:left;background:transparent;color:#17202a}}
-.spacer{{width:24px}} button{{padding:9px 14px;background:#1769e0;color:white;border:0;cursor:pointer}}
-.secondary{{background:#eef1f5;color:#17202a;border:1px solid #ccd3dc}} .submit{{margin:16px 4px 16px 16px}} .cancel{{background:#b42318;margin:16px 16px 16px 4px}}
-</style></head><body><main><h1>Select torrent files</h1>
-<form method="post"><div class="tools"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div>
-<ul>{rows}</ul><button class="submit" type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></form>
+*{{box-sizing:border-box}}body{{font:14px system-ui;margin:0;background:#f4f6f8;color:#182230}}
+header{{background:#fff;border-bottom:1px solid #dfe4ea}}.top{{max-width:920px;margin:auto;padding:22px 16px 14px}}
+h1{{font-size:22px;margin:0 0 5px}}.sub{{color:#667085;display:flex;gap:16px;flex-wrap:wrap}}
+main{{max-width:920px;margin:18px auto;padding:0 16px}} form{{background:white;border:1px solid #d8dde4}}
+.tools{{position:sticky;top:0;z-index:2;display:flex;gap:7px;padding:10px;background:#fff;border-bottom:1px solid #d8dde4;flex-wrap:wrap}}
+.tools input{{flex:1;min-width:200px;padding:8px 10px;border:1px solid #c5ccd5;border-radius:6px;font:inherit}}
+ul{{list-style:none;margin:0;padding:0}} .row{{display:grid;grid-template-columns:28px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid #e7eaee;align-items:center}}
+.row:hover{{background:#f8fafc}}.name{{overflow-wrap:anywhere}} small{{color:#667085;white-space:nowrap}} .expand{{width:26px;height:26px;padding:0;margin:0;background:#f4f6f8;color:#182230;border:1px solid #ccd3dc;border-radius:5px}}
+.folder-name{{padding:0;text-align:left;background:transparent;color:#182230;font-weight:650}}
+.spacer{{width:26px}} button{{padding:8px 11px;background:#1769e0;color:white;border:1px solid #1769e0;border-radius:6px;cursor:pointer;font:inherit;font-weight:650}}
+.secondary{{background:#fff;color:#182230;border-color:#c5ccd5}}.footer{{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:10px;background:#fff;border-top:1px solid #d8dde4}}.footer .count{{margin-right:auto;color:#667085}}.cancel{{background:#fff;color:#b42318;border-color:#d0d5dd}}
+@media(max-width:650px){{.top{{padding:16px 10px 11px}}main{{margin:10px auto;padding:0 6px}}.row{{padding-left:calc(7px + var(--depth) * 13px)}}small{{display:none}}.tools input{{order:-1;flex-basis:100%}}}}
+</style></head><body>
+<header><div class="top"><h1>Select torrent files</h1><div class="sub"><span>Nothing is selected by default</span><span>Expand folders to review contents</span></div></div></header>
+<main>
+<form method="post"><div class="tools"><input id="search" type="search" placeholder="Search files and folders"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div>
+<ul id="tree">{rows}</ul><div class="footer"><span class="count" id="count">0 files selected</span><button type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></div></form>
 <script>
 const setChildren=(folder,checked)=>folder.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=checked;box.indeterminate=false;}});
+const updateCount=()=>{{const n=document.querySelectorAll('.file-check:checked').length;document.getElementById('count').textContent=`${{n}} file${{n===1?'':'s'}} selected`;}};
 const updateParents=element=>{{
  let folder=element.closest('.folder');
  while(folder){{
@@ -182,7 +188,7 @@ const updateParents=element=>{{
   parent.checked=files.length>0&&files.every(file=>file.checked);
   parent.indeterminate=files.some(file=>file.checked)&&!parent.checked;
   folder=folder.parentElement.closest('.folder');
- }}
+ }} updateCount();
 }};
 const toggleFolder=target=>{{
  const tree=document.getElementById(target); tree.hidden=!tree.hidden;
@@ -194,8 +200,9 @@ document.querySelectorAll('.folder-check').forEach(box=>box.addEventListener('ch
 document.querySelectorAll('.file-check').forEach(box=>box.addEventListener('change',()=>{{
  updateParents(box);
 }}));
-document.getElementById('check-all').addEventListener('click',()=>document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=true;box.indeterminate=false;}}));
-document.getElementById('uncheck-all').addEventListener('click',()=>document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=false;box.indeterminate=false;}}));
+document.getElementById('check-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=true;box.indeterminate=false;}});updateCount();}});
+document.getElementById('uncheck-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=false;box.indeterminate=false;}});updateCount();}});
+document.getElementById('search').addEventListener('input',e=>{{const q=e.target.value.toLowerCase();document.querySelectorAll('#tree li.file').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q));document.querySelectorAll('#tree li.folder').forEach(row=>{{const match=!q||row.textContent.toLowerCase().includes(q);row.hidden=!match;if(q&&match){{const tree=row.querySelector(':scope > ul');if(tree)tree.hidden=false;const button=row.querySelector(':scope > .row > .expand');if(button){{button.textContent='-';button.setAttribute('aria-expanded','true')}}}}}});}});
 </script>
 </main></body></html>"""
         return web.Response(text=page, content_type="text/html")

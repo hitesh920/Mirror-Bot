@@ -130,17 +130,20 @@ def render_search_page(query: str, results: list[dict]) -> str:
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Google Drive search</title>
 <style>
-body{{font:15px system-ui;margin:0;background:#f4f5f7;color:#17202a}}
-main{{max-width:980px;margin:32px auto;padding:0 16px}}
-h1{{font-size:20px;margin:0 0 4px}} p{{margin:0 0 18px;color:#667085}}
+*{{box-sizing:border-box}}body{{font:14px system-ui;margin:0;background:#f4f6f8;color:#182230}}
+header{{background:#fff;border-bottom:1px solid #dfe4ea}}.top{{max-width:1080px;margin:auto;padding:22px 18px 14px}}
+h1{{font-size:22px;margin:0 0 5px}}.meta{{color:#667085;display:flex;gap:16px;flex-wrap:wrap}}
+main{{max-width:1080px;margin:18px auto;padding:0 18px}}.tools{{margin-bottom:12px}}
+input{{width:100%;padding:10px 12px;border:1px solid #c5ccd5;border-radius:6px;font:inherit}}
 table{{width:100%;border-collapse:collapse;background:white;border:1px solid #d8dde4}}
-th,td{{padding:10px 12px;border-bottom:1px solid #e6e9ed;text-align:left;vertical-align:top}}
-th{{font-size:13px;color:#475467;background:#f9fafb}}
-.name{{overflow-wrap:anywhere}} a{{color:#1769e0;font-weight:600;text-decoration:none}}
-@media(max-width:640px){{main{{margin:18px auto}} th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4){{display:none}}}}
-</style></head><body><main>
-<h1>Google Drive search</h1>
-<p>{html.escape(query)} - expires in 5 minutes</p>
+th,td{{padding:11px 12px;border-bottom:1px solid #e7eaee;text-align:left;vertical-align:middle}}
+th{{font-size:12px;text-transform:uppercase;color:#667085;background:#f9fafb}}
+.name{{overflow-wrap:anywhere;font-weight:600}} a{{display:inline-block;color:#fff;background:#1769e0;padding:7px 10px;border-radius:6px;font-weight:650;text-decoration:none}}
+.empty{{display:none;text-align:center;color:#667085;padding:30px}}
+@media(max-width:640px){{.top{{padding:16px 12px 11px}}main{{margin:12px auto;padding:0 8px}}th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4){{display:none}}th,td{{padding:9px 7px}}}}
+</style></head><body><header><div class="top"><h1>Google Drive search</h1><div class="meta"><span>Query: {html.escape(query)}</span><span>{len(results)} results</span><span>Expires in 5 minutes</span></div></div></header><main>
+<div class="tools"><input id="filter" type="search" placeholder="Filter results"></div>
 <table><thead><tr><th>#</th><th>Type</th><th>Name</th><th>Size</th><th>Link</th></tr></thead>
-<tbody>{"".join(rows)}</tbody></table>
+<tbody id="rows">{"".join(rows)}</tbody></table><div class="empty" id="empty">No matching results</div>
+<script>document.querySelector('#filter').oninput=e=>{{const q=e.target.value.toLowerCase();let shown=0;document.querySelectorAll('#rows tr').forEach(r=>{{r.hidden=!r.textContent.toLowerCase().includes(q);if(!r.hidden)shown++}});document.querySelector('#empty').style.display=shown?'none':'block'}}</script>
 </main></body></html>"""
