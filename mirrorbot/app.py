@@ -488,10 +488,10 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             on_selector_done=selector_done,
         )
         if task.phase == TaskPhase.COMPLETE and task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-            try:
-                await asyncio.to_thread(jellyfin_api.scan_library)
-            except Exception:
-                LOGGER.exception("Task %s: Jellyfin scan request failed", task.short_id())
+            background.create(
+                refresh_local_metadata(task),
+                name=f"jellyfin-metadata-{task.short_id()}",
+            )
         if (
             task.phase == TaskPhase.COMPLETE
             and task.destination == Destination.LOCAL_SERIES
@@ -617,6 +617,7 @@ def jellyfin_buttons() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton("Scan Library", callback_data="jf:scan"),
+                InlineKeyboardButton("Refresh Metadata", callback_data="jf:metadata"),
             ],
         ]
     )
@@ -677,6 +678,19 @@ def ensure_jellyfin_running() -> None:
 
 async def explorer_scan() -> None:
     await asyncio.to_thread(jellyfin_api.scan_library)
+
+
+async def refresh_local_metadata(task) -> None:
+    media_type = "series" if task.destination == Destination.LOCAL_SERIES else "movie"
+    name = task.library_name or task.result_name or task.name
+    try:
+        await asyncio.to_thread(jellyfin_api.refresh_new_media, name, media_type)
+    except Exception:
+        LOGGER.exception(
+            "Task %s: Jellyfin metadata refresh failed for %s",
+            task.short_id(),
+            name,
+        )
 
 
 async def promote_series_library() -> None:
