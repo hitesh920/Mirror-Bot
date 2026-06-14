@@ -55,8 +55,11 @@ class JellyfinApi:
         media_type: str,
         attempts: int = 12,
         delay: float = 5,
+        *,
+        scan: bool = True,
     ) -> str:
-        self.scan_library()
+        if scan:
+            self.scan_library()
         item_type = "Series" if media_type == "series" else "Movie"
         search_name = YEAR_SUFFIX.sub("", name).strip()
         normalized_name = search_name.casefold()

@@ -35,6 +35,24 @@ def test_refresh_new_media_scans_then_refreshes_exact_item(monkeypatch):
     assert calls[1][2]["includeItemTypes"] == "Series"
 
 
+def test_refresh_new_media_can_reuse_an_existing_batch_scan(monkeypatch):
+    api = JellyfinApi("key")
+    calls = []
+
+    def request(method, path, params=None):
+        calls.append((method, path, params))
+        if path == "/Items":
+            return {"Items": [{"Id": "movie-1", "Name": "Example"}]}
+        return {}
+
+    monkeypatch.setattr(api, "_request", request)
+
+    api.refresh_new_media("Example (2026)", "movie", attempts=1, scan=False)
+
+    assert all(path != "/Library/Refresh" for _, path, _ in calls)
+    assert calls[0][2]["searchTerm"] == "Example"
+
+
 def test_refresh_all_metadata_refreshes_each_library(monkeypatch):
     api = JellyfinApi("key")
     calls = []

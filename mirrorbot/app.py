@@ -62,6 +62,8 @@ drive_share_pages = DriveSharePages(
 )
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
+pending_local_metadata_tasks: dict[str, object] = {}
+local_metadata_job: asyncio.Task | None = None
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 series_promotion_job: asyncio.Task | None = None
@@ -378,18 +380,12 @@ def completion_message(task) -> str:
             result_list("Uploaded files", task.result_files, task.result_links),
         ]
     elif task.destination == Destination.GOOGLE_DRIVE:
-        drive_link = (
-            f'<b>Drive link:</b> <a href="{escape(task.result_links[0], quote=True)}">Open</a>'
-            if task.result_links
-            else ""
-        )
         sections = [
             "<b>Task complete</b>",
             f"<b>Name:</b> <code>{name}</code>",
             "<b>Uploaded to:</b> <code>Google Drive</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
-            drive_link,
         ]
     else:
         local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
@@ -401,9 +397,20 @@ def completion_message(task) -> str:
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
             result_list("Files", task.result_files),
             result_list("Folders", task.result_folders),
-            f'<b>Jellyfin:</b> <a href="{escape(jellyfin_url(), quote=True)}">Open</a>',
         ]
     return "\n".join(section for section in sections if section)
+
+
+def completion_buttons(task) -> InlineKeyboardMarkup | None:
+    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
+        return InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Open Google Drive", url=task.result_links[0])]]
+        )
+    if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
+        return InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Open Jellyfin", url=jellyfin_url())]]
+        )
+    return None
 
 
 
@@ -487,11 +494,8 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             on_selector_ready=selector_ready,
             on_selector_done=selector_done,
         )
-        if task.phase == TaskPhase.COMPLETE and task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-            background.create(
-                refresh_local_metadata(task),
-                name=f"jellyfin-metadata-{task.short_id()}",
-            )
+        if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
+            schedule_local_metadata_refresh(task)
         if (
             task.phase == TaskPhase.COMPLETE
             and task.destination == Destination.LOCAL_SERIES
@@ -509,6 +513,7 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
                 completion_message(task),
                 parse_mode=ParseMode.HTML,
                 reply_to_message_id=task.message_id,
+                reply_markup=completion_buttons(task),
                 disable_web_page_preview=True,
             )
         elif task.error:
@@ -684,12 +689,70 @@ async def refresh_local_metadata(task) -> None:
     media_type = "series" if task.destination == Destination.LOCAL_SERIES else "movie"
     name = task.library_name or task.result_name or task.name
     try:
-        await asyncio.to_thread(jellyfin_api.refresh_new_media, name, media_type)
+        await asyncio.to_thread(
+            jellyfin_api.refresh_new_media,
+            name,
+            media_type,
+            scan=False,
+        )
     except Exception:
         LOGGER.exception(
             "Task %s: Jellyfin metadata refresh failed for %s",
             task.short_id(),
             name,
+        )
+
+
+async def refresh_pending_local_metadata() -> None:
+    global local_metadata_job
+    try:
+        while True:
+            while any(
+                task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
+                and not task.terminal
+                for task in manager.tasks.values()
+            ):
+                await asyncio.sleep(5)
+            await asyncio.sleep(2)
+            if any(
+                task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
+                and not task.terminal
+                for task in manager.tasks.values()
+            ):
+                continue
+            tasks = list(pending_local_metadata_tasks.values())
+            pending_local_metadata_tasks.clear()
+            if not tasks:
+                return
+            try:
+                await asyncio.to_thread(jellyfin_api.scan_library)
+            except Exception:
+                LOGGER.exception("Jellyfin scan for completed local task batch failed")
+                return
+            for task in tasks:
+                await refresh_local_metadata(task)
+            if not pending_local_metadata_tasks:
+                return
+    finally:
+        local_metadata_job = None
+
+
+def schedule_local_metadata_refresh(task) -> None:
+    global local_metadata_job
+    if task.phase == TaskPhase.COMPLETE:
+        pending_local_metadata_tasks[task.id] = task
+    if any(
+        active.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
+        and not active.terminal
+        for active in manager.tasks.values()
+    ):
+        return
+    if pending_local_metadata_tasks and (
+        local_metadata_job is None or local_metadata_job.done()
+    ):
+        local_metadata_job = background.create(
+            refresh_pending_local_metadata(),
+            name="jellyfin-local-metadata-batch",
         )
 
 
@@ -747,7 +810,13 @@ async def explorer_upload(
         async def runner(upload_task=task, upload_path=path):
             await manager.run_local_upload(upload_task, upload_path, app)
             if upload_task.phase == TaskPhase.COMPLETE:
-                await app.send_message(chat_id, completion_message(upload_task), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                await app.send_message(
+                    chat_id,
+                    completion_message(upload_task),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=completion_buttons(upload_task),
+                    disable_web_page_preview=True,
+                )
             elif upload_task.error:
                 await app.send_message(chat_id, f"Task {upload_task.short_id()} failed:\n{upload_task.error}", parse_mode=ParseMode.DISABLED)
             await update_status_message(chat_id)
