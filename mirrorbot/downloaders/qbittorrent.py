@@ -1,19 +1,21 @@
 import asyncio
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
 import aiohttp
 
 LOGGER = logging.getLogger(__name__)
-TEMP_PASSWORD_PATTERN = re.compile(r"temporary password is provided for this session:\s*(\S+)")
 
 
 class QBittorrentClient:
-    def __init__(self, host: str, log_file: Path = Path("logs/qbittorrent.log")):
+    def __init__(
+        self,
+        host: str,
+        password_file: Path = Path("/app/data/qbittorrent/webui-password"),
+    ):
         self.host = host.rstrip("/")
-        self.log_file = log_file
+        self.password_file = password_file
         self.session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
@@ -37,12 +39,9 @@ class QBittorrentClient:
         raise RuntimeError("Could not authenticate with qBittorrent")
 
     def _temporary_password(self) -> str:
-        if not self.log_file.exists():
+        if not self.password_file.exists():
             return ""
-        matches = TEMP_PASSWORD_PATTERN.findall(
-            self.log_file.read_text(encoding="utf-8", errors="replace")
-        )
-        return matches[-1] if matches else ""
+        return self.password_file.read_text(encoding="utf-8", errors="replace").strip()
 
     async def request(
         self,

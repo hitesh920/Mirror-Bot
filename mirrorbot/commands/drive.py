@@ -1,6 +1,7 @@
 """Google Drive status, search, sharing, and deletion handlers."""
 
 import asyncio
+import logging
 import secrets
 from html import escape
 
@@ -14,6 +15,7 @@ from ..app import (
     drive_share_pages, start_drive_delete_expiry, take_pending_drive_delete,
 )
 from ..downloaders.gdrive import drive_id_from_url
+from ..core.logging_config import log_event
 from ..services.drive_sharing import DriveShareError, build_drive_share
 from ..services.google_drive_delivery import (
     delete_drive_item, drive_item_info, drive_storage_quota, load_credentials,
@@ -62,7 +64,7 @@ async def gdstats(_, message: Message):
 
 @app.on_message(filters.command("delete") & owner_filter)
 async def delete_cmd(_, message: Message):
-    LOGGER.info("Received /delete for Google Drive")
+    log_event(LOGGER, logging.INFO, "command.delete", result="requested")
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1:
         await delete_google_drive_link(message, parts[1].strip())
@@ -122,7 +124,7 @@ async def share_cmd(_, message: Message):
         )
         return
     link = parts[1].strip()
-    LOGGER.info("Received /share")
+    log_event(LOGGER, logging.INFO, "command.share", result="requested")
     progress = await message.reply("Preparing public Google Drive share...")
     try:
         file_id = drive_id_from_url(link)
@@ -148,12 +150,14 @@ async def share_cmd(_, message: Message):
             parse_mode=ParseMode.DISABLED,
         )
         return
-    LOGGER.info(
-        "Created temporary Drive share id=%s files=%s folders=%s url=%s",
-        file_id,
-        len(manifest.files),
-        manifest.folder_count,
-        share_url,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "command.share",
+        result="created",
+        files=len(manifest.files),
+        folders=manifest.folder_count,
+        url=share_url,
     )
     await progress.edit_text(
         "<b>Public Google Drive share created</b>\n"
@@ -209,10 +213,13 @@ async def confirm_drive_delete(_, query):
             parse_mode=ParseMode.DISABLED,
         )
         return
-    LOGGER.info(
-        "Deleted Google Drive item id=%s name=%s",
-        deleted.get("id"),
-        deleted.get("name"),
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "command.delete",
+        result="deleted",
+        item_id=deleted.get("id"),
+        name=deleted.get("name"),
     )
     await query.message.edit(
         "<b>Google Drive item deleted</b>\n"

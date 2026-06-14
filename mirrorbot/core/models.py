@@ -1,10 +1,14 @@
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from time import monotonic, time
 from typing import Any
 
+from .logging_config import log_event
+
+LOGGER = logging.getLogger(__name__)
 
 class SourceType(str, Enum):
     DIRECT_URL = "direct_url"
@@ -107,10 +111,22 @@ class Task:
     def transition(self, phase: TaskPhase, current_file: str = "") -> None:
         if self.terminal and phase != self.phase:
             return
+        previous = self.phase
         self.phase = phase
         if current_file:
             self.current_file = current_file
         self.last_progress_at = monotonic()
+        if previous != phase:
+            log_event(
+                LOGGER,
+                logging.INFO,
+                "task.phase_changed",
+                task=self.short_id(),
+                phase=phase.value,
+                previous_phase=previous.value,
+                engine=self.source.type.value,
+                destination=self.destination.value,
+            )
 
     def request_cancel(self, reason: str = "Cancelled by user") -> bool:
         if self.terminal or self.cancelled:
@@ -118,6 +134,14 @@ class Task:
         self.cancelled = True
         self.cancel_reason = reason
         self.cancel_event.set()
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "task.cancel_requested",
+            task=self.short_id(),
+            phase=self.phase.value,
+            reason=reason,
+        )
         return True
 
     def fail_guard(self, error: Exception) -> None:
@@ -128,6 +152,15 @@ class Task:
         self.cancelled = True
         self.cancel_reason = str(error)
         self.cancel_event.set()
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            "task.guard_failed",
+            task=self.short_id(),
+            phase=self.phase.value,
+            error_category=self.failure_category,
+            result=error,
+        )
 
     def short_id(self) -> str:
         return self.id.split("-", 1)[0]

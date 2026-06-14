@@ -1,6 +1,7 @@
 """Jellyfin management handlers."""
 
 import asyncio
+import logging
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
@@ -11,11 +12,12 @@ from ..app import (
     LOGGER, app, config, format_jellyfin_status, jellyfin, jellyfin_api,
     jellyfin_buttons, jellyfin_server_info, jellyfin_status_text, owner_filter,
 )
+from ..core.logging_config import log_event
 
 
 @app.on_message(filters.command("jellyfin") & owner_filter)
 async def jellyfin_cmd(_, message: Message):
-    LOGGER.info("Received /jellyfin")
+    log_event(LOGGER, logging.INFO, "command.jellyfin", result="requested")
     try:
         text = await jellyfin_status_text()
     except Exception as exc:
@@ -39,7 +41,9 @@ async def jellyfin_action(_, query):
         await query.answer("Not allowed", show_alert=True)
         return
     action = query.data.split(":", 1)[1]
-    LOGGER.info("Received /jellyfin action=%s", action)
+    log_event(
+        LOGGER, logging.INFO, "command.jellyfin_action", action=action, result="requested"
+    )
     try:
         if action == "scan":
             await asyncio.to_thread(jellyfin_api.scan_library)
@@ -67,7 +71,15 @@ async def jellyfin_action(_, query):
             disable_web_page_preview=True,
         )
         return
-    LOGGER.info("Jellyfin action=%s result=%s state=%s health=%s", action, label, status.state, status.health)
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "command.jellyfin_action",
+        action=action,
+        result=label,
+        state=status.state,
+        health=status.health,
+    )
     await query.answer(label)
     try:
         await query.message.edit_text(

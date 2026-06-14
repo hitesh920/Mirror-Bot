@@ -1,5 +1,9 @@
 """Core status, cancellation, health, and help handlers."""
 
+import asyncio
+import logging
+import os
+import signal
 from pathlib import Path
 
 import psutil
@@ -11,6 +15,7 @@ from ..app import (
     HELP_TEXT, LOGGER, app, background, chat_tasks, config, manager, owner_filter,
     replace_status_message, status_jobs, status_loop,
 )
+from ..core.logging_config import create_log_export, log_event
 
 
 @app.on_message(filters.command("start") & owner_filter)
@@ -25,7 +30,7 @@ async def help_cmd(_, message: Message):
 
 @app.on_message(filters.command("status") & owner_filter)
 async def status(_, message: Message):
-    LOGGER.info("Received /status active_tasks=%s", len(manager.active_tasks()))
+    log_event(LOGGER, logging.INFO, "command.status", result="requested")
     if not chat_tasks(message.chat.id):
         await message.reply("No active tasks.")
         return
@@ -41,7 +46,7 @@ async def status(_, message: Message):
 
 @app.on_message(filters.command("stats") & owner_filter)
 async def stats(_, message: Message):
-    LOGGER.info("Received /stats active_tasks=%s", len(manager.active_tasks()))
+    log_event(LOGGER, logging.INFO, "command.stats", result="requested")
     disk = psutil.disk_usage(str(config.local_download_root))
     await message.reply(
         "Bot stats:\n"
@@ -59,7 +64,9 @@ async def cancel(_, message: Message):
         await message.reply("Usage: <code>/cancel &lt;task-id&gt;</code>", parse_mode=ParseMode.HTML)
         return
     if manager.cancel(parts[1]):
-        LOGGER.info("Received /cancel task=%s", parts[1])
+        log_event(
+            LOGGER, logging.INFO, "command.cancel", task=parts[1], result="requested"
+        )
         await manager.close_active_selector(parts[1])
         await message.reply("Cancel requested.")
     else:
@@ -68,7 +75,13 @@ async def cancel(_, message: Message):
 
 @app.on_message(filters.command("cancelall") & owner_filter)
 async def cancel_all(_, message: Message):
-    LOGGER.info("Received /cancelall active_tasks=%s", len(manager.active_tasks()))
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "command.cancelall",
+        result="requested",
+        active_tasks=len(manager.active_tasks()),
+    )
     for task in manager.active_tasks():
         manager.cancel(task.id)
     await manager.close_active_selector()
@@ -90,15 +103,32 @@ async def cancel_selector(_, query):
 
 @app.on_message(filters.command("ping") & owner_filter)
 async def ping(_, message: Message):
-    LOGGER.info("Received /ping")
+    log_event(LOGGER, logging.INFO, "command.ping", result="requested")
     await message.reply("pong")
 
 
-@app.on_message(filters.command("log") & owner_filter)
-async def log_cmd(_, message: Message):
-    LOGGER.info("Received /log")
-    log_path = Path(config.log_file)
-    if log_path.exists():
-        await message.reply_document(str(log_path))
-    else:
+@app.on_message(filters.command("logs") & owner_filter)
+async def logs_cmd(_, message: Message):
+    log_event(LOGGER, logging.INFO, "command.logs", result="requested")
+    exported = await asyncio.to_thread(create_log_export, config.log_file)
+    if exported is None:
         await message.reply("No log file yet.")
+        return
+    try:
+        await message.reply_document(
+            str(exported),
+            file_name="mirror-bot-logs.txt",
+            caption="Latest 2,000 sanitized application log lines.",
+        )
+        log_event(LOGGER, logging.INFO, "command.logs", result="sent")
+    finally:
+        Path(exported).unlink(missing_ok=True)
+
+
+@app.on_message(filters.command("restart") & owner_filter)
+async def restart_cmd(_, message: Message):
+    log_event(LOGGER, logging.INFO, "command.restart", result="requested")
+    await message.reply("Restarting Mirror-Bot...")
+    LOGGER.info("========== RESTART REQUESTED ==========")
+    await asyncio.sleep(0.5)
+    os.kill(1, signal.SIGTERM)

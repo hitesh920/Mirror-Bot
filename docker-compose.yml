@@ -23,6 +23,11 @@ services:
       - ./token.pickle:/app/data/google/token.pickle
       - ./downloads:/media
       - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   jellyfin:
     image: jellyfin/jellyfin:latest
@@ -36,3 +41,8 @@ services:
       - ./downloads:/media:ro
     environment:
       - TZ=${TZ:-Asia/Kolkata}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

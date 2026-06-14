@@ -88,6 +88,8 @@ HELP_TEXT = "\n".join(
         "<b>Manage</b>",
         "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
         "<code>/cancelall</code> - cancel all active tasks",
+        "<code>/restart</code> - gracefully restart Mirror-Bot",
+        "<code>/logs</code> - send recent sanitized application logs",
         "<code>/delete</code> - delete Local or Google Drive items",
         "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
         "",
@@ -735,6 +737,7 @@ async def shutdown_bot() -> None:
 
 
 async def main() -> None:
+    LOGGER.info("========== BOT STARTED ================")
     await asyncio.to_thread(ensure_jellyfin_running)
     cleanup_abandoned_downloads()
     (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)

@@ -186,7 +186,8 @@ Generated temporary pages use random tokens and expire automatically. Restrict i
 | `/gdstats` | Show Google Drive authentication and storage quota |
 | `/local` | Open the temporary local file explorer |
 | `/jellyfin` | Open the Jellyfin management menu |
-| `/log` | Send the current bot log file |
+| `/logs` | Send the latest 2,000 sanitized application log lines |
+| `/restart` | Gracefully restart Mirror-Bot |
 | `/ping` | Check whether the bot is responsive |
 | `/help` | Show the command reference in Telegram |
 
@@ -332,6 +333,11 @@ docker compose up -d --build
 ```
 
 Downloaded media and Jellyfin state persist through normal container restarts and rebuilds because they live in mounted host directories.
+
+Application logs are written to `data/logs/bot.log`, sanitized before storage,
+rotated at 5 MB, and retained for up to seven days within an approximately
+50 MB limit. Engine logs such as qBittorrent remain separate and are never
+included in `/logs`. Docker also rotates console logs for both services.
 
 ## Security Notes
 
