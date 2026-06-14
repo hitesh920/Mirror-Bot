@@ -178,6 +178,7 @@ Generated temporary pages use random tokens and expire automatically. Restrict i
 | `/add` as a reply | Download a replied Telegram file or link |
 | `/status` | Show live active-task status |
 | `/stats` | Show bot and server resource statistics |
+| `/speedtest` | Test the server's ping, download speed, and upload speed |
 | `/cancel <task-id>` | Cancel one active task |
 | `/cancelall` | Cancel all active and pending tasks |
 | `/search <name>` | Search Google Drive on a temporary results page |

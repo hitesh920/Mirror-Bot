@@ -86,6 +86,7 @@ HELP_TEXT = "\n".join(
         "<b>Status</b>",
         "<code>/status</code> - live task status",
         "<code>/stats</code> - bot/server stats",
+        "<code>/speedtest</code> - test server network speed",
         "<code>/gdstats</code> - Google Drive auth and quota",
         "<code>/jellyfin</code> - manage Jellyfin",
         "<code>/local</code> - temporary local file explorer",

@@ -10,3 +10,4 @@ kurigram
 tgcrypto
 yt-dlp[default]
 psutil
+speedtest-cli

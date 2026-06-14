@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+from html import escape
 from pathlib import Path
 
 import psutil
@@ -17,6 +18,10 @@ from ..app import (
 )
 from ..core.logging_config import create_log_export, log_event
 from ..services.restart_state import save_restart_state
+from ..services.speedtest import SpeedtestError, run_speedtest
+
+
+speedtest_lock = asyncio.Lock()
 
 
 @app.on_message(filters.command("start") & owner_filter)
@@ -106,6 +111,43 @@ async def cancel_selector(_, query):
 async def ping(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.ping", result="requested")
     await message.reply("pong")
+
+
+@app.on_message(filters.command("speedtest") & owner_filter)
+async def speedtest_cmd(_, message: Message):
+    if speedtest_lock.locked():
+        await message.reply("A speed test is already running.")
+        return
+    log_event(LOGGER, logging.INFO, "command.speedtest", result="requested")
+    status = await message.reply("Running speed test...")
+    async with speedtest_lock:
+        try:
+            result = await run_speedtest()
+        except SpeedtestError as exc:
+            log_event(LOGGER, logging.WARNING, "command.speedtest", result="failed")
+            await status.edit_text(
+                f"<b>Speed test failed</b>\n<code>{escape(str(exc))}</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except Exception:
+            LOGGER.exception("Unexpected speed test failure")
+            await status.edit_text("Speed test failed unexpectedly.")
+            return
+    log_event(LOGGER, logging.INFO, "command.speedtest", result="completed")
+    await status.edit_text(
+        "\n".join(
+            [
+                "<b>Speed Test</b>",
+                f"<b>Ping:</b> <code>{result.ping_ms:.2f} ms</code>",
+                f"<b>Download:</b> <code>{result.download_mbps:.2f} Mbps</code>",
+                f"<b>Upload:</b> <code>{result.upload_mbps:.2f} Mbps</code>",
+                f"<b>ISP:</b> <code>{escape(result.isp)}</code>",
+                f"<b>Server:</b> <code>{escape(result.sponsor)} - {escape(result.server)}</code>",
+            ]
+        ),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @app.on_message(filters.command("logs") & owner_filter)
