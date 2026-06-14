@@ -29,7 +29,7 @@ from .services.public_url import public_base_url
 from .services.jellyfin import JellyfinControlError, JellyfinManager
 from .services.jellyfin_api import JellyfinApi
 from .services.file_explorer import FileExplorer
-from .services.media_library import apply_media_permissions
+from .services.media_library import apply_media_permissions, promote_yearless_series_folders
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
@@ -64,6 +64,7 @@ status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+series_promotion_job: asyncio.Task | None = None
 PENDING_ADD_TIMEOUT = 120
 ADD_USAGE = (
     "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
@@ -491,6 +492,12 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
                 await asyncio.to_thread(jellyfin_api.scan_library)
             except Exception:
                 LOGGER.exception("Task %s: Jellyfin scan request failed", task.short_id())
+        if (
+            task.phase == TaskPhase.COMPLETE
+            and task.destination == Destination.LOCAL_SERIES
+            and not task.library_name.endswith(")")
+        ):
+            schedule_series_promotion()
         if is_torrent:
             try:
                 await query.message.delete()
@@ -672,6 +679,41 @@ async def explorer_scan() -> None:
     await asyncio.to_thread(jellyfin_api.scan_library)
 
 
+async def promote_series_library() -> None:
+    promoted = 0
+    for attempt in range(3):
+        promotion = await asyncio.to_thread(
+            promote_yearless_series_folders,
+            config.local_download_root,
+            config.tmdb_api_key,
+        )
+        promoted += promotion["promoted"]
+        LOGGER.info(
+            "Series folder promotion pass=%s promoted=%s skipped=%s conflicts=%s",
+            attempt + 1,
+            promotion["promoted"],
+            promotion["skipped"],
+            promotion["conflicts"],
+        )
+        if promotion["skipped"] == 0:
+            break
+        await asyncio.sleep(60)
+    if promoted:
+        try:
+            await asyncio.to_thread(jellyfin_api.scan_library)
+        except Exception:
+            LOGGER.exception("Jellyfin scan after series folder promotion failed")
+
+
+def schedule_series_promotion() -> None:
+    global series_promotion_job
+    if series_promotion_job is None or series_promotion_job.done():
+        series_promotion_job = background.create(
+            promote_series_library(),
+            name="promote-series-library",
+        )
+
+
 async def explorer_upload(
     chat_id: int,
     paths: list[Path],
@@ -748,6 +790,7 @@ async def main() -> None:
     apply_media_permissions(config.local_download_root, config.local_download_root / "series")
     LOGGER.info("Starting bot")
     await app.start()
+    schedule_series_promotion()
     restart_state = await asyncio.to_thread(take_restart_state)
     if restart_state is not None:
         elapsed = max(0, round(time() - restart_state.requested_at))

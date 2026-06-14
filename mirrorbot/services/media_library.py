@@ -23,6 +23,7 @@ SEPARATORS_RE = re.compile(r"[._]+")
 SPACE_RE = re.compile(r"\s+")
 INVALID_PATH_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 TMDB_CACHE: dict[tuple[str, str, str], tuple[str, str, float, int | None]] = {}
+CANONICAL_YEAR_SUFFIX_RE = re.compile(r"\s+\((19\d{2}|20\d{2})\)$")
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,22 @@ def media_identity_name(downloaded: Path, category: str) -> str:
 def media_target(root: Path, category: str, downloaded: Path, match: MediaMatch) -> Path:
     category_root = local_category_root(root, category)
     target = category_root / match.folder_name
+    if category == "series" and match.year:
+        yearless = category_root / INVALID_PATH_RE.sub(" ", match.title).strip(" .")
+        if yearless != target and yearless.is_dir() and not yearless.is_symlink():
+            if target.exists():
+                LOGGER.warning(
+                    "Series canonical promotion skipped because target exists source=%s target=%s",
+                    yearless,
+                    target,
+                )
+            else:
+                yearless.rename(target)
+                LOGGER.info(
+                    "Promoted yearless series folder source=%s target=%s",
+                    yearless,
+                    target,
+                )
     if not match.year:
         title = match.folder_name.casefold()
         candidates = [
@@ -150,6 +167,43 @@ def media_target(root: Path, category: str, downloaded: Path, match: MediaMatch)
         target /= f"Season {match.season:02d}"
     ensure_inside(root, target)
     return target
+
+
+def promote_yearless_series_folders(root: Path, tmdb_api_key: str) -> dict[str, int]:
+    stats = {"promoted": 0, "skipped": 0, "conflicts": 0}
+    category_root = local_category_root(root, "series")
+    for folder in sorted(category_root.iterdir()):
+        if (
+            not folder.is_dir()
+            or folder.is_symlink()
+            or folder.name.startswith(".")
+            or CANONICAL_YEAR_SUFFIX_RE.search(folder.name)
+        ):
+            continue
+        match = resolve_media(folder.name, "series", tmdb_api_key)
+        if match.confidence < 0.72 or not match.year:
+            stats["skipped"] += 1
+            LOGGER.info(
+                "Yearless series promotion skipped title=%r confidence=%.2f",
+                folder.name,
+                match.confidence,
+            )
+            continue
+        target = category_root / match.folder_name
+        ensure_inside(root, target)
+        if target.exists():
+            stats["conflicts"] += 1
+            LOGGER.warning(
+                "Yearless series promotion conflict source=%s target=%s",
+                folder,
+                target,
+            )
+            continue
+        folder.rename(target)
+        apply_media_permissions(root, target)
+        stats["promoted"] += 1
+        LOGGER.info("Promoted yearless series folder source=%s target=%s", folder, target)
+    return stats
 
 
 def apply_media_permissions(root: Path, target: Path | None = None) -> None:
