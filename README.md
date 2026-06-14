@@ -295,24 +295,6 @@ Mirror-Bot includes safeguards for long-running unattended operation:
 - Downloads and uploads fail clearly after ten minutes without meaningful progress.
 - Temporary task directories isolate filenames and are removed after terminal task states.
 
-## Testing
-
-Run the automated reliability suite inside Docker:
-
-```bash
-docker compose run --rm --no-deps -w /app -e PYTHONPATH=/app bot \
-  sh -c "pip install --no-cache-dir -r requirements-dev.txt && pytest -q"
-```
-
-Validate the Compose configuration and startup script:
-
-```bash
-docker compose config -q
-bash -n start.sh
-```
-
-The test suite covers task lifecycle transitions, cancellation, semaphore release, workspace cleanup, archive subprocess termination, disk reserve boundaries, stalled transfers, slow-progress transfers, background jobs, and idempotent shutdown.
-
 ## Operations
 
 ```bash
