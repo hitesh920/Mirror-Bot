@@ -622,7 +622,6 @@ def jellyfin_buttons() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton("Scan Library", callback_data="jf:scan"),
-                InlineKeyboardButton("Refresh Metadata", callback_data="jf:metadata"),
             ],
         ]
     )
@@ -685,24 +684,6 @@ async def explorer_scan() -> None:
     await asyncio.to_thread(jellyfin_api.scan_library)
 
 
-async def refresh_local_metadata(task) -> None:
-    media_type = "series" if task.destination == Destination.LOCAL_SERIES else "movie"
-    name = task.library_name or task.result_name or task.name
-    try:
-        await asyncio.to_thread(
-            jellyfin_api.refresh_new_media,
-            name,
-            media_type,
-            scan=False,
-        )
-    except Exception:
-        LOGGER.exception(
-            "Task %s: Jellyfin metadata refresh failed for %s",
-            task.short_id(),
-            name,
-        )
-
-
 async def refresh_pending_local_metadata() -> None:
     global local_metadata_job
     try:
@@ -720,17 +701,17 @@ async def refresh_pending_local_metadata() -> None:
                 for task in manager.tasks.values()
             ):
                 continue
-            tasks = list(pending_local_metadata_tasks.values())
+            completed_count = len(pending_local_metadata_tasks)
             pending_local_metadata_tasks.clear()
-            if not tasks:
+            if not completed_count:
                 return
             try:
                 await asyncio.to_thread(jellyfin_api.scan_library)
             except Exception:
-                LOGGER.exception("Jellyfin scan for completed local task batch failed")
+                LOGGER.exception(
+                    "Jellyfin scan and metadata refresh for completed local task batch failed"
+                )
                 return
-            for task in tasks:
-                await refresh_local_metadata(task)
             if not pending_local_metadata_tasks:
                 return
     finally:

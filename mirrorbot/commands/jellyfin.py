@@ -46,13 +46,9 @@ async def jellyfin_action(_, query):
     )
     try:
         if action == "scan":
-            await asyncio.to_thread(jellyfin_api.scan_library)
+            refreshed = await asyncio.to_thread(jellyfin_api.scan_library)
             status = await asyncio.to_thread(jellyfin.status)
-            label = "Library scan requested"
-        elif action == "metadata":
-            refreshed = await asyncio.to_thread(jellyfin_api.refresh_all_metadata)
-            status = await asyncio.to_thread(jellyfin.status)
-            label = f"Metadata refresh requested for {refreshed} libraries"
+            label = f"Scan and metadata refresh requested for {refreshed} libraries"
         elif action == "start":
             status = await asyncio.to_thread(jellyfin.start)
             label = "Started"
