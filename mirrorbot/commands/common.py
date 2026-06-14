@@ -16,6 +16,7 @@ from ..app import (
     replace_status_message, status_jobs, status_loop,
 )
 from ..core.logging_config import create_log_export, log_event
+from ..services.restart_state import save_restart_state
 
 
 @app.on_message(filters.command("start") & owner_filter)
@@ -128,7 +129,12 @@ async def logs_cmd(_, message: Message):
 @app.on_message(filters.command("restart") & owner_filter)
 async def restart_cmd(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.restart", result="requested")
-    await message.reply("Restarting Mirror-Bot...")
+    restart_message = await message.reply("Restarting Mirror-Bot...")
+    await asyncio.to_thread(
+        save_restart_state,
+        restart_message.chat.id,
+        restart_message.id,
+    )
     LOGGER.info("========== RESTART REQUESTED ==========")
     await asyncio.sleep(0.5)
     os.kill(1, signal.SIGTERM)

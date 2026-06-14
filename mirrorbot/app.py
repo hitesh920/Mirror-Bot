@@ -5,6 +5,7 @@ from collections import defaultdict
 from html import escape
 from pathlib import Path
 from shutil import rmtree
+from time import time
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
@@ -31,6 +32,7 @@ from .services.file_explorer import FileExplorer
 from .services.media_library import apply_media_permissions
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
+from .services.restart_state import take_restart_state
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -746,6 +748,18 @@ async def main() -> None:
     apply_media_permissions(config.local_download_root, config.local_download_root / "series")
     LOGGER.info("Starting bot")
     await app.start()
+    restart_state = await asyncio.to_thread(take_restart_state)
+    if restart_state is not None:
+        elapsed = max(0, round(time() - restart_state.requested_at))
+        try:
+            await app.edit_message_text(
+                restart_state.chat_id,
+                restart_state.message_id,
+                f"Mirror-Bot restarted successfully in {elapsed}s.",
+            )
+            LOGGER.info("Restart success notification sent elapsed=%ss", elapsed)
+        except Exception:
+            LOGGER.exception("Could not send restart success notification")
     try:
         await idle()
     finally:
