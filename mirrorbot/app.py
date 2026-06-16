@@ -63,11 +63,14 @@ drive_share_pages = DriveSharePages(
 status_messages: dict[int, Message] = {}
 status_jobs: dict[int, asyncio.Task] = {}
 pending_local_metadata_tasks: dict[str, object] = {}
+pending_jellyfin_scan_reasons: set[str] = set()
 local_metadata_job: asyncio.Task | None = None
+last_jellyfin_auto_scan_at = 0.0
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 series_promotion_job: asyncio.Task | None = None
 PENDING_ADD_TIMEOUT = 120
+JELLYFIN_AUTO_SCAN_COOLDOWN = 180
 ADD_USAGE = (
     "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
     "You can also reply to a Telegram file or link with <code>/add</code>."
@@ -686,7 +689,7 @@ async def explorer_scan() -> None:
 
 
 async def refresh_pending_local_metadata() -> None:
-    global local_metadata_job
+    global last_jellyfin_auto_scan_at, local_metadata_job
     try:
         while True:
             while any(
@@ -703,11 +706,31 @@ async def refresh_pending_local_metadata() -> None:
             ):
                 continue
             completed_count = len(pending_local_metadata_tasks)
+            reasons = sorted(pending_jellyfin_scan_reasons)
             pending_local_metadata_tasks.clear()
-            if not completed_count:
+            pending_jellyfin_scan_reasons.clear()
+            if not completed_count and not reasons:
                 return
+            cooldown_wait = max(
+                0,
+                last_jellyfin_auto_scan_at + JELLYFIN_AUTO_SCAN_COOLDOWN - time(),
+            )
+            if cooldown_wait:
+                LOGGER.info(
+                    "Jellyfin auto scan delayed cooldown=%ss reasons=%s",
+                    int(cooldown_wait),
+                    ",".join(reasons) or "local-complete",
+                )
+                await asyncio.sleep(cooldown_wait)
+                if any(
+                    task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
+                    and not task.terminal
+                    for task in manager.tasks.values()
+                ):
+                    continue
             try:
                 await asyncio.to_thread(jellyfin_api.scan_library)
+                last_jellyfin_auto_scan_at = time()
             except Exception:
                 LOGGER.exception(
                     "Jellyfin scan and metadata refresh for completed local task batch failed"
@@ -720,16 +743,21 @@ async def refresh_pending_local_metadata() -> None:
 
 
 def schedule_local_metadata_refresh(task) -> None:
-    global local_metadata_job
     if task.phase == TaskPhase.COMPLETE:
         pending_local_metadata_tasks[task.id] = task
+        pending_jellyfin_scan_reasons.add("local-complete")
+    schedule_jellyfin_auto_scan()
+
+
+def schedule_jellyfin_auto_scan() -> None:
+    global local_metadata_job
     if any(
         active.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
         and not active.terminal
         for active in manager.tasks.values()
     ):
         return
-    if pending_local_metadata_tasks and (
+    if (pending_local_metadata_tasks or pending_jellyfin_scan_reasons) and (
         local_metadata_job is None or local_metadata_job.done()
     ):
         local_metadata_job = background.create(
@@ -758,10 +786,8 @@ async def promote_series_library() -> None:
             break
         await asyncio.sleep(60)
     if promoted:
-        try:
-            await asyncio.to_thread(jellyfin_api.scan_library)
-        except Exception:
-            LOGGER.exception("Jellyfin scan after series folder promotion failed")
+        pending_jellyfin_scan_reasons.add("series-promotion")
+        schedule_jellyfin_auto_scan()
 
 
 def schedule_series_promotion() -> None:

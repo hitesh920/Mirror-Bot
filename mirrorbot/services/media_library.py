@@ -79,6 +79,7 @@ def resolve_media(name: str, category: str, api_key: str) -> MediaMatch:
         headers={"User-Agent": "MirrorBot/1.0", "Accept": "application/json"},
     )
     results = None
+    last_error: Exception | None = None
     for attempt in range(3):
         try:
             with urlopen(request, timeout=8) as response:
@@ -86,13 +87,16 @@ def resolve_media(name: str, category: str, api_key: str) -> MediaMatch:
                 results = json.load(response).get("results", [])
             break
         except Exception as exc:
-            LOGGER.warning(
-                "TMDb lookup attempt=%s failed title=%r type=%s error=%s",
-                attempt + 1, title, media_type, type(exc).__name__,
-            )
+            last_error = exc
             if attempt < 2:
                 time.sleep(attempt + 1)
     if results is None:
+        LOGGER.warning(
+            "TMDb lookup failed after retries title=%r type=%s attempts=3 error=%s",
+            title,
+            media_type,
+            type(last_error).__name__ if last_error else "unknown",
+        )
         return fallback
     normalized = title.casefold()
     best = None
