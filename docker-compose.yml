@@ -8,14 +8,16 @@ services:
     depends_on:
       - jellyfin
     ports:
-      # Torrent selector
+      # Main web app
       - "8000:8000"
-      # Google Drive search pages
+      # Torrent selector
       - "8001:8001"
+      # Google Drive search pages
+      - "8002:8002"
       # Temporary local file explorer
-      - "8003:8003"
-      # Temporary Google Drive folder share pages
       - "8004:8004"
+      # Temporary Google Drive folder share pages
+      - "8005:8005"
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
@@ -34,7 +36,7 @@ services:
     container_name: jellyfin
     restart: unless-stopped
     ports:
-      - "8002:8096"
+      - "8003:8096"
     volumes:
       - ./data/jellyfin/config:/config
       - ./data/jellyfin/cache:/cache

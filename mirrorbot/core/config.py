@@ -35,6 +35,10 @@ class Config:
     jellyfin_api_key: str
     tmdb_api_key: str
     buzzheavier_account_id: str
+    web_username: str
+    web_password: str
+    web_port: int
+    enable_telegram_ui: bool
 
     download_dir: Path = Path("/app/downloads")
     qb_host: str = "http://localhost:8080"
@@ -50,17 +54,16 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         load_dotenv()
-        missing = [
-            key
-            for key in [
+        required = ["LOCAL_DOWNLOAD_ROOT"]
+        enable_telegram_ui = _bool("ENABLE_TELEGRAM_UI", True)
+        if enable_telegram_ui:
+            required.extend([
                 "BOT_TOKEN",
                 "OWNER_ID",
                 "TELEGRAM_API_ID",
                 "TELEGRAM_API_HASH",
-                "LOCAL_DOWNLOAD_ROOT",
-            ]
-            if not getenv(key)
-        ]
+            ])
+        missing = [key for key in required if not getenv(key)]
         if missing:
             raise RuntimeError(f"Missing required config: {', '.join(missing)}")
 
@@ -74,9 +77,13 @@ class Config:
             task_limit=max(1, _int("TASK_LIMIT", 10)),
             status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
             public_base_url=getenv("PUBLIC_BASE_URL", ""),
-            torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8000),
+            torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8001),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
             jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
             tmdb_api_key=getenv("TMDB_API_KEY", ""),
             buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
+            web_username=getenv("WEB_USERNAME", "admin"),
+            web_password=getenv("WEB_PASSWORD", ""),
+            web_port=_int("WEB_PORT", 8000),
+            enable_telegram_ui=enable_telegram_ui,
         )

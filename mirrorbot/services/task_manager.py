@@ -441,6 +441,17 @@ class TaskManager:
             return await download_ytdlp(task)
         if task.source.type == SourceType.GOOGLE_DRIVE:
             return await download_gdrive(task, self.config)
+        if task.source.type == SourceType.LOCAL_PATH:
+            path = Path(task.source.value)
+            if not path.exists():
+                raise FileNotFoundError("Local source path does not exist")
+            task.name = task.options.name or path.name
+            task.size = path.stat().st_size if path.is_file() else sum(
+                item.stat().st_size for item in path.rglob("*") if item.is_file()
+            )
+            task.downloaded = task.size
+            task.progress = 1
+            return path
         raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")
 
     def cancel(self, task_id: str) -> bool:

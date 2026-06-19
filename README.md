@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
 
-A private, owner-controlled Telegram bot for downloading, processing, organizing, and delivering files across local storage, Telegram, Google Drive, and BuzzHeavier.
+A private, owner-controlled web and Telegram bot for downloading, processing, organizing, and delivering files across local storage, Telegram, Google Drive, and BuzzHeavier.
 
 Mirror-Bot combines multiple transfer engines behind one `/add` workflow, provides live task status and reliable cancellation, organizes media for Jellyfin, and exposes temporary token-protected web tools for torrent selection, Drive search, and local file management.
 
@@ -139,7 +139,7 @@ docker compose logs -f bot
 Jellyfin is available at:
 
 ```text
-http://SERVER_IP:8002
+http://SERVER_IP:8003
 ```
 
 ## Configuration
@@ -154,11 +154,15 @@ http://SERVER_IP:8002
 | `GOOGLE_DRIVE_FOLDER_ID` | No | Empty | Default Google Drive upload folder ID |
 | `TASK_LIMIT` | No | `10` | Maximum number of concurrently active tasks |
 | `STATUS_UPDATE_INTERVAL` | No | `10` | Live status refresh interval in seconds |
-| `TORRENT_SELECTION_PORT` | No | `8000` | Torrent selector port; Drive search uses the next port |
+| `TORRENT_SELECTION_PORT` | No | `8001` | Torrent selector port; Drive search uses the next port |
 | `TORRENT_SELECTION_TIMEOUT` | No | `300` | Torrent metadata/file-selection timeout in seconds |
 | `PUBLIC_BASE_URL` | No | Auto-detected | Emergency override for generated public links |
 | `JELLYFIN_API_KEY` | No | Empty | Enables Jellyfin server information and library scans |
 | `TMDB_API_KEY` | No | Empty | Enables confident official movie/series title matching |
+| `WEB_USERNAME` | No | `admin` | Main web dashboard username |
+| `WEB_PASSWORD` | Yes for web login | Empty | Main web dashboard password |
+| `WEB_PORT` | No | `8000` | Main web dashboard port |
+| `ENABLE_TELEGRAM_UI` | No | `true` | Starts Telegram command UI when credentials are configured |
 | `BUZZHEAVIER_ACCOUNT_ID` | No | Empty | Optional Bearer token/account ID for BuzzHeavier uploads |
 | `TZ` | No | `Asia/Kolkata` | Jellyfin container timezone |
 
@@ -168,11 +172,12 @@ Internal defaults intentionally remain in code: Telegram split size is 2 GB, yt-
 
 | Port | Service | Exposure behavior |
 | --- | --- | --- |
-| `8000` | Torrent file selector | Opens temporarily while selection is pending |
-| `8001` | Google Drive search results | Temporary token-protected result pages |
-| `8002` | Jellyfin | Persistent Jellyfin web interface |
-| `8003` | Local file explorer | Opens while one or more temporary sessions exist |
-| `8004` | Google Drive share pages | Opens while one or more temporary shares exist |
+| `8000` | Main web dashboard | Persistent owner-only browser UI |
+| `8001` | Torrent file selector | Opens temporarily while selection is pending |
+| `8002` | Google Drive search results | Temporary token-protected result pages |
+| `8003` | Jellyfin | Persistent Jellyfin web interface |
+| `8004` | Local file explorer | Opens while one or more temporary sessions exist |
+| `8005` | Google Drive share pages | Opens while one or more temporary shares exist |
 
 Generated temporary pages use random tokens and expire automatically. Restrict ingress to trusted IP ranges whenever practical.
 
@@ -254,7 +259,7 @@ Jellyfin is managed as a companion service:
 - Persistent configuration: `data/jellyfin/config/`
 - Persistent cache: `data/jellyfin/cache/`
 - Read-only media mount: `/media`
-- Public interface: `http://SERVER_IP:8002`
+- Public interface: `http://SERVER_IP:8003`
 
 The `/jellyfin` menu can show status, open Jellyfin, start, stop, restart, refresh, and scan the library. Mirror-Bot accesses only the configured `jellyfin` container through the Docker socket.
 
@@ -332,7 +337,7 @@ included in `/logs`. Docker also rotates console logs for both services.
 
 - Keep `.env`, `credentials.json`, `token.pickle`, logs, and `data/` private.
 - Never commit Telegram tokens, Google credentials, Jellyfin API keys, or TMDb API keys.
-- Restrict ports `8000`, `8001`, `8002`, and `8003` using your cloud firewall where possible.
+- Restrict ports `8000`, `8001`, `8002`, `8003`, `8004`, and `8005` using your cloud firewall where possible.
 - The Docker socket gives Mirror-Bot privileged access to manage Jellyfin. Run only trusted code and review changes before deployment.
 - Temporary web pages are token-protected, but public exposure should still be limited to trusted networks or IP addresses.
 

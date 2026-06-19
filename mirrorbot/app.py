@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+import signal
 from collections import defaultdict
 from html import escape
 from pathlib import Path
@@ -33,6 +34,7 @@ from .services.media_library import apply_media_permissions, promote_yearless_se
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
+from .services.web_dashboard import WebDashboard
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -56,8 +58,8 @@ drive_search_pages = DriveSearchPages(
     300,
 )
 drive_share_pages = DriveSharePages(
-    public_base_url(8004, config.public_base_url),
-    8004,
+    public_base_url(8005, config.public_base_url),
+    8005,
     300,
 )
 status_messages: dict[int, Message] = {}
@@ -109,13 +111,18 @@ HELP_TEXT = "\n".join(
     ]
 )
 
-app = Client(
-    "mirrorbot",
-    api_id=config.telegram_api_id,
-    api_hash=config.telegram_api_hash,
-    bot_token=config.bot_token,
-    max_concurrent_transmissions=config.task_limit,
+app = (
+    Client(
+        "mirrorbot",
+        api_id=config.telegram_api_id,
+        api_hash=config.telegram_api_hash,
+        bot_token=config.bot_token,
+        max_concurrent_transmissions=config.task_limit,
+    )
+    if config.enable_telegram_ui and config.bot_token
+    else None
 )
+web_dashboard: WebDashboard | None = None
 
 
 def owner_only(_, __, message: Message) -> bool:
@@ -440,6 +447,28 @@ def completion_buttons(task) -> InlineKeyboardMarkup | None:
 
 
 
+def completion_payload(task) -> dict:
+    links = []
+    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
+        links.append({"label": "Open Google Drive", "url": task.result_links[0]})
+    elif task.destination == Destination.BUZZHEAVIER:
+        links.extend(
+            {"label": f"Open {index}", "url": link}
+            for index, link in enumerate(task.result_links[:10], start=1)
+        )
+    elif task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
+        links.append({"label": "Open Jellyfin", "url": jellyfin_url()})
+    return {
+        "name": task.name or task.result_name or task.source.type.value,
+        "destination": task.destination.value,
+        "files": task.result_files,
+        "folders": task.result_folders,
+        "links": links,
+        "path": str(task.result_path or ""),
+    }
+
+
+
 
 
 
@@ -631,7 +660,7 @@ async def delete_google_drive_link(message: Message, link: str) -> None:
 
 
 def jellyfin_url() -> str:
-    return public_base_url(8002, config.public_base_url)
+    return public_base_url(8003, config.public_base_url)
 
 
 def jellyfin_buttons() -> InlineKeyboardMarkup:
@@ -860,9 +889,10 @@ def get_file_explorer() -> FileExplorer:
     if file_explorer is None:
         file_explorer = FileExplorer(
             config.local_download_root,
-            public_base_url(8003, config.public_base_url),
+            public_base_url(8004, config.public_base_url),
             explorer_upload,
             explorer_scan,
+            8004,
         )
     return file_explorer
 
@@ -870,6 +900,9 @@ def get_file_explorer() -> FileExplorer:
 
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
+    if app is None:
+        LOGGER.info("Telegram UI disabled; command handlers were not registered")
+        return
     from .commands import add, common, drive, jellyfin, local  # noqa: F401
 
 
@@ -881,6 +914,15 @@ async def close_file_explorer() -> None:
         await file_explorer.close_all()
 
 
+async def close_web_dashboard() -> None:
+    if web_dashboard is not None:
+        await web_dashboard.close()
+
+
+def telegram_client():
+    return app
+
+
 async def shutdown_bot() -> None:
     global shutting_down
     if shutting_down:
@@ -889,11 +931,23 @@ async def shutdown_bot() -> None:
     LOGGER.info("Graceful shutdown started")
     for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()) + list(status_jobs.values()):
         job.cancel()
-    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer))
+    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer, close_web_dashboard))
     LOGGER.info("Graceful shutdown complete")
 
 
+async def wait_for_shutdown_signal() -> None:
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            pass
+    await stop_event.wait()
+
+
 async def main() -> None:
+    global web_dashboard
     LOGGER.info("========== BOT STARTED ================")
     await asyncio.to_thread(ensure_jellyfin_running)
     cleanup_abandoned_downloads()
@@ -901,11 +955,35 @@ async def main() -> None:
     (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
     apply_media_permissions(config.local_download_root, config.local_download_root / "movies")
     apply_media_permissions(config.local_download_root, config.local_download_root / "series")
-    LOGGER.info("Starting bot")
-    await app.start()
+
+    web_dashboard = WebDashboard(
+        config,
+        manager,
+        background,
+        telegram_client,
+        jellyfin,
+        jellyfin_api,
+        drive_search_pages,
+        drive_share_pages,
+        get_file_explorer,
+        schedule_local_metadata_refresh,
+        schedule_series_promotion,
+        completion_payload,
+    )
+    await web_dashboard.start()
+
+    telegram_started = False
+    if app is not None:
+        try:
+            LOGGER.info("Starting Telegram UI")
+            await app.start()
+            telegram_started = True
+        except Exception:
+            LOGGER.exception("Telegram UI failed to start; web dashboard remains available")
+
     schedule_series_promotion()
     restart_state = await asyncio.to_thread(take_restart_state)
-    if restart_state is not None:
+    if restart_state is not None and telegram_started:
         elapsed = max(0, round(time() - restart_state.requested_at))
         try:
             await app.edit_message_text(
@@ -917,14 +995,21 @@ async def main() -> None:
         except Exception:
             LOGGER.exception("Could not send restart success notification")
     try:
-        await idle()
+        if telegram_started:
+            await idle()
+        else:
+            await wait_for_shutdown_signal()
     finally:
         await shutdown_bot()
-        await app.stop()
+        if telegram_started:
+            await app.stop()
 
 
 def run():
-    app.loop.run_until_complete(main())
+    if app is not None:
+        app.loop.run_until_complete(main())
+    else:
+        asyncio.run(main())
 
 
 def cleanup_abandoned_downloads() -> None:
