@@ -35,8 +35,6 @@ class Config:
     jellyfin_api_key: str
     tmdb_api_key: str
     buzzheavier_account_id: str
-    web_username: str
-    web_password: str
     web_port: int
     enable_telegram_ui: bool
 
@@ -82,8 +80,6 @@ class Config:
             jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
             tmdb_api_key=getenv("TMDB_API_KEY", ""),
             buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
-            web_username=getenv("WEB_USERNAME", "admin"),
-            web_password=getenv("WEB_PASSWORD", ""),
             web_port=_int("WEB_PORT", 8000),
             enable_telegram_ui=enable_telegram_ui,
         )

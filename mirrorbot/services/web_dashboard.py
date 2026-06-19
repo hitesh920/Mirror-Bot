@@ -97,37 +97,18 @@ class WebDashboard:
 
     @web.middleware
     async def auth_middleware(self, request, handler):
-        if request.path in {"/login"}:
-            return await handler(request)
-        if request.path.startswith("/api/") or request.path == "/":
-            token = request.cookies.get(SESSION_COOKIE, "")
-            if token not in self.sessions:
-                if request.path.startswith("/api/"):
-                    raise web.HTTPUnauthorized(text="Login required")
-                raise web.HTTPFound("/login")
         return await handler(request)
 
     async def login_page(self, request: web.Request) -> web.Response:
-        return web.Response(text=LOGIN_PAGE, content_type="text/html")
+        raise web.HTTPFound("/")
 
     async def login(self, request: web.Request) -> web.Response:
-        data = await request.post()
-        if not self.config.web_password:
-            return web.Response(text="WEB_PASSWORD is not configured.", status=503)
-        if secrets.compare_digest(data.get("username", ""), self.config.web_username) and secrets.compare_digest(data.get("password", ""), self.config.web_password):
-            token = secrets.token_urlsafe(32)
-            self.sessions.add(token)
-            response = web.HTTPFound("/")
-            response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax", max_age=7 * 24 * 3600)
-            log_event(LOGGER, logging.INFO, "web.login", result="success")
-            return response
-        log_event(LOGGER, logging.WARNING, "web.login", result="failed")
-        return web.Response(text="Invalid login", status=403)
+        raise web.HTTPFound("/")
 
     async def logout(self, request: web.Request) -> web.Response:
         token = request.cookies.get(SESSION_COOKIE, "")
         self.sessions.discard(token)
-        response = web.HTTPFound("/login")
+        response = web.HTTPFound("/")
         response.del_cookie(SESSION_COOKIE)
         return response
 
@@ -369,8 +350,6 @@ class WebDashboard:
         self.background.create(restart_later(), name="web-restart")
         return web.json_response({"ok": True})
 
-
-LOGIN_PAGE = r'''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mirror-Bot Login</title><style>body{font:15px system-ui;background:#f4f6f8;margin:0;display:grid;place-items:center;min-height:100vh;color:#182230}.box{background:#fff;border:1px solid #d8dde4;border-radius:8px;padding:24px;width:min(360px,92vw)}h1{margin:0 0 16px;font-size:24px}input,button{width:100%;padding:11px 12px;margin-top:10px;border-radius:6px;border:1px solid #c5ccd5;font:inherit}button{background:#1769e0;color:#fff;border-color:#1769e0;font-weight:700;cursor:pointer}</style></head><body><form class="box" method="post" action="/login"><h1>Mirror-Bot</h1><input name="username" placeholder="Username" autocomplete="username"><input name="password" type="password" placeholder="Password" autocomplete="current-password"><button>Login</button></form></body></html>'''
 
 DASHBOARD_PAGE = r'''<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mirror-Bot</title>
