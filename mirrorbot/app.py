@@ -82,6 +82,7 @@ HELP_TEXT = "\n".join(
         "<b>Add</b>",
         "<code>/add &lt;link&gt;</code> - add a link",
         "<code>/add</code> - use the replied file/link",
+        "<code>BuzzHeavier</code> links are supported as sources and uploads",
         "<code>-z</code> zip, <code>-zp pass</code> password zip",
         "<code>-e</code> extract, <code>-ep pass</code> password extract",
         "<code>-n name</code> custom task name",
@@ -298,6 +299,7 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
                 InlineKeyboardButton("Google Drive", callback_data=f"dest:gdrive:{token}"),
             ],
+            [InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}")],
         ]
     )
 
@@ -391,6 +393,14 @@ def completion_message(task) -> str:
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
         ]
+    elif task.destination == Destination.BUZZHEAVIER:
+        sections = [
+            "<b>Task complete</b>",
+            f"<b>Name:</b> <code>{name}</code>",
+            "<b>Uploaded to:</b> <code>BuzzHeavier</code>",
+            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            result_list("BuzzHeavier links", task.result_files, task.result_links),
+        ]
     else:
         local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
         sections = [
@@ -409,6 +419,18 @@ def completion_buttons(task) -> InlineKeyboardMarkup | None:
     if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
         return InlineKeyboardMarkup(
             [[InlineKeyboardButton("Open Google Drive", url=task.result_links[0])]]
+        )
+    if task.destination == Destination.BUZZHEAVIER and task.result_links:
+        if len(task.result_links) == 1:
+            return InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Open BuzzHeavier", url=task.result_links[0])]]
+            )
+        buttons = [
+            InlineKeyboardButton(f"Open {index}", url=link)
+            for index, link in enumerate(task.result_links[:10], start=1)
+        ]
+        return InlineKeyboardMarkup(
+            [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
         )
     if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
         return InlineKeyboardMarkup(

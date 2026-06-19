@@ -34,6 +34,7 @@ class Config:
     torrent_selection_timeout: int
     jellyfin_api_key: str
     tmdb_api_key: str
+    buzzheavier_account_id: str
 
     download_dir: Path = Path("/app/downloads")
     qb_host: str = "http://localhost:8080"
@@ -77,4 +78,5 @@ class Config:
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
             jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
             tmdb_api_key=getenv("TMDB_API_KEY", ""),
+            buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
         )

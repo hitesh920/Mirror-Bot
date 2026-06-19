@@ -142,6 +142,9 @@ async def destination_choice(_, query):
     if dest == "gdrive":
         await launch_selected_task(query, token, Destination.GOOGLE_DRIVE)
         return
+    if dest == "buzzheavier":
+        await launch_selected_task(query, token, Destination.BUZZHEAVIER)
+        return
     await query.answer("Unknown destination", show_alert=True)
 
 

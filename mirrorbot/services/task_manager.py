@@ -24,6 +24,7 @@ from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
 from ..resolvers import resolve_source
 from .local_delivery import deliver_to_local
+from .buzzheavier_delivery import upload_to_buzzheavier
 from .google_drive_delivery import upload_to_gdrive
 from .telegram_delivery import upload_to_telegram
 from .public_url import public_base_url
@@ -179,6 +180,13 @@ class TaskManager:
                         task,
                         upload_to_gdrive(task, downloaded, self.config),
                     )
+                elif task.destination == Destination.BUZZHEAVIER:
+                    task.transition(TaskPhase.UPLOADING)
+                    task.current_file = downloaded.name
+                    await self._run_or_cancel(
+                        task,
+                        upload_to_buzzheavier(task, downloaded, self.config),
+                    )
                 else:
                     raise NotImplementedError(
                         f"{task.destination.value} delivery is not implemented"
@@ -322,6 +330,11 @@ class TaskManager:
                     await self._run_or_cancel(
                         task,
                         upload_to_gdrive(task, path, self.config),
+                    )
+                elif task.destination == Destination.BUZZHEAVIER:
+                    await self._run_or_cancel(
+                        task,
+                        upload_to_buzzheavier(task, path, self.config),
                     )
                 else:
                     raise NotImplementedError(

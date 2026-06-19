@@ -26,6 +26,7 @@ class Destination(str, Enum):
     LOCAL_SERIES = "local_series"
     TELEGRAM = "telegram"
     GOOGLE_DRIVE = "google_drive"
+    BUZZHEAVIER = "buzzheavier"
 
 
 class TaskPhase(str, Enum):

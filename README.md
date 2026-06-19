@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
 
-A private, owner-controlled Telegram bot for downloading, processing, organizing, and delivering files across local storage, Telegram, and Google Drive.
+A private, owner-controlled Telegram bot for downloading, processing, organizing, and delivering files across local storage, Telegram, Google Drive, and BuzzHeavier.
 
 Mirror-Bot combines multiple transfer engines behind one `/add` workflow, provides live task status and reliable cancellation, organizes media for Jellyfin, and exposes temporary token-protected web tools for torrent selection, Drive search, and local file management.
 
@@ -11,12 +11,12 @@ Mirror-Bot combines multiple transfer engines behind one `/add` workflow, provid
 ## Highlights
 
 - **One download command** for direct links, Telegram files, magnets, torrents, Google Drive links, and yt-dlp-supported media.
-- **Three destinations:** local media library, Telegram, or Google Drive.
+- **Four destinations:** local media library, Telegram, Google Drive, or BuzzHeavier.
 - **Built-in processing:** ZIP creation, password-protected ZIPs, archive extraction, and password-protected extraction.
 - **Torrent file selection:** temporary tree-based selector with check-all, uncheck-all, and cancellation.
 - **Smart media organization:** optional TMDb matching produces Jellyfin-friendly movie, series, and season folders.
 - **Managed Jellyfin companion:** inspect, start, stop, restart, open, and scan Jellyfin from Telegram.
-- **Temporary local file explorer:** browse, download, rename, copy, move, delete, upload to Telegram, and request a Jellyfin scan.
+- **Temporary local file explorer:** browse, download, rename, copy, move, delete, upload to Telegram, Google Drive, or BuzzHeavier, and request a Jellyfin scan.
 - **Google Drive management:** upload, download, search, temporary public sharing, quota inspection, and deletion through the official Drive API.
 - **Reliable task lifecycle:** live status, owner-only access, cancellation, graceful shutdown, disk protection, cleanup, and stalled-transfer detection.
 
@@ -31,7 +31,7 @@ Mirror-Bot combines multiple transfer engines behind one `/add` workflow, provid
 | Google Drive files and folders | Download through the official Google Drive API |
 | yt-dlp-supported URLs | Video resolution or MP3 quality selection |
 
-Built-in direct-host resolvers currently include redirect/shortener links, MediaFire, PixelDrain, WeTransfer, OneDrive, GoFile, SolidFiles, Upload.ee, StreamTape, pCloud, Send.cm, KrakenFiles, 1Fichier, Racaty, DoodStream, and Linkbox.
+Built-in direct-host resolvers currently include redirect/shortener links, MediaFire, PixelDrain, WeTransfer, OneDrive, GoFile, SolidFiles, Upload.ee, StreamTape, pCloud, Send.cm, KrakenFiles, 1Fichier, Racaty, DoodStream, Linkbox, and BuzzHeavier.
 
 ## Destinations
 
@@ -54,6 +54,10 @@ Files are uploaded back to the owner chat. Media-compatible files are sent as me
 
 Files and folders can be downloaded from or uploaded to Google Drive using OAuth credentials and the official Drive API. Mirror-Bot also provides temporary browser-based Drive search results, five-minute public folder share pages, and Drive item deletion.
 
+### BuzzHeavier
+
+BuzzHeavier file and folder links can be used as `/add` sources. BuzzHeavier is also available as an upload destination from `/add` and the local file explorer. Set `BUZZHEAVIER_ACCOUNT_ID` if you want authenticated uploads; otherwise the bot attempts anonymous uploads and reports a clear error if BuzzHeavier rejects them.
+
 ## Architecture
 
 ```mermaid
@@ -65,6 +69,7 @@ flowchart LR
     PROC --> LOCAL["Local media library"]
     PROC --> TGU["Telegram upload"]
     PROC --> GD["Google Drive"]
+    PROC --> BH["BuzzHeavier"]
     LOCAL --> JF["Jellyfin"]
     BOT --> WEB["Temporary token-protected web tools"]
     WEB --> QB["qBittorrent selector"]
@@ -154,6 +159,7 @@ http://SERVER_IP:8002
 | `PUBLIC_BASE_URL` | No | Auto-detected | Emergency override for generated public links |
 | `JELLYFIN_API_KEY` | No | Empty | Enables Jellyfin server information and library scans |
 | `TMDB_API_KEY` | No | Empty | Enables confident official movie/series title matching |
+| `BUZZHEAVIER_ACCOUNT_ID` | No | Empty | Optional Bearer token/account ID for BuzzHeavier uploads |
 | `TZ` | No | `Asia/Kolkata` | Jellyfin container timezone |
 
 Internal defaults intentionally remain in code: Telegram split size is 2 GB, yt-dlp video quality is capped at 1080p, MP3 quality supports up to 320 kbps, and ZIP compression uses level 5.
@@ -262,7 +268,7 @@ Use `/local` to open a token-protected browser session rooted strictly inside th
 - Folder creation and renaming
 - Copy and move operations
 - Permanent deletion with confirmation
-- Recursive Telegram uploads
+- Recursive Telegram, Google Drive, and BuzzHeavier uploads
 - Jellyfin library scans
 
 Sessions expire after five minutes. A browser prompt appears before expiry and can extend the session by another five minutes. Path traversal, symbolic links, and operations outside the download root are rejected.
@@ -332,4 +338,4 @@ included in `/logs`. Docker also rotates console logs for both services.
 
 ## Project Status
 
-Mirror-Bot currently supports the complete local, Telegram, Google Drive, torrent, archive-processing, smart-library, Jellyfin, and reliability workflows described above. Rclone integration is intentionally not included.
+Mirror-Bot currently supports the complete local, Telegram, Google Drive, BuzzHeavier, torrent, archive-processing, smart-library, Jellyfin, and reliability workflows described above. Rclone integration is intentionally not included.

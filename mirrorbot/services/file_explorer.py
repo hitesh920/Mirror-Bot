@@ -202,7 +202,7 @@ class FileExplorer:
             paths = [self._path(relative) for relative in data.get("sources", [])]
             if not paths: raise web.HTTPBadRequest(text="Select at least one item")
             destination = data.get("destination", "")
-            if destination not in {"telegram", "google_drive"}:
+            if destination not in {"telegram", "google_drive", "buzzheavier"}:
                 raise web.HTTPBadRequest(text="Invalid upload destination")
             await self.upload_callback(session.chat_id, paths, destination)
         else:
@@ -230,7 +230,7 @@ dialog{border:1px solid #cfd6de;border-radius:8px;padding:22px;box-shadow:0 12px
 @media(max-width:700px){.top{padding:16px 12px 11px}.bar{padding:8px 10px}main{margin:12px auto;padding:0 8px}.actions{gap:5px}button{padding:7px 8px}.kind,.size,th:nth-child(3),th:nth-child(4){display:none}.link{width:92px}th,td{padding:9px 7px}}
 </style></head><body>
 <header><div class="top"><h1>Local files</h1><div class="sub"><span id="location">/downloads</span><span id="count">0 items</span><span id="timer"></span></div></div></header>
-<div class="bar"><div class="actions"><button onclick="mkdir()">New folder</button><button onclick="renameOne()">Rename</button><button onclick="copyMove('copy')">Copy</button><button onclick="copyMove('move')">Move</button><button class="danger" onclick="removeItems()">Delete</button><button onclick="upload('telegram')">Upload to Telegram</button><button onclick="upload('google_drive')">Upload to Google Drive</button><button class="primary" onclick="scan()">Scan Jellyfin</button></div></div>
+<div class="bar"><div class="actions"><button onclick="mkdir()">New folder</button><button onclick="renameOne()">Rename</button><button onclick="copyMove('copy')">Copy</button><button onclick="copyMove('move')">Move</button><button class="danger" onclick="removeItems()">Delete</button><button onclick="upload('telegram')">Upload to Telegram</button><button onclick="upload('google_drive')">Upload to Google Drive</button><button onclick="upload('buzzheavier')">Upload to BuzzHeavier</button><button class="primary" onclick="scan()">Scan Jellyfin</button></div></div>
 <main><div id="crumbs" class="crumbs"></div><table><thead><tr><th class="check"><input type="checkbox" id="all"></th><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead><tbody id="rows"></tbody></table></main><div id="toast"></div>
 <dialog id="extend"><h3>Keep this session open?</h3><p>This file explorer expires in under one minute.</p><button class="primary" onclick="extendSession()">Extend 5 minutes</button><button onclick="this.closest('dialog').close()">Not now</button></dialog>
 <script>
@@ -247,7 +247,8 @@ async function mkdir(){let name=prompt('Folder name');if(name)await act('mkdir',
 async function renameOne(){let s=selected();if(s.length!==1)return toast('Select one item');let name=prompt('New name',s[0].split('/').pop());if(name)await act('rename',{source:s[0],name})}
 async function copyMove(a){let s=selected();if(!s.length)return toast('Select items');let destination=prompt('Destination path under downloads',path);if(destination!==null)await act(a,{sources:s,destination})}
 async function removeItems(){let s=selected();if(!s.length)return toast('Select items');if(confirm('Permanently delete?\n'+s.join('\n')))await act('delete',{sources:s})}
-async function upload(destination){let s=selected();if(!s.length)return toast('Select items');await act('upload',{sources:s,destination});toast(`${destination==='telegram'?'Telegram':'Google Drive'} upload tasks started`)}
+function destinationLabel(destination){return destination==='telegram'?'Telegram':destination==='google_drive'?'Google Drive':'BuzzHeavier'}
+async function upload(destination){let s=selected();if(!s.length)return toast('Select items');await act('upload',{sources:s,destination});toast(`${destinationLabel(destination)} upload tasks started`)}
 async function scan(){await act('scan');toast('Jellyfin scan requested')}
 async function act(a,d={}){try{await api(a,d);await load()}catch(e){toast(e.message)}}
 async function extendSession(){let d=await api('extend');expiresAt=d.expiresAt;asked=false;document.querySelector('#extend').close();toast('Session extended')}
