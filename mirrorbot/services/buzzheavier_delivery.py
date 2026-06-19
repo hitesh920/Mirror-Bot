@@ -7,6 +7,7 @@ from urllib.parse import quote
 import aiohttp
 
 from ..core.config import Config
+from ..core.errors import TaskFailure
 from ..core.models import Task
 from ..downloaders.process import path_size
 from .telegram_delivery import upload_files
@@ -16,8 +17,8 @@ UPLOAD_BASE = "https://w.buzzheavier.com"
 UPLOAD_CHUNK_SIZE = 16 * 1024 * 1024
 
 
-class BuzzHeavierUploadError(RuntimeError):
-    pass
+class BuzzHeavierUploadError(TaskFailure):
+    category = "engine"
 
 
 class BuzzHeavierUploader:
@@ -89,20 +90,27 @@ class BuzzHeavierUploader:
             "Content-Type": "application/octet-stream",
             "Content-Length": str(file_size),
         }
-        async with session.put(
-            upload_url,
-            data=self._chunks(file_path, file_size),
-            headers=headers,
-        ) as response:
-            text = await response.text()
-            if response.status >= 400:
-                raise BuzzHeavierUploadError(
-                    f"BuzzHeavier upload failed with HTTP {response.status}"
-                )
-            try:
-                payload = await response.json(content_type=None)
-            except Exception as exc:
-                raise BuzzHeavierUploadError("BuzzHeavier returned an invalid response") from exc
+        try:
+            async with session.put(
+                upload_url,
+                data=self._chunks(file_path, file_size),
+                headers=headers,
+            ) as response:
+                text = await response.text()
+                if response.status >= 400:
+                    raise BuzzHeavierUploadError(
+                        f"BuzzHeavier upload failed with HTTP {response.status}"
+                    )
+                try:
+                    payload = await response.json(content_type=None)
+                except Exception as exc:
+                    raise BuzzHeavierUploadError("BuzzHeavier returned an invalid response") from exc
+        except BuzzHeavierUploadError:
+            raise
+        except (aiohttp.ClientError, OSError, TimeoutError) as exc:
+            raise BuzzHeavierUploadError(
+                "BuzzHeavier upload connection failed. The upload host may be rejecting this server or temporarily unavailable."
+            ) from exc
         file_id = (payload.get("data") or {}).get("id") or payload.get("id")
         if not file_id:
             raise BuzzHeavierUploadError("BuzzHeavier response did not include a file id")
