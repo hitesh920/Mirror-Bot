@@ -558,7 +558,6 @@ function TaskCard({ task, compact, refresh }) {
       <div className="task-head">
         <div>
           <div className="task-name">
-            <span>{task.id}</span>
             {task.name}
           </div>
           <p>{task.destination} / {task.source}</p>
