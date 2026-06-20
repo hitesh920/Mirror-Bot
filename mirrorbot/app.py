@@ -17,6 +17,7 @@ from .core.logging_config import setup_logging
 from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .core.parser import parse_add_text
 from .core.source_detector import detect_source
+from .context import BotContext
 from .downloaders.gdrive import drive_id_from_url
 from .services.status import format_status
 from .services.task_manager import TaskManager
@@ -35,6 +36,8 @@ from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
 from .services.web_dashboard import WebDashboard
+from .telegram import keyboards as telegram_keyboards
+from .telegram import messages as telegram_messages
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -121,6 +124,17 @@ app = (
     )
     if config.enable_telegram_ui and config.bot_token
     else None
+)
+context = BotContext(
+    config=config,
+    manager=manager,
+    background=background,
+    jellyfin=jellyfin,
+    jellyfin_api=jellyfin_api,
+    drive_search_pages=drive_search_pages,
+    drive_share_pages=drive_share_pages,
+    telegram_app=app,
+    get_file_explorer=lambda: get_file_explorer(),
 )
 web_dashboard: WebDashboard | None = None
 
@@ -299,178 +313,40 @@ async def send_live_status(chat_id: int) -> None:
 
 
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Local", callback_data=f"dest:local:{token}")],
-            [
-                InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
-                InlineKeyboardButton("Google Drive", callback_data=f"dest:gdrive:{token}"),
-            ],
-            [InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}")],
-        ]
-    )
+    return telegram_keyboards.destination_buttons(token)
 
 
 def local_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Movies", callback_data=f"local:movies:{token}"),
-                InlineKeyboardButton("Series", callback_data=f"local:series:{token}"),
-            ]
-        ]
-    )
+    return telegram_keyboards.local_buttons(token)
 
 
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Video", callback_data=f"ytkind:video:{token}"),
-                InlineKeyboardButton("Audio", callback_data=f"ytkind:audio:{token}"),
-            ],
-        ]
-    )
+    return telegram_keyboards.ytdlp_buttons(token)
 
 
 def ytdlp_video_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("360p", callback_data=f"yt:video:360:{token}"),
-                InlineKeyboardButton("480p", callback_data=f"yt:video:480:{token}"),
-            ],
-            [
-                InlineKeyboardButton("720p", callback_data=f"yt:video:720:{token}"),
-                InlineKeyboardButton("1080p", callback_data=f"yt:video:1080:{token}"),
-            ],
-            [InlineKeyboardButton("Back", callback_data=f"ytkind:back:{token}")],
-        ]
-    )
+    return telegram_keyboards.ytdlp_video_buttons(token)
 
 
 def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("64 kbps", callback_data=f"yt:audio:64:{token}"),
-                InlineKeyboardButton("128 kbps", callback_data=f"yt:audio:128:{token}"),
-            ],
-            [
-                InlineKeyboardButton("192 kbps", callback_data=f"yt:audio:192:{token}"),
-                InlineKeyboardButton("256 kbps", callback_data=f"yt:audio:256:{token}"),
-            ],
-            [InlineKeyboardButton("320 kbps", callback_data=f"yt:audio:320:{token}")],
-            [InlineKeyboardButton("Back", callback_data=f"ytkind:back:{token}")],
-        ]
-    )
+    return telegram_keyboards.ytdlp_audio_buttons(token)
 
 
 def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
-    if not items:
-        return ""
-    limit = 20
-    lines = [f"<b>{escape(title)}:</b>"]
-    for index, name in enumerate(items[:limit]):
-        safe_name = escape(name[:120])
-        if links and index < len(links) and links[index]:
-            lines.append(f'<a href="{escape(links[index], quote=True)}">Open</a> - <code>{safe_name}</code>')
-        else:
-            lines.append(f"<code>{safe_name}</code>")
-    if len(items) > limit:
-        lines.append(f"<i>...and {len(items) - limit} more</i>")
-    return "\n".join(lines)
+    return telegram_messages.result_list(title, items, links)
 
 
 def completion_message(task) -> str:
-    name = escape(task.result_name or task.name or task.source.type.value)
-    if task.destination == Destination.TELEGRAM:
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>Telegram</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            result_list("Uploaded files", task.result_files, task.result_links),
-        ]
-    elif task.destination == Destination.GOOGLE_DRIVE:
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>Google Drive</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
-        ]
-    elif task.destination == Destination.BUZZHEAVIER:
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>BuzzHeavier</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            result_list("BuzzHeavier links", task.result_files, task.result_links),
-        ]
-    else:
-        local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{local_name}</code>",
-            f"<b>Uploaded to:</b> <code>{escape(str(task.result_path or 'Local'))}</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
-            result_list("Files", task.result_files),
-            result_list("Folders", task.result_folders),
-        ]
-    return "\n".join(section for section in sections if section)
+    return telegram_messages.completion_message(task)
 
 
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
-    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Open Google Drive", url=task.result_links[0])]]
-        )
-    if task.destination == Destination.BUZZHEAVIER and task.result_links:
-        if len(task.result_links) == 1:
-            return InlineKeyboardMarkup(
-                [[InlineKeyboardButton("Open BuzzHeavier", url=task.result_links[0])]]
-            )
-        buttons = [
-            InlineKeyboardButton(f"Open {index}", url=link)
-            for index, link in enumerate(task.result_links[:10], start=1)
-        ]
-        return InlineKeyboardMarkup(
-            [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
-        )
-    if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Open Jellyfin", url=jellyfin_url())]]
-        )
-    return None
+    return telegram_keyboards.completion_buttons(task, jellyfin_url())
 
 
 
 def completion_payload(task) -> dict:
-    links = []
-    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
-        links.append({"label": "Open Google Drive", "url": task.result_links[0]})
-    elif task.destination == Destination.BUZZHEAVIER:
-        links.extend(
-            {"label": f"Open {index}", "url": link}
-            for index, link in enumerate(task.result_links[:10], start=1)
-        )
-    elif task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-        links.append({"label": "Open Jellyfin", "url": jellyfin_url()})
-    name = (
-        task.library_name or task.result_name or task.name or task.source.type.value
-        if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-        else task.result_name or task.name or task.source.type.value
-    )
-    return {
-        "name": name,
-        "destination": task.destination.value,
-        "files": task.result_files,
-        "folders": task.result_folders,
-        "links": links,
-        "path": str(task.result_path or ""),
-    }
+    return telegram_messages.completion_payload(task, jellyfin_url())
 
 
 
@@ -669,22 +545,7 @@ def jellyfin_url() -> str:
 
 
 def jellyfin_buttons() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Open Jellyfin", url=jellyfin_url())],
-            [
-                InlineKeyboardButton("Start", callback_data="jf:start"),
-                InlineKeyboardButton("Stop", callback_data="jf:stop"),
-            ],
-            [
-                InlineKeyboardButton("Restart", callback_data="jf:restart"),
-                InlineKeyboardButton("Refresh", callback_data="jf:refresh"),
-            ],
-            [
-                InlineKeyboardButton("Scan Library", callback_data="jf:scan"),
-            ],
-        ]
-    )
+    return telegram_keyboards.jellyfin_buttons(jellyfin_url())
 
 
 def format_jellyfin_status(status, action: str = "Status", server_info: dict | None = None) -> str:

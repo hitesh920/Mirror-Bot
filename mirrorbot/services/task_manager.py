@@ -30,6 +30,7 @@ from .telegram_delivery import upload_to_telegram
 from .public_url import public_base_url
 from .media_library import media_identity_name, resolve_media
 from .transfer_guard import TransferGuard, ensure_disk_space
+from .task_runner import TaskRunner
 from ..core.errors import TaskFailure
 from ..core.logging_config import log_event
 
@@ -50,6 +51,7 @@ class TaskManager:
             config.torrent_selection_port,
             config.torrent_selection_timeout,
         )
+        self.runner = TaskRunner(self)
 
     def create_task(self, user_id, chat_id, message_id, source, destination, options) -> Task:
         if not self.accepting_tasks:
@@ -84,6 +86,22 @@ class TaskManager:
         return job
 
     async def run_task(
+        self,
+        task: Task,
+        telegram_reply=None,
+        telegram_client=None,
+        on_selector_ready=None,
+        on_selector_done=None,
+    ) -> Task:
+        return await self.runner.run_task(
+            task,
+            telegram_reply=telegram_reply,
+            telegram_client=telegram_client,
+            on_selector_ready=on_selector_ready,
+            on_selector_done=on_selector_done,
+        )
+
+    async def _run_task_pipeline(
         self,
         task: Task,
         telegram_reply=None,
@@ -304,6 +322,9 @@ class TaskManager:
         return task
 
     async def run_local_upload(self, task: Task, path: Path, telegram_client) -> Task:
+        return await self.runner.run_local_upload(task, path, telegram_client)
+
+    async def _run_local_upload_pipeline(self, task: Task, path: Path, telegram_client) -> Task:
         guard_job = None
         try:
             async with self._queue_slot(self.task_sem, task):

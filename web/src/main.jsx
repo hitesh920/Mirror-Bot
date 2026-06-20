@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
-  Archive,
   ChevronRight,
   Cloud,
   Database,
@@ -24,8 +23,6 @@ import {
   Sun,
   Trash2,
   Upload,
-  Video,
-  X,
 } from "lucide-react";
 import "./styles.css";
 
@@ -42,7 +39,7 @@ const NAV_ITEMS = [
 const DESTINATIONS = [
   { id: "local", title: "Local", detail: "Save to Movies or Series" },
   { id: "telegram", title: "Telegram", detail: "Upload back to chat" },
-  { id: "gdrive", title: "Google Drive", detail: "Upload to configured Drive" },
+  { id: "google_drive", title: "Google Drive", detail: "Upload to configured Drive" },
   { id: "buzzheavier", title: "BuzzHeavier", detail: "Upload to BuzzHeavier" },
 ];
 
@@ -315,7 +312,7 @@ function QuickCard({ title, detail, icon: Icon, onClick, href }) {
 function AddPage({ state, setView, showToast }) {
   const [mode, setMode] = useState("link");
   const [link, setLink] = useState("");
-  const [destination, setDestination] = useState("local");
+  const [destination, setDestination] = useState("");
   const [category, setCategory] = useState("movies");
   const [name, setName] = useState("");
   const [zip, setZip] = useState(false);
@@ -333,7 +330,7 @@ function AddPage({ state, setView, showToast }) {
   const qualities = ytdlpKind === "audio" ? AUDIO_QUALITIES : VIDEO_QUALITIES;
 
   useEffect(() => {
-    if (!telegramEnabled && destination === "telegram") setDestination("local");
+    if (!telegramEnabled && destination === "telegram") setDestination("");
   }, [telegramEnabled, destination]);
 
   useEffect(() => {
@@ -359,6 +356,7 @@ function AddPage({ state, setView, showToast }) {
       body: JSON.stringify({ link, ...payload() }),
     });
     setLink("");
+    setDestination("");
     showToast("Task added");
     setView("status");
   };
@@ -376,6 +374,7 @@ function AddPage({ state, setView, showToast }) {
     if (values.extract_password) data.set("extract_password", values.extract_password);
     await api("/api/upload", { method: "POST", body: data });
     setFiles([]);
+    setDestination("");
     if (fileInput.current) fileInput.current.value = "";
     showToast("Upload task added");
     setView("status");
@@ -383,6 +382,7 @@ function AddPage({ state, setView, showToast }) {
 
   const submit = async () => {
     try {
+      if (!destination) throw new Error("Choose a destination");
       if (mode === "upload") {
         if (!files.length) throw new Error("Choose at least one file");
         await uploadFiles();
@@ -418,7 +418,7 @@ function AddPage({ state, setView, showToast }) {
           </div>
         )}
 
-        <ChoiceSection title="Destination" items={availableDestinations} value={destination} onChange={setDestination} />
+        <ChoiceSection title="Destination" items={availableDestinations} value={destination} onChange={setDestination} toggleable />
 
         {destination === "local" && <ChoiceSection title="Local library" items={CATEGORIES} value={category} onChange={setCategory} compact />}
 
@@ -437,36 +437,41 @@ function AddPage({ state, setView, showToast }) {
           </div>
         )}
 
-        <details className="processing-options">
-          <summary>Processing options</summary>
-          <div className="form-grid">
-            <label>
-              Custom name
-              <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Optional" />
-            </label>
-            <label>
-              Zip password
-              <input value={zipPassword} onChange={(event) => setZipPassword(event.target.value)} placeholder="Optional" />
-            </label>
-            <label>
-              Extract password
-              <input value={extractPassword} onChange={(event) => setExtractPassword(event.target.value)} placeholder="Optional" />
-            </label>
-          </div>
-          <div className="check-row">
-            <label>
-              <input type="checkbox" checked={zip} onChange={(event) => { setZip(event.target.checked); if (event.target.checked) setExtract(false); }} />
-              Zip after download
-            </label>
-            <label>
-              <input type="checkbox" checked={extract} onChange={(event) => { setExtract(event.target.checked); if (event.target.checked) setZip(false); }} />
-              Extract after download
-            </label>
-          </div>
-        </details>
+        {destination && (
+          <details className="processing-options">
+            <summary>
+              <span>Advanced processing</span>
+              <small>Custom name, zip, extract, passwords</small>
+            </summary>
+            <div className="form-grid">
+              <label>
+                Custom name
+                <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Optional" />
+              </label>
+              <label>
+                Zip password
+                <input value={zipPassword} onChange={(event) => setZipPassword(event.target.value)} placeholder="Optional" />
+              </label>
+              <label>
+                Extract password
+                <input value={extractPassword} onChange={(event) => setExtractPassword(event.target.value)} placeholder="Optional" />
+              </label>
+            </div>
+            <div className="check-row">
+              <label>
+                <input type="checkbox" checked={zip} onChange={(event) => { setZip(event.target.checked); if (event.target.checked) setExtract(false); }} />
+                Zip after download
+              </label>
+              <label>
+                <input type="checkbox" checked={extract} onChange={(event) => { setExtract(event.target.checked); if (event.target.checked) setZip(false); }} />
+                Extract after download
+              </label>
+            </div>
+          </details>
+        )}
 
         <div className="form-actions">
-          <button className="secondary" type="button" onClick={() => { setLink(""); setFiles([]); setName(""); }}>
+          <button className="secondary" type="button" onClick={() => { setLink(""); setFiles([]); setName(""); setDestination(""); }}>
             Clear
           </button>
           <button type="button" onClick={submit}>
@@ -491,13 +496,13 @@ function Segmented({ value, onChange, options }) {
   );
 }
 
-function ChoiceSection({ title, items, value, onChange, compact = false }) {
+function ChoiceSection({ title, items, value, onChange, compact = false, toggleable = false }) {
   return (
     <div>
       <div className="panel-title small">{title}</div>
       <div className={compact ? "choice-grid compact" : "choice-grid"}>
         {items.map((item) => (
-          <button key={item.id} type="button" className={`choice-card ${value === item.id ? "active" : ""}`} onClick={() => onChange(item.id)}>
+          <button key={item.id} type="button" className={`choice-card ${value === item.id ? "active" : ""}`} onClick={() => onChange(toggleable && value === item.id ? "" : item.id)}>
             <strong>{item.title}</strong>
             <span>{item.detail}</span>
           </button>

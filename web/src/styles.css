@@ -551,8 +551,17 @@ textarea {
 }
 
 .processing-options summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   cursor: pointer;
   font-weight: 780;
+}
+
+.processing-options summary small {
+  color: var(--muted);
+  font-weight: 520;
 }
 
 .form-grid {

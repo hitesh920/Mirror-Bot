@@ -3,7 +3,6 @@ import logging
 import os
 import secrets
 import signal
-from html import escape
 from pathlib import Path
 from shutil import rmtree
 from time import time
@@ -24,9 +23,11 @@ from .public_url import public_base_url
 from .speedtest import SpeedtestError, run_speedtest
 from .status import human_size
 from .task_manager import TaskManager
+from .web.auth import SESSION_COOKIE, credentials_match, is_public_path, new_session_token, set_session_cookie
+from .web.routes import register_dashboard_routes
+from .web.serializers import task_json
 
 LOGGER = logging.getLogger(__name__)
-SESSION_COOKIE = "mirrorbot_session"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "web_dist"
 FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 FRONTEND_FALLBACK_PAGE = """<!doctype html>
@@ -38,6 +39,36 @@ FRONTEND_FALLBACK_PAGE = """<!doctype html>
   <body style="font-family:system-ui,sans-serif;padding:32px;line-height:1.5">
     <h1>Mirror-Bot dashboard is not built</h1>
     <p>Run <code>npm install</code> and <code>npm run build</code> inside <code>web/</code>, or rebuild the Docker image.</p>
+  </body>
+</html>"""
+LOGIN_PAGE = """<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Mirror-Bot login</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      body { margin:0; min-height:100vh; display:grid; place-items:center; background:#0b111a; color:#e8eef8; }
+      form { width:min(360px, calc(100vw - 40px)); padding:24px; border:1px solid #243244; border-radius:14px; background:#111a26; box-shadow:0 24px 80px rgba(0,0,0,.35); }
+      h1 { margin:0 0 6px; font-size:24px; }
+      p { margin:0 0 22px; color:#9dafc6; }
+      label { display:block; margin:14px 0 7px; color:#b9c7da; font-size:13px; }
+      input { width:100%; box-sizing:border-box; padding:12px 13px; border-radius:10px; border:1px solid #2b3b50; background:#0b111a; color:#e8eef8; font:inherit; }
+      button { width:100%; margin-top:20px; padding:12px 14px; border:0; border-radius:10px; background:#3478f6; color:white; font-weight:700; cursor:pointer; }
+      .error { color:#ff9b9b; margin-top:12px; min-height:18px; }
+    </style>
+  </head>
+  <body>
+    <form method="post" action="/login">
+      <h1>Mirror-Bot</h1>
+      <p>Sign in to continue.</p>
+      <label>Username</label>
+      <input name="username" autocomplete="username" autofocus>
+      <label>Password</label>
+      <input name="password" type="password" autocomplete="current-password">
+      <button type="submit">Sign in</button>
+      <div class="error">__ERROR__</div>
+    </form>
   </body>
 </html>"""
 
@@ -78,26 +109,7 @@ class WebDashboard:
     async def start(self) -> None:
         app = web.Application(client_max_size=8 * 1024**3, middlewares=[self.auth_middleware])
         assets_dir = FRONTEND_DIR / "assets"
-        if assets_dir.exists():
-            app.router.add_static("/assets", assets_dir, append_version=False)
-        app.router.add_get("/", self.index)
-        app.router.add_get("/login", self.login_page)
-        app.router.add_post("/login", self.login)
-        app.router.add_post("/logout", self.logout)
-        app.router.add_get("/api/state", self.api_state)
-        app.router.add_post("/api/add", self.api_add)
-        app.router.add_post("/api/upload", self.api_upload)
-        app.router.add_post("/api/cancel/{task_id}", self.api_cancel)
-        app.router.add_post("/api/cancelall", self.api_cancel_all)
-        app.router.add_post("/api/jellyfin/{action}", self.api_jellyfin)
-        app.router.add_post("/api/local", self.api_local)
-        app.router.add_post("/api/drive/search", self.api_drive_search)
-        app.router.add_post("/api/drive/share", self.api_drive_share)
-        app.router.add_post("/api/drive/delete", self.api_drive_delete)
-        app.router.add_get("/api/drive/stats", self.api_drive_stats)
-        app.router.add_get("/api/logs", self.api_logs)
-        app.router.add_post("/api/speedtest", self.api_speedtest)
-        app.router.add_post("/api/restart", self.api_restart)
+        register_dashboard_routes(app, self, assets_dir)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, "0.0.0.0", self.config.web_port)
@@ -113,18 +125,39 @@ class WebDashboard:
 
     @web.middleware
     async def auth_middleware(self, request, handler):
-        return await handler(request)
+        path = request.path
+        if is_public_path(path):
+            return await handler(request)
+        token = request.cookies.get(SESSION_COOKIE, "")
+        if token and token in self.sessions:
+            return await handler(request)
+        if path.startswith("/api/"):
+            raise web.HTTPUnauthorized(text="Authentication required")
+        raise web.HTTPFound("/login")
 
     async def login_page(self, request: web.Request) -> web.Response:
-        raise web.HTTPFound("/")
+        if request.cookies.get(SESSION_COOKIE, "") in self.sessions:
+            raise web.HTTPFound("/")
+        return web.Response(text=LOGIN_PAGE.replace("__ERROR__", ""), content_type="text/html")
 
     async def login(self, request: web.Request) -> web.Response:
-        raise web.HTTPFound("/")
+        form = await request.post()
+        username = str(form.get("username") or "")
+        password = str(form.get("password") or "")
+        if not credentials_match(self.config.web_username, self.config.web_password, username, password):
+            log_event(LOGGER, logging.WARNING, "web.login", result="failed")
+            return web.Response(text=LOGIN_PAGE.replace("__ERROR__", "Invalid username or password."), content_type="text/html", status=401)
+        token = new_session_token()
+        self.sessions.add(token)
+        response = web.HTTPFound("/")
+        set_session_cookie(response, request, token)
+        log_event(LOGGER, logging.INFO, "web.login", result="success")
+        raise response
 
     async def logout(self, request: web.Request) -> web.Response:
         token = request.cookies.get(SESSION_COOKIE, "")
         self.sessions.discard(token)
-        response = web.HTTPFound("/")
+        response = web.HTTPFound("/login")
         response.del_cookie(SESSION_COOKIE)
         return response
 
@@ -132,34 +165,6 @@ class WebDashboard:
         if FRONTEND_INDEX.exists():
             return web.FileResponse(FRONTEND_INDEX)
         return web.Response(text=FRONTEND_FALLBACK_PAGE, content_type="text/html")
-
-    @staticmethod
-    def display_name(task: Task) -> str:
-        if task.terminal:
-            if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-                return task.library_name or task.result_name or task.name or task.source.filename or task.source.type.value
-            return task.result_name or task.name or task.source.filename or task.source.type.value
-        return task.name or task.source.filename or task.result_name or task.source.type.value
-
-    def task_json(self, task: Task) -> dict:
-        return {
-            "id": task.short_id(),
-            "full_id": task.id,
-            "name": self.display_name(task),
-            "phase": task.phase.value,
-            "source": task.source.type.value,
-            "destination": task.destination.value,
-            "current_file": task.current_file,
-            "progress": round(task.progress * 100, 1) if task.size else None,
-            "size": human_size(task.size) if task.size else "Unknown",
-            "processed": human_size(task.downloaded),
-            "speed": f"{human_size(task.speed)}/s" if task.speed else "-",
-            "eta": task.eta,
-            "error": task.error,
-            "terminal": task.terminal,
-            "selection_url": task.selection_url,
-            "result": self.completion_payload(task) if task.terminal else None,
-        }
 
     async def api_state(self, request: web.Request) -> web.Response:
         disk = psutil.disk_usage(str(self.config.local_download_root))
@@ -172,8 +177,8 @@ class WebDashboard:
         except Exception:
             jellyfin_state = {"state": "unknown", "health": "unknown", "running": False}
         return web.json_response({
-            "active": [self.task_json(task) for task in active],
-            "recent": [self.task_json(task) for task in recent],
+            "active": [task_json(task, self.completion_payload) for task in active],
+            "recent": [task_json(task, self.completion_payload) for task in recent],
             "stats": {
                 "cpu": psutil.cpu_percent(),
                 "ram": psutil.virtual_memory().percent,
@@ -189,7 +194,12 @@ class WebDashboard:
     def destination_from_form(self, destination: str, category: str = "") -> Destination:
         if destination == "local":
             return Destination.LOCAL_SERIES if category == "series" else Destination.LOCAL_MOVIES
-        return Destination(destination)
+        if destination == "gdrive":
+            destination = Destination.GOOGLE_DRIVE.value
+        try:
+            return Destination(destination)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text="Invalid destination") from exc
 
     def options_from_data(self, data: dict) -> AddOptions:
         return AddOptions(
@@ -293,7 +303,7 @@ class WebDashboard:
                 status = await asyncio.to_thread(self.jellyfin.restart)
                 result = "restarted"
             elif action == "scan":
-                result = await self.jellyfin_api.scan_and_refresh_metadata()
+                result = await asyncio.to_thread(self.jellyfin_api.scan_library)
                 status = await asyncio.to_thread(self.jellyfin.status)
             else:
                 status = await asyncio.to_thread(self.jellyfin.status)
