@@ -165,6 +165,7 @@ async def download_torrent(
         selected_size = sum(file.get("size", 0) for file in files if file.get("priority", 0) != 0)
         ensure_disk_space(task.work_dir, selected_size)
     finally:
+        task.selection_url = ""
         if on_selector_done and selector_message:
             await on_selector_done(selector_message)
 

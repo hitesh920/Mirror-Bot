@@ -26,6 +26,6 @@ def task_json(task: Task, completion_payload) -> dict:
         "eta": task.eta,
         "error": task.error,
         "terminal": task.terminal,
-        "selection_url": task.selection_url,
+        "selection_url": task.selection_url if task.phase.value == "selecting" and not task.terminal else "",
         "result": completion_payload(task) if task.terminal else None,
     }

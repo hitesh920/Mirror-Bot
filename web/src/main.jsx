@@ -577,7 +577,7 @@ function TaskCard({ task, compact, refresh }) {
       </div>
       {task.error && <pre>{task.error}</pre>}
       <div className="task-actions">
-        {task.selection_url && <a className="button-link" href={appUrl(task.selection_url)} target="_blank" rel="noreferrer">Selector <ExternalLink size={14} /></a>}
+        {task.selection_url && !task.terminal && <a className="button-link" href={appUrl(task.selection_url)} target="_blank" rel="noreferrer">Selector <ExternalLink size={14} /></a>}
         {!task.terminal && <button className="danger small-button" type="button" onClick={cancel}>Cancel</button>}
         {links.map((link, index) => (
           <a className="button-link" key={`${link.url}-${index}`} href={appUrl(link.url)} target="_blank" rel="noreferrer">
