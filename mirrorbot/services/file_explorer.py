@@ -212,32 +212,66 @@ class FileExplorer:
         return web.json_response({"ok": True})
 
 
-PAGE = r'''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local files</title>
+PAGE = r'''<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local files</title>
 <style>
 {TEMP_PAGE_CSS}
-.bar{padding:10px 18px}
-.actions{max-width:1180px;margin:auto;display:flex;gap:8px;flex-wrap:wrap}
-.crumbs{margin:0 0 10px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-.name{cursor:pointer;color:var(--primary);font-weight:760}
-.parent .name{color:var(--text)}
-.kind,.size{color:var(--muted)}
-.check{width:44px}.link{width:116px}
-a.download{min-height:34px;padding:7px 10px}
-@media(max-width:700px){.bar{padding:8px 10px}.actions{gap:5px}.kind,.size,th:nth-child(3),th:nth-child(4){display:none}.link{width:92px}}
-</style></head><body>
-<header><div class="top"><h1>Local files</h1><div class="sub"><span id="location">/downloads</span><span id="count">0 items</span><span id="timer"></span></div></div></header>
-<div class="bar"><div class="actions"><button onclick="mkdir()">New folder</button><button onclick="renameOne()">Rename</button><button onclick="copyMove('copy')">Copy</button><button onclick="copyMove('move')">Move</button><button class="danger" onclick="removeItems()">Delete</button><button onclick="upload('telegram')">Upload to Telegram</button><button onclick="upload('google_drive')">Upload to Google Drive</button><button onclick="upload('buzzheavier')">Upload to BuzzHeavier</button><button class="primary" onclick="scan()">Scan Jellyfin</button></div></div>
-<main><div id="crumbs" class="crumbs"></div><table><thead><tr><th class="check"><input type="checkbox" id="all"></th><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead><tbody id="rows"></tbody></table></main><div id="toast"></div>
+body{background:linear-gradient(180deg,color-mix(in srgb,var(--surface-soft) 62%,var(--bg)),var(--bg) 260px)}
+.explorer-shell{max-width:1180px;margin:18px auto 28px;padding:0 18px;display:grid;gap:14px}
+.hero-panel,.action-panel,.files-panel{border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:var(--shadow)}
+.hero-panel{padding:18px;display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+.hero-copy{min-width:0}.hero-copy h1{font-size:24px;margin:0 0 8px}.hero-copy p{margin:0;color:var(--muted)}
+.path-line{margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.breadcrumbs{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0;color:var(--muted)}
+.breadcrumbs button{min-height:32px;padding:5px 9px;border-radius:999px;font-weight:700;background:var(--surface-soft)}
+.breadcrumbs .sep{color:var(--line-strong)}
+.hero-meta{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.hero-meta span,.selection-pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);padding:5px 10px;color:var(--muted);font-weight:700}
+.action-panel{padding:14px;display:grid;gap:12px}.action-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.action-group{border:1px solid var(--line);border-radius:9px;background:var(--surface-soft);padding:12px;min-width:0}.group-title{margin:0 0 10px;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.button-row{display:flex;gap:8px;flex-wrap:wrap}.button-row button{min-height:36px}.button-row button:disabled{opacity:.45;cursor:not-allowed}.button-row button:disabled:hover{background:var(--surface)}
+.files-panel{overflow:hidden}.files-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:13px 14px;border-bottom:1px solid var(--line);background:var(--surface-soft)}.files-head strong{font-size:15px}.files-head .muted{color:var(--muted)}
+table{border:0;border-radius:0;box-shadow:none}th,td{padding:12px 14px}.check{width:44px}.link{width:122px;text-align:right}.name{cursor:pointer;color:var(--primary);font-weight:760}.parent .name{color:var(--text)}.kind,.size{color:var(--muted)}a.download{min-height:32px;padding:6px 10px}.empty{padding:38px}.parent-label{display:inline-flex;gap:8px;align-items:center}.parent-label::before{content:'..';display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:7px;background:var(--surface-soft);font-weight:900;color:var(--text)}
+@media(max-width:860px){.hero-panel{display:grid}.hero-meta{justify-content:flex-start}.action-grid{grid-template-columns:1fr}.button-row button{flex:1 1 auto}.kind,.size,th:nth-child(3),th:nth-child(4){display:none}.link{width:96px}.explorer-shell{margin:12px auto;padding:0 10px}th,td{padding:10px 9px}}
+</style>
+</head>
+<body>
+<header><div class="top"><h1>Local files</h1><div class="sub"><span>Temporary explorer</span><span id="timer">Expires in --:--</span></div></div></header>
+<div class="explorer-shell">
+  <section class="hero-panel">
+    <div class="hero-copy">
+      <h1>Downloads</h1>
+      <p>Browse, organize, upload, and scan your media library.</p>
+      <div class="path-line"><button id="parentBtn" type="button" onclick="up()">Parent folder</button><nav id="crumbs" class="breadcrumbs"></nav></div>
+    </div>
+    <div class="hero-meta"><span id="location">/downloads</span><span id="count">0 items</span><span id="selectedCount">0 selected</span></div>
+  </section>
+  <section class="action-panel">
+    <div class="action-grid">
+      <div class="action-group"><p class="group-title">File actions</p><div class="button-row"><button id="mkdirBtn" onclick="mkdir()">New folder</button><button id="renameBtn" onclick="renameOne()">Rename</button><button id="copyBtn" onclick="copyMove('copy')">Copy</button><button id="moveBtn" onclick="copyMove('move')">Move</button><button id="deleteBtn" class="danger" onclick="removeItems()">Delete</button></div></div>
+      <div class="action-group"><p class="group-title">Upload selected</p><div class="button-row"><button id="uploadTelegramBtn" onclick="upload('telegram')">Telegram</button><button id="uploadDriveBtn" onclick="upload('google_drive')">Google Drive</button><button id="uploadBuzzBtn" onclick="upload('buzzheavier')">BuzzHeavier</button></div></div>
+      <div class="action-group"><p class="group-title">Library</p><div class="button-row"><button class="primary" onclick="scan()">Scan Jellyfin</button></div></div>
+    </div>
+  </section>
+  <section class="files-panel">
+    <div class="files-head"><strong>Folder contents</strong><span class="muted" id="folderHint">Select files or folders to enable actions</span></div>
+    <table><thead><tr><th class="check"><input type="checkbox" id="all" aria-label="Select all"></th><th>Name</th><th>Type</th><th>Size</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+  </section>
+</div>
+<div id="toast"></div>
 <dialog id="extend"><h3>Keep this session open?</h3><p>This file explorer expires in under one minute.</p><button class="primary" onclick="extendSession()">Extend 5 minutes</button><button onclick="this.closest('dialog').close()">Not now</button></dialog>
 <script>
 const token=location.pathname.split('/').pop();let path='',expiresAt=0,asked=false;
 const api=(action,data={})=>fetch(`/local/${token}/api/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(async r=>{if(!r.ok)throw Error(await r.text());return r.json()});
 const selected=()=>[...document.querySelectorAll('.pick:checked')].map(x=>x.value);
 function toast(x){let t=document.querySelector('#toast');t.textContent=x;t.style.display='block';setTimeout(()=>t.style.display='none',2500)}
-function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function enc(s){return encodeURIComponent(s).replace(/'/g,'%27')}
-function up(){load(path.split('/').slice(0,-1).join('/'))}
-async function load(p=path){let r=await fetch(`/local/${token}/api/list?path=${encodeURIComponent(p)}`);if(!r.ok){document.body.innerHTML='<main><h2>Session expired</h2></main>';return}let d=await r.json();path=d.path;expiresAt=d.expiresAt;asked=false;const current='/downloads'+(path?'/'+path:'');document.querySelector('#crumbs').textContent=current;document.querySelector('#location').textContent=current;document.querySelector('#count').textContent=`${d.items.length} item${d.items.length===1?'':'s'}`;const parent=path?`<tr class="parent"><td></td><td class="name" onclick="up()">..</td><td class="kind">parent folder</td><td class="size">-</td><td></td></tr>`:'';const items=d.items.map(i=>`<tr><td><input class="pick" type="checkbox" value="${esc(i.path)}"></td><td class="name" onclick="openItem(decodeURIComponent('${enc(i.path)}'),'${i.type}')">${esc(i.name)}</td><td class="kind">${i.type}</td><td class="size">${i.size}</td><td class="link">${i.type==='file'?`<a class="download" href="/local/${token}/download?path=${encodeURIComponent(i.path)}">Download</a>`:''}</td></tr>`).join('');document.querySelector('#rows').innerHTML=parent+(items||`<tr><td class="empty" colspan="5">This folder is empty</td></tr>`);document.querySelector('#all').checked=false}
+function currentLabel(){return '/downloads'+(path?'/'+path:'')}
+function up(){if(path)load(path.split('/').slice(0,-1).join('/'))}
+function renderBreadcrumbs(){const crumbs=document.querySelector('#crumbs');const parts=path?path.split('/').filter(Boolean):[];let acc='';let html=`<button type="button" onclick="load('')">downloads</button>`;for(const part of parts){acc=acc?`${acc}/${part}`:part;html+=`<span class="sep">/</span><button type="button" onclick="load(decodeURIComponent('${enc(acc)}'))">${esc(part)}</button>`}crumbs.innerHTML=html;document.querySelector('#parentBtn').disabled=!path}
+function updateSelection(){const count=selected().length;document.querySelector('#selectedCount').textContent=`${count} selected`;document.querySelector('#folderHint').textContent=count?`${count} selected`:'Select files or folders to enable actions';document.querySelector('#renameBtn').disabled=count!==1;for(const id of ['copyBtn','moveBtn','deleteBtn','uploadTelegramBtn','uploadDriveBtn','uploadBuzzBtn'])document.querySelector('#'+id).disabled=count===0;const picks=[...document.querySelectorAll('.pick')];document.querySelector('#all').checked=picks.length>0&&picks.every(x=>x.checked)}
+async function load(p=path){let r=await fetch(`/local/${token}/api/list?path=${encodeURIComponent(p)}`);if(!r.ok){document.body.innerHTML='<main><h2>Session expired</h2></main>';return}let d=await r.json();path=d.path;expiresAt=d.expiresAt;asked=false;const current=currentLabel();document.querySelector('#location').textContent=current;document.querySelector('#count').textContent=`${d.items.length} item${d.items.length===1?'':'s'}`;renderBreadcrumbs();const parent=path?`<tr class="parent"><td></td><td class="name" onclick="up()"><span class="parent-label">Parent folder</span></td><td class="kind">parent folder</td><td class="size">-</td><td></td></tr>`:'';const items=d.items.map(i=>`<tr><td><input class="pick" type="checkbox" value="${esc(i.path)}" onchange="updateSelection()"></td><td class="name" onclick="openItem(decodeURIComponent('${enc(i.path)}'),'${i.type}')">${esc(i.name)}</td><td class="kind">${i.type}</td><td class="size">${i.size}</td><td class="link">${i.type==='file'?`<a class="download" href="/local/${token}/download?path=${encodeURIComponent(i.path)}">Download</a>`:''}</td></tr>`).join('');document.querySelector('#rows').innerHTML=parent+(items||`<tr><td class="empty" colspan="5">This folder is empty</td></tr>`);document.querySelector('#all').checked=false;updateSelection()}
 function openItem(p,t){if(t==='folder')load(p)}
 async function mkdir(){let name=prompt('Folder name');if(name)await act('mkdir',{path,name})}
 async function renameOne(){let s=selected();if(s.length!==1)return toast('Select one item');let name=prompt('New name',s[0].split('/').pop());if(name)await act('rename',{source:s[0],name})}
@@ -248,6 +282,8 @@ async function upload(destination){let s=selected();if(!s.length)return toast('S
 async function scan(){await act('scan');toast('Jellyfin scan requested')}
 async function act(a,d={}){try{await api(a,d);await load()}catch(e){toast(e.message)}}
 async function extendSession(){let d=await api('extend');expiresAt=d.expiresAt;asked=false;document.querySelector('#extend').close();toast('Session extended')}
-document.querySelector('#all').onchange=e=>document.querySelectorAll('.pick').forEach(x=>x.checked=e.target.checked);
+document.querySelector('#all').onchange=e=>{document.querySelectorAll('.pick').forEach(x=>x.checked=e.target.checked);updateSelection()};
 setInterval(()=>{let n=Math.max(0,Math.ceil(expiresAt-Date.now()/1000));document.querySelector('#timer').textContent=`Expires in ${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;if(n<=60&&!asked){asked=true;document.querySelector('#extend').showModal()}if(!n){window.close();document.body.innerHTML='<main><h2>Session expired</h2></main>'}},1000);load();
-</script></body></html>'''.replace("{TEMP_PAGE_CSS}", TEMP_PAGE_CSS)
+</script>
+</body>
+</html>'''.replace("{TEMP_PAGE_CSS}", TEMP_PAGE_CSS)
