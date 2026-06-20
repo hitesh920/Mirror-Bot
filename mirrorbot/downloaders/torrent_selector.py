@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 
 from aiohttp import web
 
+from ..services.page_style import TEMP_PAGE_CSS
 from .qbittorrent import QBittorrentClient
 
 LOGGER = logging.getLogger(__name__)
@@ -160,19 +161,20 @@ class TorrentSelector:
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Select torrent files</title>
 <style>
-*{{box-sizing:border-box}}body{{font:14px system-ui;margin:0;background:#f4f6f8;color:#182230}}
-header{{background:#fff;border-bottom:1px solid #dfe4ea}}.top{{max-width:920px;margin:auto;padding:22px 16px 14px}}
-h1{{font-size:22px;margin:0 0 5px}}.sub{{color:#667085;display:flex;gap:16px;flex-wrap:wrap}}
-main{{max-width:920px;margin:18px auto;padding:0 16px}} form{{background:white;border:1px solid #d8dde4}}
-.tools{{position:sticky;top:0;z-index:2;display:flex;gap:7px;padding:10px;background:#fff;border-bottom:1px solid #d8dde4;flex-wrap:wrap}}
-.tools input{{flex:1;min-width:200px;padding:8px 10px;border:1px solid #c5ccd5;border-radius:6px;font:inherit}}
-ul{{list-style:none;margin:0;padding:0}} .row{{display:grid;grid-template-columns:28px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid #e7eaee;align-items:center}}
-.row:hover{{background:#f8fafc}}.name{{overflow-wrap:anywhere}} small{{color:#667085;white-space:nowrap}} .expand{{width:26px;height:26px;padding:0;margin:0;background:#f4f6f8;color:#182230;border:1px solid #ccd3dc;border-radius:5px}}
-.folder-name{{padding:2px 0;text-align:left;background:transparent;color:#182230;font-weight:650;border:0;border-radius:2px}}
-.folder-name:focus{{outline:0}}.folder-name:focus-visible{{outline:2px solid #1769e0;outline-offset:2px}}
-.spacer{{width:26px}} button{{padding:8px 11px;background:#1769e0;color:white;border:1px solid #1769e0;border-radius:6px;cursor:pointer;font:inherit;font-weight:650}}
-.secondary{{background:#fff;color:#182230;border-color:#c5ccd5}}.footer{{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:10px;background:#fff;border-top:1px solid #d8dde4}}.footer .count{{margin-right:auto;color:#667085}}.cancel{{background:#fff;color:#b42318;border-color:#d0d5dd}}
-@media(max-width:650px){{.top{{padding:16px 10px 11px}}main{{margin:10px auto;padding:0 6px}}.row{{padding-left:calc(7px + var(--depth) * 13px)}}small{{display:none}}.tools input{{order:-1;flex-basis:100%}}}}
+{TEMP_PAGE_CSS}
+main{{max-width:960px}}
+form{{overflow:hidden}}
+ul{{list-style:none;margin:0;padding:0}}
+.row{{display:grid;grid-template-columns:28px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid var(--line);align-items:center}}
+.row:hover{{background:var(--surface-soft)}}
+small{{color:var(--muted);white-space:nowrap}}
+.expand{{width:26px;height:26px;min-height:26px;padding:0;margin:0;background:var(--surface-soft);color:var(--text);border:1px solid var(--line-strong);border-radius:6px}}
+.folder-name{{justify-content:flex-start;min-height:28px;padding:2px 0;text-align:left;background:transparent;color:var(--text);font-weight:760;border:0;border-radius:2px}}
+.folder-name:hover{{background:transparent;color:var(--primary)}}
+.spacer{{width:26px}}
+.footer{{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:11px;background:color-mix(in srgb,var(--surface) 96%,transparent);border-top:1px solid var(--line);backdrop-filter:blur(14px)}}
+.footer .count{{margin-right:auto;color:var(--muted)}}
+@media(max-width:650px){{.row{{padding-left:calc(7px + var(--depth) * 13px)}}small{{display:none}}}}
 </style></head><body>
 <header><div class="top"><h1>Select torrent files</h1><div class="sub"><span>Nothing is selected by default</span><span>Expand folders to review contents</span></div></div></header>
 <main>

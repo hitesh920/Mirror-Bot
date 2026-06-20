@@ -11,6 +11,7 @@ from urllib.parse import urlparse, urlunparse
 from aiohttp import web
 
 from .drive_sharing import DriveShareManifest
+from .page_style import TEMP_PAGE_CSS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -126,18 +127,13 @@ def render_share_page(manifest: DriveShareManifest, timeout: int = 300) -> str:
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(manifest.name)}</title>
 <style>
-*{{box-sizing:border-box}}body{{font:15px system-ui;margin:0;background:#f4f6f8;color:#182230}}
-header{{background:#fff;border-bottom:1px solid #dfe4ea}}.top{{max-width:1120px;margin:auto;padding:22px 18px 14px}}
-h1{{font-size:22px;margin:0 0 6px;overflow-wrap:anywhere}}.meta{{color:#667085;display:flex;gap:18px;flex-wrap:wrap}}
-main{{max-width:1120px;margin:18px auto;padding:0 18px}}.tools{{position:sticky;top:0;z-index:2;display:flex;gap:10px;padding:10px 0;margin-bottom:4px;background:#f4f6f8;flex-wrap:wrap}}
-input{{flex:1;min-width:220px;padding:10px 12px;border:1px solid #cfd6de;border-radius:6px;font:inherit}}
-button,a{{border:0;border-radius:6px;background:#1769e0;color:#fff;padding:10px 13px;font-weight:650;text-decoration:none;cursor:pointer}}
-table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d8dde4}}
-th,td{{padding:11px 12px;border-bottom:1px solid #e7eaee;text-align:left;vertical-align:middle}}
-th{{font-size:12px;text-transform:uppercase;color:#475467;background:#f9fafb}}.name{{overflow-wrap:anywhere}}
-.number{{width:52px;color:#667085}}.action{{width:110px}}.action a{{display:inline-block;padding:7px 10px}}
-#toast{{display:none;position:fixed;right:18px;bottom:18px;background:#17202a;color:#fff;padding:11px 14px;border-radius:6px}}#empty{{display:none;text-align:center;color:#667085;padding:30px}}
-@media(max-width:700px){{.top{{padding:20px 14px}}main{{margin:16px auto;padding:0 10px}}th:nth-child(1),td:nth-child(1){{display:none}}th,td{{padding:10px 8px}}}}
+{TEMP_PAGE_CSS}
+.tools{{margin-bottom:10px}}
+.number{{width:52px;color:var(--muted)}}
+.action{{width:116px}}
+.action a{{display:inline-flex;align-items:center;justify-content:center;min-height:34px;border-radius:7px;background:var(--primary);color:#fff;padding:7px 10px;font-weight:760;text-decoration:none}}
+#empty{{display:none}}
+@media(max-width:700px){{th:nth-child(1),td:nth-child(1){{display:none}}}}
 </style></head><body><header><div class="top">
 <h1>{html.escape(manifest.name)}</h1>
 <div class="meta"><span>{len(manifest.files)} files</span><span>{manifest.folder_count} folders</span><span id="timer">Expires in 5:00</span></div>

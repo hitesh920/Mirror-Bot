@@ -8,6 +8,7 @@ from urllib.parse import urlparse, urlunparse
 from aiohttp import web
 
 from .google_drive_delivery import FOLDER_MIME_TYPE, drive_item_link
+from .page_style import TEMP_PAGE_CSS
 from .status import human_size
 
 LOGGER = logging.getLogger(__name__)
@@ -130,17 +131,12 @@ def render_search_page(query: str, results: list[dict]) -> str:
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Google Drive search</title>
 <style>
-*{{box-sizing:border-box}}body{{font:14px system-ui;margin:0;background:#f4f6f8;color:#182230}}
-header{{background:#fff;border-bottom:1px solid #dfe4ea}}.top{{max-width:1080px;margin:auto;padding:22px 18px 14px}}
-h1{{font-size:22px;margin:0 0 5px}}.meta{{color:#667085;display:flex;gap:16px;flex-wrap:wrap}}
-main{{max-width:1080px;margin:18px auto;padding:0 18px}}.tools{{margin-bottom:12px}}
-input{{width:100%;padding:10px 12px;border:1px solid #c5ccd5;border-radius:6px;font:inherit}}
-table{{width:100%;border-collapse:collapse;background:white;border:1px solid #d8dde4}}
-th,td{{padding:11px 12px;border-bottom:1px solid #e7eaee;text-align:left;vertical-align:middle}}
-th{{font-size:12px;text-transform:uppercase;color:#667085;background:#f9fafb}}
-.name{{overflow-wrap:anywhere;font-weight:600}} a{{display:inline-block;color:#fff;background:#1769e0;padding:7px 10px;border-radius:6px;font-weight:650;text-decoration:none}}
-.empty{{display:none;text-align:center;color:#667085;padding:30px}}
-@media(max-width:640px){{.top{{padding:16px 12px 11px}}main{{margin:12px auto;padding:0 8px}}th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4){{display:none}}th,td{{padding:9px 7px}}}}
+{TEMP_PAGE_CSS}
+.tools{{position:static;margin-bottom:12px;border:0;background:transparent;backdrop-filter:none;padding:0}}
+.name{{font-weight:760}}
+a{{display:inline-flex;align-items:center;justify-content:center;min-height:34px;border-radius:7px;background:var(--primary);color:#fff;padding:7px 10px;font-weight:760;text-decoration:none}}
+.empty{{display:none}}
+@media(max-width:640px){{th:nth-child(1),td:nth-child(1),th:nth-child(4),td:nth-child(4){{display:none}}}}
 </style></head><body><header><div class="top"><h1>Google Drive search</h1><div class="meta"><span>Query: {html.escape(query)}</span><span>{len(results)} results</span><span>Expires in 5 minutes</span></div></div></header><main>
 <div class="tools"><input id="filter" type="search" placeholder="Filter results"></div>
 <table><thead><tr><th>#</th><th>Type</th><th>Name</th><th>Size</th><th>Link</th></tr></thead>

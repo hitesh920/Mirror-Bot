@@ -1,5 +1,12 @@
 FROM denoland/deno:bin-2.3.0 AS deno
 
+FROM node:22-slim AS web
+WORKDIR /src
+COPY web/package*.json web/
+RUN cd web && npm ci
+COPY web web
+RUN cd web && npm run build
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
@@ -22,6 +29,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY --from=web /src/mirrorbot/web_dist ./mirrorbot/web_dist
 RUN chmod +x start.sh
 
 CMD ["bash", "start.sh"]

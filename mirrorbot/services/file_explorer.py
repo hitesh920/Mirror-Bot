@@ -10,6 +10,7 @@ from pathlib import Path
 from aiohttp import web
 
 from .media_library import apply_media_permissions
+from .page_style import TEMP_PAGE_CSS
 from .status import human_size
 from .transfer_guard import ensure_disk_space
 from ..downloaders.process import path_size
@@ -213,21 +214,16 @@ class FileExplorer:
 
 PAGE = r'''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local files</title>
 <style>
-*{box-sizing:border-box}body{font:14px system-ui;margin:0;background:#f4f6f8;color:#182230}
-header{background:#fff;border-bottom:1px solid #dfe4ea}.top{max-width:1180px;margin:auto;padding:20px 18px 14px}
-h1{font-size:21px;margin:0 0 5px}.sub{color:#667085;display:flex;gap:16px;flex-wrap:wrap}
-.bar{position:sticky;top:0;z-index:2;background:#fff;border-bottom:1px solid #dfe4ea;padding:10px 18px}
-.actions{max-width:1180px;margin:auto;display:flex;gap:7px;flex-wrap:wrap}
-button,a.download{padding:8px 11px;border:1px solid #c5ccd5;border-radius:6px;background:#fff;color:#182230;cursor:pointer;text-decoration:none;font:inherit;font-weight:600}
-button:hover,a.download:hover{background:#f0f4f8}button.primary{background:#1769e0;color:#fff;border-color:#1769e0}button.danger{color:#b42318}
-main{max-width:1180px;margin:18px auto;padding:0 18px}.crumbs{margin:0 0 10px;color:#475467;font-family:ui-monospace,monospace;overflow-wrap:anywhere}
-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d8dde4}
-th,td{padding:10px 12px;border-bottom:1px solid #e7eaee;text-align:left;vertical-align:middle}
-th{font-size:12px;text-transform:uppercase;color:#667085;background:#f9fafb}.name{cursor:pointer;color:#1769e0;font-weight:600;overflow-wrap:anywhere}.parent .name{color:#344054}
-.check{width:44px}.kind,.size{color:#667085}.link{width:110px}.empty{text-align:center;color:#667085;padding:30px}
-dialog{border:1px solid #cfd6de;border-radius:8px;padding:22px;box-shadow:0 12px 35px #0003}dialog::backdrop{background:#10182866}
-#toast{position:fixed;right:16px;bottom:16px;background:#182230;color:#fff;padding:11px 14px;border-radius:6px;display:none}
-@media(max-width:700px){.top{padding:16px 12px 11px}.bar{padding:8px 10px}main{margin:12px auto;padding:0 8px}.actions{gap:5px}button{padding:7px 8px}.kind,.size,th:nth-child(3),th:nth-child(4){display:none}.link{width:92px}th,td{padding:9px 7px}}
+{TEMP_PAGE_CSS}
+.bar{padding:10px 18px}
+.actions{max-width:1180px;margin:auto;display:flex;gap:8px;flex-wrap:wrap}
+.crumbs{margin:0 0 10px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.name{cursor:pointer;color:var(--primary);font-weight:760}
+.parent .name{color:var(--text)}
+.kind,.size{color:var(--muted)}
+.check{width:44px}.link{width:116px}
+a.download{min-height:34px;padding:7px 10px}
+@media(max-width:700px){.bar{padding:8px 10px}.actions{gap:5px}.kind,.size,th:nth-child(3),th:nth-child(4){display:none}.link{width:92px}}
 </style></head><body>
 <header><div class="top"><h1>Local files</h1><div class="sub"><span id="location">/downloads</span><span id="count">0 items</span><span id="timer"></span></div></div></header>
 <div class="bar"><div class="actions"><button onclick="mkdir()">New folder</button><button onclick="renameOne()">Rename</button><button onclick="copyMove('copy')">Copy</button><button onclick="copyMove('move')">Move</button><button class="danger" onclick="removeItems()">Delete</button><button onclick="upload('telegram')">Upload to Telegram</button><button onclick="upload('google_drive')">Upload to Google Drive</button><button onclick="upload('buzzheavier')">Upload to BuzzHeavier</button><button class="primary" onclick="scan()">Scan Jellyfin</button></div></div>
@@ -254,4 +250,4 @@ async function act(a,d={}){try{await api(a,d);await load()}catch(e){toast(e.mess
 async function extendSession(){let d=await api('extend');expiresAt=d.expiresAt;asked=false;document.querySelector('#extend').close();toast('Session extended')}
 document.querySelector('#all').onchange=e=>document.querySelectorAll('.pick').forEach(x=>x.checked=e.target.checked);
 setInterval(()=>{let n=Math.max(0,Math.ceil(expiresAt-Date.now()/1000));document.querySelector('#timer').textContent=`Expires in ${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;if(n<=60&&!asked){asked=true;document.querySelector('#extend').showModal()}if(!n){window.close();document.body.innerHTML='<main><h2>Session expired</h2></main>'}},1000);load();
-</script></body></html>'''
+</script></body></html>'''.replace("{TEMP_PAGE_CSS}", TEMP_PAGE_CSS)
