@@ -383,7 +383,7 @@ def result_list(title: str, items: list[str], links: list[str] | None = None) ->
 
 
 def completion_message(task) -> str:
-    name = escape(task.name or task.result_name or task.source.type.value)
+    name = escape(task.result_name or task.name or task.source.type.value)
     if task.destination == Destination.TELEGRAM:
         sections = [
             "<b>Task complete</b>",
@@ -458,8 +458,13 @@ def completion_payload(task) -> dict:
         )
     elif task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
         links.append({"label": "Open Jellyfin", "url": jellyfin_url()})
+    name = (
+        task.library_name or task.result_name or task.name or task.source.type.value
+        if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
+        else task.result_name or task.name or task.source.type.value
+    )
     return {
-        "name": task.name or task.result_name or task.source.type.value,
+        "name": name,
         "destination": task.destination.value,
         "files": task.result_files,
         "folders": task.result_folders,
