@@ -5,7 +5,6 @@ import signal
 from collections import defaultdict
 from html import escape
 from pathlib import Path
-from shutil import rmtree
 from time import time
 
 from pyrogram import Client, filters, idle
@@ -31,10 +30,11 @@ from .services.public_url import public_base_url
 from .services.jellyfin import JellyfinControlError, JellyfinManager
 from .services.jellyfin_api import JellyfinApi
 from .services.file_explorer import FileExplorer
-from .services.media_library import apply_media_permissions, promote_yearless_series_folders
+from .services.media_library import promote_yearless_series_folders
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
+from .services.startup import cleanup_abandoned_downloads, prepare_local_library
 from .services.web_dashboard import WebDashboard
 from .telegram import keyboards as telegram_keyboards
 from .telegram import messages as telegram_messages
@@ -76,43 +76,8 @@ status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 series_promotion_job: asyncio.Task | None = None
 PENDING_ADD_TIMEOUT = 120
 JELLYFIN_AUTO_SCAN_COOLDOWN = 180
-ADD_USAGE = (
-    "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
-    "You can also reply to a Telegram file or link with <code>/add</code>."
-)
-HELP_TEXT = "\n".join(
-    [
-        "<b>Mirror-Bot commands</b>",
-        "",
-        "<b>Add</b>",
-        "<code>/add &lt;link&gt;</code> - add a link",
-        "<code>/add</code> - use the replied file/link",
-        "<code>BuzzHeavier</code> links are supported as sources and uploads",
-        "<code>-z</code> zip, <code>-zp pass</code> password zip",
-        "<code>-e</code> extract, <code>-ep pass</code> password extract",
-        "<code>-n name</code> custom task name",
-        "",
-        "<b>Status</b>",
-        "<code>/status</code> - live task status",
-        "<code>/stats</code> - bot/server stats",
-        "<code>/speedtest</code> - test server network speed",
-        "<code>/gdstats</code> - Google Drive auth and quota",
-        "<code>/jellyfin</code> - manage Jellyfin",
-        "<code>/local</code> - temporary local file explorer",
-        "",
-        "<b>Manage</b>",
-        "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
-        "<code>/cancelall</code> - cancel all active tasks",
-        "<code>/restart</code> - gracefully restart Mirror-Bot",
-        "<code>/logs</code> - send recent sanitized application logs",
-        "<code>/delete</code> - delete Local or Google Drive items",
-        "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
-        "",
-        "<b>Google Drive</b>",
-        "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
-        "<code>/share &lt;drive-link&gt;</code> - temporary public Drive share page",
-    ]
-)
+ADD_USAGE = telegram_messages.ADD_USAGE
+HELP_TEXT = telegram_messages.HELP_TEXT
 
 app = (
     Client(
@@ -138,14 +103,11 @@ context = BotContext(
 )
 web_dashboard: WebDashboard | None = None
 
-
 def owner_only(_, __, message: Message) -> bool:
     user = message.from_user or message.sender_chat
     return bool(not shutting_down and user and user.id == config.owner_id)
 
-
 owner_filter = filters.create(owner_only)
-
 
 def chat_tasks(chat_id: int):
     return [
@@ -153,7 +115,6 @@ def chat_tasks(chat_id: int):
         for task in manager.active_tasks()
         if task.chat_id == chat_id and task.status_visible
     ]
-
 
 async def expire_pending_add(token: str) -> None:
     try:
@@ -175,14 +136,12 @@ async def expire_pending_add(token: str) -> None:
     finally:
         pending_add_expiry_jobs.pop(token, None)
 
-
 def start_pending_add_expiry(token: str, message: Message) -> None:
     pending_add_messages[token] = message
     old_job = pending_add_expiry_jobs.pop(token, None)
     if old_job:
         old_job.cancel()
     pending_add_expiry_jobs[token] = background.create(expire_pending_add(token), name="expire-add")
-
 
 def take_pending_add(token: str):
     pending = pending_adds.pop(token, None)
@@ -192,14 +151,12 @@ def take_pending_add(token: str):
         job.cancel()
     return pending
 
-
 async def answer_expired_selection(query) -> None:
     await query.answer("Expired task", show_alert=True)
     try:
         await query.message.edit("Selection expired. Send /add again.")
     except Exception:
         pass
-
 
 async def expire_drive_delete(token: str, message: Message) -> None:
     try:
@@ -218,13 +175,11 @@ async def expire_drive_delete(token: str, message: Message) -> None:
     finally:
         pending_drive_delete_expiry_jobs.pop(token, None)
 
-
 def start_drive_delete_expiry(token: str, message: Message) -> None:
     old_job = pending_drive_delete_expiry_jobs.pop(token, None)
     if old_job:
         old_job.cancel()
     pending_drive_delete_expiry_jobs[token] = background.create(expire_drive_delete(token, message), name="expire-drive-delete")
-
 
 def take_pending_drive_delete(token: str) -> dict | None:
     item = pending_drive_delete_items.pop(token, None)
@@ -232,7 +187,6 @@ def take_pending_drive_delete(token: str) -> dict | None:
     if job:
         job.cancel()
     return item
-
 
 async def update_status_message(chat_id: int) -> None:
     async with status_locks[chat_id]:
@@ -261,7 +215,6 @@ async def update_status_message(chat_id: int) -> None:
             except Exception:
                 LOGGER.exception("Could not update status message chat=%s", chat_id)
 
-
 async def replace_status_message(chat_id: int) -> None:
     async with status_locks[chat_id]:
         text = format_status(chat_tasks(chat_id))
@@ -277,7 +230,6 @@ async def replace_status_message(chat_id: int) -> None:
             except Exception:
                 pass
 
-
 async def status_loop(chat_id: int) -> None:
     try:
         while chat_tasks(chat_id):
@@ -286,7 +238,6 @@ async def status_loop(chat_id: int) -> None:
         await update_status_message(chat_id)
     finally:
         status_jobs.pop(chat_id, None)
-
 
 async def start_live_status(chat_id: int, message: Message) -> None:
     async with status_locks[chat_id]:
@@ -304,62 +255,38 @@ async def start_live_status(chat_id: int, message: Message) -> None:
     if job is None or job.done():
         status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
 
-
 async def send_live_status(chat_id: int) -> None:
     await update_status_message(chat_id)
     job = status_jobs.get(chat_id)
     if job is None or job.done():
         status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
 
-
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
-
 
 def local_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.local_buttons(token)
 
-
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_buttons(token)
-
 
 def ytdlp_video_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_video_buttons(token)
 
-
 def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_audio_buttons(token)
-
 
 def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
     return telegram_messages.result_list(title, items, links)
 
-
 def completion_message(task) -> str:
     return telegram_messages.completion_message(task)
-
 
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
     return telegram_keyboards.completion_buttons(task, jellyfin_url())
 
-
-
 def completion_payload(task) -> dict:
     return telegram_messages.completion_payload(task, jellyfin_url())
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 async def launch_selected_task(query, token: str, destination: Destination) -> None:
     pending = take_pending_add(token)
@@ -481,27 +408,6 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
         if job is None or job.done():
             status_jobs[task.chat_id] = background.create(status_loop(task.chat_id), name="status-loop")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 async def delete_google_drive_link(message: Message, link: str) -> None:
     try:
         file_id = drive_id_from_url(link)
@@ -537,35 +443,14 @@ async def delete_google_drive_link(message: Message, link: str) -> None:
     )
     start_drive_delete_expiry(token, prompt)
 
-
-
-
 def jellyfin_url() -> str:
     return public_base_url(8003, config.public_base_url)
-
 
 def jellyfin_buttons() -> InlineKeyboardMarkup:
     return telegram_keyboards.jellyfin_buttons(jellyfin_url())
 
-
 def format_jellyfin_status(status, action: str = "Status", server_info: dict | None = None) -> str:
-    running = "yes" if status.running else "no"
-    lines = [
-        "<b>Jellyfin</b>",
-        f"<b>Action:</b> <code>{escape(action)}</code>",
-        f"<b>Container:</b> <code>{escape(status.name)}</code>",
-        f"<b>State:</b> <code>{escape(status.state)}</code>",
-        f"<b>Health:</b> <code>{escape(status.health)}</code>",
-        f"<b>Running:</b> <code>{running}</code>",
-    ]
-    if server_info:
-        lines.extend([
-            f"<b>Server:</b> <code>{escape(server_info.get('ServerName', 'unknown'))}</code>",
-            f"<b>Version:</b> <code>{escape(server_info.get('Version', 'unknown'))}</code>",
-        ])
-    lines.append(f"<b>URL:</b> <code>{escape(jellyfin_url())}</code>")
-    return "\n".join(lines)
-
+    return telegram_messages.format_jellyfin_status(status, jellyfin_url(), action, server_info)
 
 async def jellyfin_server_info(status) -> dict:
     if not status.running:
@@ -576,15 +461,9 @@ async def jellyfin_server_info(status) -> dict:
         LOGGER.warning("Jellyfin server information failed error=%s", type(exc).__name__)
         return {}
 
-
 async def jellyfin_status_text(action: str = "Status") -> str:
     status = await asyncio.to_thread(jellyfin.status)
     return format_jellyfin_status(status, action, await jellyfin_server_info(status))
-
-
-
-
-
 
 def ensure_jellyfin_running() -> None:
     try:
@@ -600,10 +479,8 @@ def ensure_jellyfin_running() -> None:
     except Exception:
         LOGGER.exception("Unexpected Jellyfin startup check failure")
 
-
 async def explorer_scan() -> None:
     await asyncio.to_thread(jellyfin_api.scan_library)
-
 
 async def refresh_pending_local_metadata() -> None:
     global last_jellyfin_auto_scan_at, local_metadata_job
@@ -658,13 +535,11 @@ async def refresh_pending_local_metadata() -> None:
     finally:
         local_metadata_job = None
 
-
 def schedule_local_metadata_refresh(task) -> None:
     if task.phase == TaskPhase.COMPLETE:
         pending_local_metadata_tasks[task.id] = task
         pending_jellyfin_scan_reasons.add("local-complete")
     schedule_jellyfin_auto_scan()
-
 
 def schedule_jellyfin_auto_scan() -> None:
     global local_metadata_job
@@ -681,7 +556,6 @@ def schedule_jellyfin_auto_scan() -> None:
             refresh_pending_local_metadata(),
             name="jellyfin-local-metadata-batch",
         )
-
 
 async def promote_series_library() -> None:
     promoted = 0
@@ -706,7 +580,6 @@ async def promote_series_library() -> None:
         pending_jellyfin_scan_reasons.add("series-promotion")
         schedule_jellyfin_auto_scan()
 
-
 def schedule_series_promotion() -> None:
     global series_promotion_job
     if series_promotion_job is None or series_promotion_job.done():
@@ -714,7 +587,6 @@ def schedule_series_promotion() -> None:
             promote_series_library(),
             name="promote-series-library",
         )
-
 
 async def explorer_upload(
     chat_id: int,
@@ -749,7 +621,6 @@ async def explorer_upload(
         manager.spawn(runner(), name="transfer-task")
     await send_live_status(chat_id)
 
-
 def get_file_explorer() -> FileExplorer:
     global file_explorer
     if file_explorer is None:
@@ -762,8 +633,6 @@ def get_file_explorer() -> FileExplorer:
         )
     return file_explorer
 
-
-
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
     if app is None:
@@ -771,23 +640,18 @@ def register_command_handlers() -> None:
         return
     from .commands import add, common, drive, jellyfin, local  # noqa: F401
 
-
 register_command_handlers()
-
 
 async def close_file_explorer() -> None:
     if file_explorer is not None:
         await file_explorer.close_all()
 
-
 async def close_web_dashboard() -> None:
     if web_dashboard is not None:
         await web_dashboard.close()
 
-
 def telegram_client():
     return app
-
 
 async def shutdown_bot() -> None:
     global shutting_down
@@ -800,7 +664,6 @@ async def shutdown_bot() -> None:
     await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer, close_web_dashboard))
     LOGGER.info("Graceful shutdown complete")
 
-
 async def wait_for_shutdown_signal() -> None:
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
@@ -811,16 +674,12 @@ async def wait_for_shutdown_signal() -> None:
             pass
     await stop_event.wait()
 
-
 async def main() -> None:
     global web_dashboard
     LOGGER.info("========== BOT STARTED ================")
     await asyncio.to_thread(ensure_jellyfin_running)
-    cleanup_abandoned_downloads()
-    (config.local_download_root / "movies").mkdir(parents=True, exist_ok=True)
-    (config.local_download_root / "series").mkdir(parents=True, exist_ok=True)
-    apply_media_permissions(config.local_download_root, config.local_download_root / "movies")
-    apply_media_permissions(config.local_download_root, config.local_download_root / "series")
+    cleanup_abandoned_downloads(config.download_dir, config.local_download_root)
+    prepare_local_library(config.local_download_root)
 
     web_dashboard = WebDashboard(
         config,
@@ -870,27 +729,8 @@ async def main() -> None:
         if telegram_started:
             await app.stop()
 
-
 def run():
     if app is not None:
         app.loop.run_until_complete(main())
     else:
         asyncio.run(main())
-
-
-def cleanup_abandoned_downloads() -> None:
-    root = config.download_dir.resolve()
-    local_root = config.local_download_root.resolve()
-    if root == Path(root.anchor) or root == local_root or root in local_root.parents:
-        raise RuntimeError(f"Unsafe temporary download directory: {root}")
-
-    root.mkdir(parents=True, exist_ok=True)
-    removed = 0
-    for item in root.iterdir():
-        if item.is_symlink() or item.is_file():
-            item.unlink(missing_ok=True)
-        elif item.is_dir():
-            rmtree(item)
-        removed += 1
-    if removed:
-        LOGGER.info("Removed %s abandoned download workspace(s)", removed)

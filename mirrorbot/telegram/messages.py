@@ -2,6 +2,66 @@ from html import escape
 
 from ..core.models import Destination
 
+ADD_USAGE = (
+    "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
+    "You can also reply to a Telegram file or link with <code>/add</code>."
+)
+
+HELP_TEXT = "\n".join(
+    [
+        "<b>Mirror-Bot commands</b>",
+        "",
+        "<b>Add</b>",
+        "<code>/add &lt;link&gt;</code> - add a link",
+        "<code>/add</code> - use the replied file/link",
+        "<code>BuzzHeavier</code> links are supported as sources and uploads",
+        "<code>-z</code> zip, <code>-zp pass</code> password zip",
+        "<code>-e</code> extract, <code>-ep pass</code> password extract",
+        "<code>-n name</code> custom task name",
+        "",
+        "<b>Status</b>",
+        "<code>/status</code> - live task status",
+        "<code>/stats</code> - bot/server stats",
+        "<code>/speedtest</code> - test server network speed",
+        "<code>/gdstats</code> - Google Drive auth and quota",
+        "<code>/jellyfin</code> - manage Jellyfin",
+        "<code>/local</code> - temporary local file explorer",
+        "",
+        "<b>Manage</b>",
+        "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
+        "<code>/cancelall</code> - cancel all active tasks",
+        "<code>/restart</code> - gracefully restart Mirror-Bot",
+        "<code>/logs</code> - send recent sanitized application logs",
+        "<code>/delete</code> - delete Local or Google Drive items",
+        "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
+        "",
+        "<b>Google Drive</b>",
+        "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
+        "<code>/share &lt;drive-link&gt;</code> - temporary public Drive share page",
+    ]
+)
+
+
+def format_jellyfin_status(status, jellyfin_url: str, action: str = "Status", server_info: dict | None = None) -> str:
+    running = "yes" if status.running else "no"
+    lines = [
+        "<b>Jellyfin</b>",
+        f"<b>Action:</b> <code>{escape(action)}</code>",
+        f"<b>Container:</b> <code>{escape(status.name)}</code>",
+        f"<b>State:</b> <code>{escape(status.state)}</code>",
+        f"<b>Health:</b> <code>{escape(status.health)}</code>",
+        f"<b>Running:</b> <code>{running}</code>",
+    ]
+    if server_info:
+        lines.extend(
+            [
+                f"<b>Server:</b> <code>{escape(server_info.get('ServerName', 'unknown'))}</code>",
+                f"<b>Version:</b> <code>{escape(server_info.get('Version', 'unknown'))}</code>",
+            ]
+        )
+    lines.append(f"<b>URL:</b> <code>{escape(jellyfin_url)}</code>")
+    return "\n".join(lines)
+
 
 def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
     if not items:
