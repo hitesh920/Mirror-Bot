@@ -381,6 +381,46 @@ textarea {
   color: var(--red);
 }
 
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tool-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 142px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 14px;
+}
+
+.tool-card svg {
+  color: var(--primary);
+}
+
+.tool-card strong {
+  font-size: 15px;
+}
+
+.tool-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tool-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+
 .smart-add {
   display: grid;
   gap: 16px;
@@ -830,7 +870,8 @@ textarea {
 @media (max-width: 1000px) {
   .metrics,
   .quick-grid,
-  .action-grid {
+  .action-grid,
+  .tool-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -869,6 +910,7 @@ textarea {
   .metrics,
   .quick-grid,
   .action-grid,
+  .tool-grid,
   .form-grid,
   .button-grid {
     grid-template-columns: 1fr;
@@ -877,7 +919,8 @@ textarea {
   .page-header,
   .task-head,
   .server-card,
-  .input-action > div {
+  .input-action > div,
+  .tool-input-row {
     grid-template-columns: 1fr;
     display: grid;
   }
@@ -885,7 +928,8 @@ textarea {
   .form-actions button,
   .task-actions button,
   .task-actions a,
-  .row-actions button {
+  .row-actions button,
+  .tool-input-row button {
     width: 100%;
   }
 

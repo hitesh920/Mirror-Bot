@@ -666,32 +666,31 @@ function DrivePage({ showToast }) {
   return (
     <section className="view-stack narrow">
       <PageHeader title="Google Drive" subtitle="Search, public share pages, deletion, and quota." />
-      <div className="panel form-stack">
-        <InputAction icon={FileSearch} label="Search Drive" value={query} onChange={setQuery} placeholder="Search files or folders" button="Search" onSubmit={() => run(async () => {
-          const response = await api("/api/drive/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
-          setResult(response.url
-            ? { title: "Search results ready", rows: [["Results", `${response.count}`]], links: [{ label: "Click here", url: response.url }] }
-            : { title: "No matching Drive items", rows: [["Results", "0"]] });
-        })} />
-        <InputAction icon={ExternalLink} label="Share Drive link" value={share} onChange={setShare} placeholder="Public Drive file or folder link" button="Share" onSubmit={() => run(async () => {
-          const response = await api("/api/drive/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: share }) });
-          setResult({ title: response.name, rows: [["Files", `${response.files}`], ["Folders", `${response.folders}`], ["Expires", "5 minutes"]], links: [{ label: "Click here", url: response.url }] });
-        })} />
-        <InputAction icon={Trash2} label="Delete Drive item" value={deleteId} onChange={setDeleteId} placeholder="Drive link or ID" button="Delete" danger onSubmit={() => run(async () => {
-          if (!window.confirm("Delete this Drive item permanently?")) return;
-          const response = await api("/api/drive/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: deleteId }) });
-          setResult({ title: "Drive item deleted", rows: [["Name", response.name || deleteId]] });
-        })} />
-        <div className="row-actions">
-          <button className="secondary" type="button" onClick={() => run(async () => {
+      <div className="panel">
+        <div className="panel-title">Drive tools</div>
+        <div className="tool-grid">
+          <InputAction icon={FileSearch} label="Search Drive" detail="Find files or folders and open results on a temporary page." value={query} onChange={setQuery} placeholder="Search files or folders" button="Search" onSubmit={() => run(async () => {
+            const response = await api("/api/drive/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+            setResult(response.url
+              ? { title: "Search results ready", rows: [["Results", `${response.count}`]], links: [{ label: "Click here", url: response.url }] }
+              : { title: "No matching Drive items", rows: [["Results", "0"]] });
+          })} />
+          <InputAction icon={ExternalLink} label="Share Drive link" detail="Create a temporary public page for a public Drive file or folder." value={share} onChange={setShare} placeholder="Public Drive file or folder link" button="Share" onSubmit={() => run(async () => {
+            const response = await api("/api/drive/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: share }) });
+            setResult({ title: response.name, rows: [["Files", `${response.files}`], ["Folders", `${response.folders}`], ["Expires", "5 minutes"]], links: [{ label: "Click here", url: response.url }] });
+          })} />
+          <InputAction icon={Trash2} label="Delete Drive item" detail="Permanently delete a Drive item by link or ID." value={deleteId} onChange={setDeleteId} placeholder="Drive link or ID" button="Delete" danger onSubmit={() => run(async () => {
+            if (!window.confirm("Delete this Drive item permanently?")) return;
+            const response = await api("/api/drive/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: deleteId }) });
+            setResult({ title: "Drive item deleted", rows: [["Name", response.name || deleteId]] });
+          })} />
+          <ActionButton title="Drive quota" detail="Show used, free, total, and trash storage" icon={Database} onClick={() => run(async () => {
             const response = await api("/api/drive/stats");
             setResult(response.ready ? { title: "Drive quota", rows: quotaRows(response.quota) } : { title: "Drive is not ready", rows: [["Credentials", response.credentials ? "Found" : "Missing"], ["Token", response.token ? "Found" : "Missing"]] });
-          })}>
-            Drive quota
-          </button>
+          })} />
         </div>
-        <ResultPanel result={result} />
       </div>
+      <ResultPanel result={result} />
     </section>
   );
 }
@@ -715,22 +714,16 @@ function JellyfinPage({ state, jellyfinUrl, showToast, refresh }) {
     <section className="view-stack narrow">
       <PageHeader title="Jellyfin" subtitle="Server control and full library refresh." />
       <div className="panel">
-        <div className="server-card">
-          <Server size={28} />
-          <div>
-            <strong>{status?.state || "unknown"}</strong>
-            <span>{status?.health || "unknown"}</span>
-          </div>
-          <a className="button-link" href={jellyfinUrl} target="_blank" rel="noreferrer">Open Jellyfin <ExternalLink size={14} /></a>
-        </div>
-        <div className="button-grid">
-          <button type="button" onClick={() => action("scan")}><RefreshCw size={16} /> Scan library</button>
-          <button className="secondary" type="button" onClick={() => action("start")}><Play size={16} /> Start</button>
-          <button className="secondary" type="button" onClick={() => action("stop")}><Square size={16} /> Stop</button>
-          <button className="secondary" type="button" onClick={() => action("restart")}><RotateCcw size={16} /> Restart</button>
+        <div className="panel-title">Jellyfin tools</div>
+        <div className="action-grid">
+          <ActionButton title="Open Jellyfin" detail={`${status?.state || "unknown"} / ${status?.health || "unknown"}`} icon={Server} href={jellyfinUrl} />
+          <ActionButton title="Scan library" detail="Full scan, metadata refresh, and stale cleanup" icon={RefreshCw} onClick={() => action("scan")} />
+          <ActionButton title="Start" detail="Start the Jellyfin container" icon={Play} onClick={() => action("start")} />
+          <ActionButton title="Stop" detail="Stop only Jellyfin" icon={Square} onClick={() => action("stop")} />
+          <ActionButton title="Restart" detail="Restart the Jellyfin container" icon={RotateCcw} onClick={() => action("restart")} />
         </div>
       </div>
-      <ResultPanel result={result} />
+      <ResultPanel result={result || { title: "Server status", rows: [["State", status?.state || "unknown"], ["Health", status?.health || "unknown"], ["URL", jellyfinUrl || "-"]] }} />
     </section>
   );
 }
@@ -789,15 +782,17 @@ function ActionButton({ title, detail, icon: Icon, onClick, href, danger }) {
   return <button className={className} type="button" onClick={onClick}>{content}</button>;
 }
 
-function InputAction({ icon: Icon, label, value, onChange, placeholder, button, onSubmit, danger }) {
+function InputAction({ icon: Icon, label, detail, value, onChange, placeholder, button, onSubmit, danger }) {
   return (
-    <label className="input-action">
-      <span><Icon size={15} /> {label}</span>
-      <div>
+    <div className={`tool-card ${danger ? "danger-card" : ""}`}>
+      <Icon size={20} />
+      <strong>{label}</strong>
+      {detail && <span>{detail}</span>}
+      <div className="tool-input-row">
         <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
         <button className={danger ? "danger" : ""} type="button" onClick={onSubmit}>{button}</button>
       </div>
-    </label>
+    </div>
   );
 }
 
