@@ -60,6 +60,26 @@ async function api(path, options = {}) {
   return type.includes("application/json") ? response.json() : response.text();
 }
 
+
+function formatBytes(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return "-";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let size = number;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? size.toFixed(1) : size.toFixed(2)} ${units[unit]}`;
+}
+
+function formatNumber(value, suffix = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${number.toFixed(number >= 100 ? 0 : 1)}${suffix}`;
+}
+
 function appUrl(url) {
   try {
     const parsed = new URL(url, window.location.href);
@@ -139,7 +159,6 @@ function App() {
   const [theme, toggleTheme] = useTheme();
   const [state, setState] = useState(null);
   const [toast, setToast] = useState("");
-  const [output, setOutput] = useState("");
 
   const showToast = (message) => {
     setToast(message);
@@ -169,8 +188,6 @@ function App() {
     refresh,
     setView,
     showToast,
-    output,
-    setOutput,
     jellyfinUrl,
   };
 
@@ -589,21 +606,24 @@ function TaskCard({ task, compact, refresh }) {
   );
 }
 
-function FilesPage({ jellyfinUrl, showToast, setOutput }) {
+function FilesPage({ jellyfinUrl, showToast }) {
+  const [result, setResult] = useState(null);
   const openLocal = async () => {
     try {
-      const result = await api("/api/local", { method: "POST" });
-      window.open(appUrl(result.url), "_blank");
+      const response = await api("/api/local", { method: "POST" });
+      window.open(appUrl(response.url), "_blank");
+      setResult({ title: "File explorer opened", rows: [["Session", "Temporary 5 minute explorer"]], links: [{ label: "Click here", url: response.url }] });
     } catch (error) {
       showToast(error.message);
     }
   };
   const scan = async () => {
     try {
-      const result = await api("/api/jellyfin/scan", { method: "POST" });
-      setOutput(JSON.stringify(result, null, 2));
+      const response = await api("/api/jellyfin/scan", { method: "POST" });
+      setResult({ title: "Jellyfin scan requested", rows: [["State", response.state], ["Health", response.health], ["Cleanup", `${response.result} stale item(s) removed`]] });
       showToast("Jellyfin scan requested");
     } catch (error) {
+      setResult({ title: "Action failed", rows: [["Error", error.message]] });
       showToast(error.message);
     }
   };
@@ -615,22 +635,32 @@ function FilesPage({ jellyfinUrl, showToast, setOutput }) {
         <ActionButton title="Open Jellyfin" detail="Open the media server" icon={Server} href={jellyfinUrl} />
         <ActionButton title="Scan library" detail="Full scan and metadata refresh" icon={RefreshCw} onClick={scan} />
       </div>
+      <ResultPanel result={result} />
     </section>
   );
 }
 
-function DrivePage({ setOutput, output, showToast }) {
+function DrivePage({ showToast }) {
   const [query, setQuery] = useState("");
   const [share, setShare] = useState("");
   const [deleteId, setDeleteId] = useState("");
+  const [result, setResult] = useState(null);
 
   const run = async (fn) => {
     try {
       await fn();
     } catch (error) {
-      setOutput(error.message);
+      setResult({ title: "Drive action failed", rows: [["Error", error.message]] });
       showToast(error.message);
     }
+  };
+
+  const quotaRows = (quota) => {
+    const limit = Number(quota?.limit || 0);
+    const usage = Number(quota?.usage || 0);
+    const trash = Number(quota?.usageInDriveTrash || 0);
+    const free = limit ? Math.max(0, limit - usage) : 0;
+    return [["Used", formatBytes(usage)], ["Free", formatBytes(free)], ["Total", limit ? formatBytes(limit) : "Unlimited"], ["Trash", formatBytes(trash)]];
   };
 
   return (
@@ -638,38 +668,45 @@ function DrivePage({ setOutput, output, showToast }) {
       <PageHeader title="Google Drive" subtitle="Search, public share pages, deletion, and quota." />
       <div className="panel form-stack">
         <InputAction icon={FileSearch} label="Search Drive" value={query} onChange={setQuery} placeholder="Search files or folders" button="Search" onSubmit={() => run(async () => {
-          const result = await api("/api/drive/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
-          setOutput(result.url ? `Found ${result.count} result(s)\n${appUrl(result.url)}` : "No results");
+          const response = await api("/api/drive/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+          setResult(response.url
+            ? { title: "Search results ready", rows: [["Results", `${response.count}`]], links: [{ label: "Click here", url: response.url }] }
+            : { title: "No matching Drive items", rows: [["Results", "0"]] });
         })} />
         <InputAction icon={ExternalLink} label="Share Drive link" value={share} onChange={setShare} placeholder="Public Drive file or folder link" button="Share" onSubmit={() => run(async () => {
-          const result = await api("/api/drive/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: share }) });
-          setOutput(`${result.name}\n${result.files} files / ${result.folders} folders\n${appUrl(result.url)}`);
+          const response = await api("/api/drive/share", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link: share }) });
+          setResult({ title: response.name, rows: [["Files", `${response.files}`], ["Folders", `${response.folders}`], ["Expires", "5 minutes"]], links: [{ label: "Click here", url: response.url }] });
         })} />
         <InputAction icon={Trash2} label="Delete Drive item" value={deleteId} onChange={setDeleteId} placeholder="Drive link or ID" button="Delete" danger onSubmit={() => run(async () => {
           if (!window.confirm("Delete this Drive item permanently?")) return;
-          setOutput(JSON.stringify(await api("/api/drive/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: deleteId }) }), null, 2));
+          const response = await api("/api/drive/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: deleteId }) });
+          setResult({ title: "Drive item deleted", rows: [["Name", response.name || deleteId]] });
         })} />
         <div className="row-actions">
-          <button className="secondary" type="button" onClick={() => run(async () => setOutput(JSON.stringify(await api("/api/drive/stats"), null, 2)))}>
+          <button className="secondary" type="button" onClick={() => run(async () => {
+            const response = await api("/api/drive/stats");
+            setResult(response.ready ? { title: "Drive quota", rows: quotaRows(response.quota) } : { title: "Drive is not ready", rows: [["Credentials", response.credentials ? "Found" : "Missing"], ["Token", response.token ? "Found" : "Missing"]] });
+          })}>
             Drive quota
           </button>
         </div>
+        <ResultPanel result={result} />
       </div>
-      <Output value={output} />
     </section>
   );
 }
 
-function JellyfinPage({ state, jellyfinUrl, setOutput, output, showToast, refresh }) {
+function JellyfinPage({ state, jellyfinUrl, showToast, refresh }) {
   const status = state?.stats?.jellyfin;
+  const [result, setResult] = useState(null);
   const action = async (name) => {
     try {
-      const result = await api(`/api/jellyfin/${name}`, { method: "POST" });
-      setOutput(JSON.stringify(result, null, 2));
+      const response = await api(`/api/jellyfin/${name}`, { method: "POST" });
+      setResult({ title: "Jellyfin action complete", rows: [["Action", name], ["Result", response.result], ["State", response.state], ["Health", response.health]] });
       showToast("Jellyfin action sent");
       refresh();
     } catch (error) {
-      setOutput(error.message);
+      setResult({ title: "Jellyfin action failed", rows: [["Error", error.message]] });
       showToast(error.message);
     }
   };
@@ -693,18 +730,29 @@ function JellyfinPage({ state, jellyfinUrl, setOutput, output, showToast, refres
           <button className="secondary" type="button" onClick={() => action("restart")}><RotateCcw size={16} /> Restart</button>
         </div>
       </div>
-      <Output value={output} />
+      <ResultPanel result={result} />
     </section>
   );
 }
 
-function AdminPage({ setOutput, output, showToast }) {
+function AdminPage({ showToast }) {
+  const [result, setResult] = useState(null);
   const speedtest = async () => {
-    setOutput("Running speedtest...");
+    setResult({ title: "Running speedtest...", rows: [["Status", "Please wait"]] });
     try {
-      setOutput(JSON.stringify(await api("/api/speedtest", { method: "POST" }), null, 2));
+      const response = await api("/api/speedtest", { method: "POST" });
+      setResult({
+        title: "Speedtest result",
+        rows: [
+          ["Download", formatNumber(response.download_mbps, " Mbps")],
+          ["Upload", formatNumber(response.upload_mbps, " Mbps")],
+          ["Ping", formatNumber(response.ping_ms, " ms")],
+          ["Server", `${response.sponsor} - ${response.server}`],
+          ["ISP", response.isp],
+        ],
+      });
     } catch (error) {
-      setOutput(error.message);
+      setResult({ title: "Speedtest failed", rows: [["Error", error.message]] });
       showToast(error.message);
     }
   };
@@ -721,7 +769,7 @@ function AdminPage({ setOutput, output, showToast }) {
         <ActionButton title="Download logs" detail="Get sanitized app logs" icon={Download} href="/api/logs" />
         <ActionButton title="Restart bot" detail="Gracefully restart Mirror-Bot" icon={RotateCcw} onClick={restart} danger />
       </div>
-      <Output value={output} />
+      <ResultPanel result={result} />
     </section>
   );
 }
@@ -753,16 +801,31 @@ function InputAction({ icon: Icon, label, value, onChange, placeholder, button, 
   );
 }
 
-function Output({ value }) {
-  if (!value) return null;
-  const lines = String(value).split("\n");
+function ResultPanel({ result }) {
+  if (!result) return null;
   return (
-    <pre className="output">
-      {lines.map((line, index) => {
-        const isUrl = /^https?:\/\//.test(line);
-        return isUrl ? <React.Fragment key={index}><a href={appUrl(line)} target="_blank" rel="noreferrer">{appUrl(line)}</a>{"\n"}</React.Fragment> : `${line}\n`;
-      })}
-    </pre>
+    <div className="result-panel">
+      <div className="result-title">{result.title}</div>
+      {Boolean(result.rows?.length) && (
+        <div className="result-grid">
+          {result.rows.map(([label, value]) => (
+            <div className="result-row" key={label}>
+              <span>{label}</span>
+              <strong>{String(value ?? "-")}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      {Boolean(result.links?.length) && (
+        <div className="result-actions">
+          {result.links.map((link, index) => (
+            <a className="button-link" key={`${link.url}-${index}`} href={appUrl(link.url)} target="_blank" rel="noreferrer">
+              {link.label || "Click here"} <ExternalLink size={14} />
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
