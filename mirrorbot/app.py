@@ -479,8 +479,43 @@ def ensure_jellyfin_running() -> None:
     except Exception:
         LOGGER.exception("Unexpected Jellyfin startup check failure")
 
+async def scan_and_prune_jellyfin() -> int:
+    removed = 0
+    try:
+        await asyncio.to_thread(jellyfin_api.scan_library)
+    except Exception:
+        LOGGER.exception("Jellyfin library scan failed before missing-media prune")
+
+    was_running = False
+    try:
+        missing_count = await asyncio.to_thread(jellyfin_api.count_missing_media_items)
+        if not missing_count:
+            return 0
+
+        status = await asyncio.to_thread(jellyfin.status)
+        was_running = status.running
+        if was_running:
+            await asyncio.to_thread(jellyfin.stop)
+        removed = await asyncio.to_thread(jellyfin_api.prune_missing_media_items)
+    except Exception:
+        LOGGER.exception("Jellyfin missing-media prune failed")
+    finally:
+        if was_running:
+            try:
+                await asyncio.to_thread(jellyfin.start)
+            except Exception:
+                LOGGER.exception("Jellyfin restart after missing-media prune failed")
+
+    if removed:
+        await asyncio.sleep(6)
+        try:
+            await asyncio.to_thread(jellyfin_api.scan_library)
+        except Exception:
+            LOGGER.exception("Jellyfin library scan failed after missing-media prune")
+    return removed
+
 async def explorer_scan() -> None:
-    await asyncio.to_thread(jellyfin_api.scan_library)
+    await scan_and_prune_jellyfin()
 
 async def refresh_pending_local_metadata() -> None:
     global last_jellyfin_auto_scan_at, local_metadata_job
@@ -523,7 +558,7 @@ async def refresh_pending_local_metadata() -> None:
                 ):
                     continue
             try:
-                await asyncio.to_thread(jellyfin_api.scan_library)
+                await scan_and_prune_jellyfin()
                 last_jellyfin_auto_scan_at = time()
             except Exception:
                 LOGGER.exception(
@@ -694,6 +729,7 @@ async def main() -> None:
         schedule_local_metadata_refresh,
         schedule_series_promotion,
         completion_payload,
+        scan_and_prune_jellyfin,
     )
     await web_dashboard.start()
 

@@ -11,6 +11,7 @@ from pyrogram.types import Message
 from ..app import (
     LOGGER, app, config, format_jellyfin_status, jellyfin, jellyfin_api,
     jellyfin_buttons, jellyfin_server_info, jellyfin_status_text, owner_filter,
+    scan_and_prune_jellyfin,
 )
 from ..core.logging_config import log_event
 
@@ -46,9 +47,9 @@ async def jellyfin_action(_, query):
     )
     try:
         if action == "scan":
-            refreshed = await asyncio.to_thread(jellyfin_api.scan_library)
+            removed = await scan_and_prune_jellyfin()
             status = await asyncio.to_thread(jellyfin.status)
-            label = f"Scan and metadata refresh requested for {refreshed} libraries"
+            label = f"Scan, metadata refresh, and stale cleanup requested. Removed stale items: {removed}"
         elif action == "start":
             status = await asyncio.to_thread(jellyfin.start)
             label = "Started"

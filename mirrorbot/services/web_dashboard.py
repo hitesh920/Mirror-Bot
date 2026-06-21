@@ -88,6 +88,7 @@ class WebDashboard:
         schedule_local_metadata_refresh,
         schedule_series_promotion,
         completion_payload,
+        jellyfin_scan_callback=None,
     ):
         self.config = config
         self.manager = manager
@@ -101,6 +102,7 @@ class WebDashboard:
         self.schedule_local_metadata_refresh = schedule_local_metadata_refresh
         self.schedule_series_promotion = schedule_series_promotion
         self.completion_payload = completion_payload
+        self.jellyfin_scan_callback = jellyfin_scan_callback
         self.sessions: set[str] = set()
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
@@ -303,7 +305,10 @@ class WebDashboard:
                 status = await asyncio.to_thread(self.jellyfin.restart)
                 result = "restarted"
             elif action == "scan":
-                result = await asyncio.to_thread(self.jellyfin_api.scan_library)
+                if self.jellyfin_scan_callback:
+                    result = await self.jellyfin_scan_callback()
+                else:
+                    result = await asyncio.to_thread(self.jellyfin_api.scan_library)
                 status = await asyncio.to_thread(self.jellyfin.status)
             else:
                 status = await asyncio.to_thread(self.jellyfin.status)

@@ -199,6 +199,7 @@ class FileExplorer:
             if self.root in targets: raise web.HTTPForbidden(text="Cannot delete downloads root")
             for target in targets:
                 shutil.rmtree(target) if target.is_dir() else target.unlink()
+            await self.scan_callback()
         elif action == "upload":
             paths = [self._path(relative) for relative in data.get("sources", [])]
             if not paths: raise web.HTTPBadRequest(text="Select at least one item")
