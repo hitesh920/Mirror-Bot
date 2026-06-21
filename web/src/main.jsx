@@ -581,17 +581,19 @@ function TaskCard({ task, compact, refresh }) {
         </div>
         <span className="phase">{task.phase}</span>
       </div>
-      {task.progress !== null && (
+      {!task.terminal && task.progress !== null && (
         <div className="progress">
           <span style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
         </div>
       )}
-      <div className="task-meta">
-        <span>{task.processed} / {task.size}</span>
-        <span>{task.speed}</span>
-        {task.eta && <span>ETA {task.eta}</span>}
-        {task.current_file && <span>{task.current_file}</span>}
-      </div>
+      {!task.terminal && (
+        <div className="task-meta">
+          <span>{task.processed} / {task.size}</span>
+          <span>{task.speed}</span>
+          {task.eta && <span>ETA {task.eta}</span>}
+          {task.current_file && <span>{task.current_file}</span>}
+        </div>
+      )}
       {task.error && <pre>{task.error}</pre>}
       <div className="task-actions">
         {task.selection_url && !task.terminal && <a className="button-link" href={appUrl(task.selection_url)} target="_blank" rel="noreferrer">Selector <ExternalLink size={14} /></a>}
