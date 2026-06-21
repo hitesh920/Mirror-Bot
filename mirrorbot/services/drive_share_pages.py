@@ -115,11 +115,14 @@ def render_share_page(manifest: DriveShareManifest, timeout: int = 300) -> str:
     for index, item in enumerate(manifest.files, 1):
         clipboard.append(f"{item.name}\n{item.url}")
         rows.append(
-            "<tr>"
-            f"<td class='number'>{index}</td>"
-            f"<td class='name'>{html.escape(item.name)}</td>"
-            "<td class='action'>"
-            f"<a href='{html.escape(item.url, quote=True)}' target='_blank' rel='noopener'>Download</a>"
+            "<tr class='row'>"
+            f"<td class='cell number'>{index}</td>"
+            "<td class='cell'><div class='file-main'>"
+            "<span class='file-icon'>FILE</span>"
+            f"<div class='file-name'><strong>{html.escape(item.name)}</strong><span>Google Drive direct link</span></div>"
+            "</div></td>"
+            "<td class='cell action'>"
+            f"<a class='primary-link' href='{html.escape(item.url, quote=True)}' target='_blank' rel='noopener'>Download</a>"
             "</td></tr>"
         )
     clipboard_json = json.dumps("\n\n".join(clipboard)).replace("</", "<\\/")
@@ -128,20 +131,21 @@ def render_share_page(manifest: DriveShareManifest, timeout: int = 300) -> str:
 <title>{html.escape(manifest.name)}</title>
 <style>
 {TEMP_PAGE_CSS}
-.tools{{margin-bottom:10px}}
-.number{{width:52px;color:var(--muted)}}
-.action{{width:116px}}
-.action a{{display:inline-flex;align-items:center;justify-content:center;min-height:34px;border-radius:7px;background:var(--primary);color:#fff;padding:7px 10px;font-weight:760;text-decoration:none}}
-#empty{{display:none}}
-@media(max-width:700px){{th:nth-child(1),td:nth-child(1){{display:none}}}}
-</style></head><body><header><div class="top">
-<h1>{html.escape(manifest.name)}</h1>
-<div class="meta"><span>{len(manifest.files)} files</span><span>{manifest.folder_count} folders</span><span id="timer">Expires in 5:00</span></div>
-</div></header><main><div class="tools">
-<input id="search" type="search" placeholder="Search files">
-<button id="copy">Copy All Files and Links</button>
-</div><table><thead><tr><th>#</th><th>File name</th><th>Link</th></tr></thead>
-<tbody id="rows">{"".join(rows)}</tbody></table><div id="empty">No matching files</div></main><div id="toast">Copied to clipboard</div>
+body{{background:var(--bg)}}
+.appbar{{position:sticky;top:0;z-index:8;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(14px)}}
+.appbar-inner{{max-width:1180px;margin:0 auto;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px}}
+.brand{{display:grid;gap:5px;min-width:0}}.brand h1{{font-size:22px;margin:0;overflow-wrap:anywhere}}.brand p{{margin:0;color:var(--muted)}}
+.meta-pills{{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}}.meta-pills span{{display:inline-flex;align-items:center;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);padding:6px 10px;color:var(--muted);font-weight:760;white-space:nowrap}}
+.shell{{max-width:1180px;margin:0 auto;padding:16px 18px 28px;display:grid;gap:12px}}
+.toolbar,.files-card{{border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:var(--shadow)}}.toolbar{{padding:10px;display:flex;gap:10px;align-items:center}}.toolbar input{{flex:1;min-width:220px}}.toolbar button{{white-space:nowrap}}
+.files-card{{overflow:hidden}}.table-wrap{{overflow:auto}}table{{border:0;border-radius:0;box-shadow:none;min-width:620px}}th,td{{padding:0;border-bottom:1px solid var(--line)}}th{{height:42px;padding:0 14px}}.row:hover{{background:var(--surface-soft)}}.cell{{padding:11px 14px}}.number{{width:56px;color:var(--muted)}}.action{{width:124px;text-align:right}}
+.file-main{{display:flex;align-items:center;gap:12px;min-width:0}}.file-icon{{width:34px;height:34px;border:1px solid var(--line);border-radius:8px;background:var(--surface-soft);display:inline-flex;align-items:center;justify-content:center;color:var(--muted);font-size:10px;font-weight:900;letter-spacing:.03em;flex:0 0 auto}}.file-name{{display:grid;gap:2px;min-width:0}}.file-name strong{{overflow-wrap:anywhere}}.file-name span{{font-size:12px;color:var(--muted)}}
+.primary-link{{display:inline-flex;align-items:center;justify-content:center;min-height:32px;border-radius:7px;background:var(--primary);color:#fff;padding:6px 10px;font-weight:760;text-decoration:none}}#empty{{display:none;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:38px;text-align:center;color:var(--muted)}}
+@media(max-width:700px){{.appbar-inner{{display:grid;padding:12px}}.meta-pills{{justify-content:flex-start}}.shell{{padding:12px 10px 22px}}.toolbar{{display:grid}}.number,th:nth-child(1){{display:none}}table{{min-width:480px}}.cell{{padding:10px}}}}
+</style></head><body>
+<header class="appbar"><div class="appbar-inner"><div class="brand"><h1>{html.escape(manifest.name)}</h1><p>Temporary Google Drive share</p></div><div class="meta-pills"><span>{len(manifest.files)} files</span><span>{manifest.folder_count} folders</span><span id="timer">Expires in 5:00</span></div></div></header>
+<main class="shell"><section class="toolbar"><input id="search" type="search" placeholder="Search files"><button id="copy">Copy All Files and Links</button></section>
+<section class="files-card"><div class="table-wrap"><table><thead><tr><th>#</th><th>File name</th><th></th></tr></thead><tbody id="rows">{"".join(rows)}</tbody></table></div></section><div id="empty">No matching files</div></main><div id="toast">Copied to clipboard</div>
 <script>
 const copyText={clipboard_json},expires={timeout};
 const toast=()=>{{const t=document.querySelector('#toast');t.style.display='block';setTimeout(()=>t.style.display='none',2200)}};

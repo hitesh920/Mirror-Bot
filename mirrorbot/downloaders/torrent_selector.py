@@ -162,24 +162,29 @@ class TorrentSelector:
 <title>Select torrent files</title>
 <style>
 {TEMP_PAGE_CSS}
-main{{max-width:960px}}
-form{{overflow:hidden}}
-ul{{list-style:none;margin:0;padding:0}}
-.row{{display:grid;grid-template-columns:28px 20px minmax(0,1fr) auto;gap:8px;padding:10px 12px 10px calc(12px + var(--depth) * 20px);border-bottom:1px solid var(--line);align-items:center}}
-.row:hover{{background:var(--surface-soft)}}
-small{{color:var(--muted);white-space:nowrap}}
-.expand{{width:26px;height:26px;min-height:26px;padding:0;margin:0;background:var(--surface-soft);color:var(--text);border:1px solid var(--line-strong);border-radius:6px}}
-.folder-name{{justify-content:flex-start;min-height:28px;padding:2px 0;text-align:left;background:transparent;color:var(--text);font-weight:760;border:0;border-radius:2px}}
-.folder-name:hover{{background:transparent;color:var(--primary)}}
-.spacer{{width:26px}}
-.footer{{position:sticky;bottom:0;display:flex;align-items:center;gap:8px;padding:11px;background:color-mix(in srgb,var(--surface) 96%,transparent);border-top:1px solid var(--line);backdrop-filter:blur(14px)}}
-.footer .count{{margin-right:auto;color:var(--muted)}}
-@media(max-width:650px){{.row{{padding-left:calc(7px + var(--depth) * 13px)}}small{{display:none}}}}
+body{{background:var(--bg)}}
+.appbar{{position:sticky;top:0;z-index:8;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(14px)}}
+.appbar-inner{{max-width:1180px;margin:0 auto;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px}}
+.brand{{display:grid;gap:5px;min-width:0}}.brand h1{{font-size:22px;margin:0}}.brand p{{margin:0;color:var(--muted)}}
+.meta-pills{{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}}.meta-pills span{{display:inline-flex;align-items:center;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);padding:6px 10px;color:var(--muted);font-weight:760;white-space:nowrap}}
+.shell{{max-width:1180px;margin:0 auto;padding:16px 18px 88px;display:grid;gap:12px}}
+.toolbar,.tree-card,.selectionbar{{border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:var(--shadow)}}
+.toolbar{{padding:10px;display:flex;align-items:center;gap:10px}}.toolbar input{{flex:1;min-width:220px}}.toolbar-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
+ul{{list-style:none;margin:0;padding:0}}.tree-card{{overflow:hidden}}
+.row{{display:grid;grid-template-columns:32px 24px minmax(0,1fr) auto;gap:9px;padding:10px 14px 10px calc(14px + var(--depth) * 20px);border-bottom:1px solid var(--line);align-items:center;transition:background .12s ease}}.row:hover{{background:var(--surface-soft)}}
+.folder>.row{{background:color-mix(in srgb,var(--surface-soft) 45%,var(--surface))}}.folder-name,.name{{min-width:0;overflow-wrap:anywhere}}.folder-name{{justify-content:flex-start;min-height:0;padding:0;text-align:left;background:transparent;color:var(--text);font-weight:820;border:0;border-radius:2px}}.folder-name:hover{{background:transparent;color:var(--primary);text-decoration:underline}}
+.name{{font-weight:760}}small{{color:var(--muted);white-space:nowrap}}.expand{{width:30px;height:30px;min-height:30px;padding:0;margin:0;background:var(--surface-soft);color:var(--text);border:1px solid var(--line-strong);border-radius:7px;font-weight:900}}.spacer{{width:30px}}
+.selectionbar{{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;width:min(1180px,calc(100vw - 32px));padding:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-color:color-mix(in srgb,var(--primary) 42%,var(--line));background:color-mix(in srgb,var(--primary-soft) 45%,var(--surface));backdrop-filter:blur(14px)}}.selectionbar .count{{font-weight:850}}.selection-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
+@media(max-width:760px){{.appbar-inner{{display:grid;padding:12px}}.meta-pills{{justify-content:flex-start}}.shell{{padding:12px 10px 92px}}.toolbar{{display:grid}}.toolbar-actions{{width:100%}}.toolbar-actions button{{flex:1 1 auto}}.row{{grid-template-columns:30px 22px minmax(0,1fr);padding-left:calc(10px + var(--depth) * 13px)}}small{{display:none}}.selectionbar{{display:grid;bottom:10px;width:calc(100vw - 20px)}}.selection-actions button{{flex:1 1 auto}}}}
 </style></head><body>
-<header><div class="top"><h1>Select torrent files</h1><div class="sub"><span>Nothing is selected by default</span><span>Expand folders to review contents</span></div></div></header>
-<main>
-<form method="post"><div class="tools"><input id="search" type="search" placeholder="Search files and folders"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div>
-<ul id="tree">{rows}</ul><div class="footer"><span class="count" id="count">0 files selected</span><button type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></div></form>
+<header class="appbar"><div class="appbar-inner"><div class="brand"><h1>Select torrent files</h1><p>Expand folders and choose only the files you want.</p></div><div class="meta-pills"><span>Nothing selected by default</span><span>Temporary selector</span></div></div></header>
+<main class="shell">
+<form method="post">
+<section class="toolbar"><input id="search" type="search" placeholder="Search files and folders"><div class="toolbar-actions"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div></section>
+<section class="tree-card"><ul id="tree">{rows}</ul></section>
+<section class="selectionbar"><span class="count" id="count">0 files selected</span><div class="selection-actions"><button type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></div></section>
+</form>
+</main>
 <script>
 const setChildren=(folder,checked)=>folder.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=checked;box.indeterminate=false;}});
 const updateCount=()=>{{const n=document.querySelectorAll('.file-check:checked').length;document.getElementById('count').textContent=`${{n}} file${{n===1?'':'s'}} selected`;}};
@@ -200,14 +205,12 @@ const toggleFolder=target=>{{
 }};
 document.querySelectorAll('.expand,.folder-name').forEach(button=>button.addEventListener('click',()=>toggleFolder(button.dataset.target)));
 document.querySelectorAll('.folder-check').forEach(box=>box.addEventListener('change',()=>{{setChildren(box.closest('.folder'),box.checked);updateParents(box.closest('.folder').parentElement);}}));
-document.querySelectorAll('.file-check').forEach(box=>box.addEventListener('change',()=>{{
- updateParents(box);
-}}));
+document.querySelectorAll('.file-check').forEach(box=>box.addEventListener('change',()=>{{updateParents(box);}}));
 document.getElementById('check-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=true;box.indeterminate=false;}});updateCount();}});
 document.getElementById('uncheck-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=false;box.indeterminate=false;}});updateCount();}});
 document.getElementById('search').addEventListener('input',e=>{{const q=e.target.value.toLowerCase();document.querySelectorAll('#tree li.file').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q));document.querySelectorAll('#tree li.folder').forEach(row=>{{const match=!q||row.textContent.toLowerCase().includes(q);row.hidden=!match;if(q&&match){{const tree=row.querySelector(':scope > ul');if(tree)tree.hidden=false;const button=row.querySelector(':scope > .row > .expand');if(button){{button.textContent='-';button.setAttribute('aria-expanded','true')}}}}}});}});
 </script>
-</main></body></html>"""
+</body></html>"""
         return web.Response(text=page, content_type="text/html")
 
     async def _submit(self, request: web.Request) -> web.Response:
