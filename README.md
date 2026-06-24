@@ -106,7 +106,7 @@ BuzzHeavier is available as an upload destination and source resolver. Configure
 
 | Tool | Port | Behavior |
 | --- | --- | --- |
-| Main dashboard | `8000` | Persistent authenticated web app |
+| Main dashboard | `8000` | Persistent authenticated web app, disabled when `ENABLE_WEB_UI=false` |
 | Torrent selector | `8001` | Opens only while a torrent waits for file selection |
 | Drive search page | `8002` | Tokenized temporary search result page |
 | Jellyfin | `8003` | Persistent Jellyfin web UI |
@@ -148,6 +148,14 @@ For a web-only setup, keep Telegram command UI disabled:
 
 ```dotenv
 ENABLE_TELEGRAM_UI=false
+ENABLE_WEB_UI=true
+```
+
+For Telegram-only operation, disable the main dashboard and keep the bot UI enabled:
+
+```dotenv
+ENABLE_TELEGRAM_UI=true
+ENABLE_WEB_UI=false
 ```
 
 ### 3. Optional Google Drive Files

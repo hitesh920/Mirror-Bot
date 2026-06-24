@@ -38,6 +38,7 @@ class Config:
     web_port: int
     web_username: str
     web_password: str
+    enable_web_ui: bool
     enable_telegram_ui: bool
 
     download_dir: Path = Path("/app/downloads")
@@ -54,8 +55,11 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         load_dotenv()
-        required = ["LOCAL_DOWNLOAD_ROOT", "WEB_USERNAME", "WEB_PASSWORD"]
+        required = ["LOCAL_DOWNLOAD_ROOT"]
+        enable_web_ui = _bool("ENABLE_WEB_UI", True)
         enable_telegram_ui = _bool("ENABLE_TELEGRAM_UI", True)
+        if enable_web_ui:
+            required.extend(["WEB_USERNAME", "WEB_PASSWORD"])
         if enable_telegram_ui:
             required.extend([
                 "BOT_TOKEN",
@@ -85,5 +89,6 @@ class Config:
             web_port=_int("WEB_PORT", 8000),
             web_username=getenv("WEB_USERNAME", ""),
             web_password=getenv("WEB_PASSWORD", ""),
+            enable_web_ui=enable_web_ui,
             enable_telegram_ui=enable_telegram_ui,
         )

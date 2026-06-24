@@ -716,22 +716,26 @@ async def main() -> None:
     cleanup_abandoned_downloads(config.download_dir, config.local_download_root)
     prepare_local_library(config.local_download_root)
 
-    web_dashboard = WebDashboard(
-        config,
-        manager,
-        background,
-        telegram_client,
-        jellyfin,
-        jellyfin_api,
-        drive_search_pages,
-        drive_share_pages,
-        get_file_explorer,
-        schedule_local_metadata_refresh,
-        schedule_series_promotion,
-        completion_payload,
-        scan_and_prune_jellyfin,
-    )
-    await web_dashboard.start()
+    if config.enable_web_ui:
+        web_dashboard = WebDashboard(
+            config,
+            manager,
+            background,
+            telegram_client,
+            jellyfin,
+            jellyfin_api,
+            drive_search_pages,
+            drive_share_pages,
+            get_file_explorer,
+            schedule_local_metadata_refresh,
+            schedule_series_promotion,
+            completion_payload,
+            scan_and_prune_jellyfin,
+        )
+        await web_dashboard.start()
+    else:
+        web_dashboard = None
+        LOGGER.info("Web dashboard disabled by config")
 
     telegram_started = False
     if app is not None:
@@ -740,7 +744,10 @@ async def main() -> None:
             await app.start()
             telegram_started = True
         except Exception:
-            LOGGER.exception("Telegram UI failed to start; web dashboard remains available")
+            if config.enable_web_ui:
+                LOGGER.exception("Telegram UI failed to start; web dashboard remains available")
+            else:
+                LOGGER.exception("Telegram UI failed to start")
 
     schedule_series_promotion()
     restart_state = await asyncio.to_thread(take_restart_state)
