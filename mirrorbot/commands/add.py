@@ -1,11 +1,10 @@
 """Add command and destination-selection handlers."""
 
-import asyncio
 from html import escape
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.types import Message
 
 from ..app import (
     ADD_USAGE, LOGGER, answer_expired_selection, app, config, destination_buttons,

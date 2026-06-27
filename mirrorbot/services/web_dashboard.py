@@ -5,7 +5,6 @@ import secrets
 import signal
 from pathlib import Path
 from shutil import rmtree
-from time import time
 
 import psutil
 from aiohttp import web
@@ -16,7 +15,7 @@ from ..core.models import AddOptions, Destination, Source, SourceType, Task, Tas
 from ..core.source_detector import detect_source
 from ..downloaders.gdrive import drive_id_from_url
 from .drive_sharing import DriveShareError, build_drive_share
-from .google_drive_delivery import delete_drive_item, drive_item_info, drive_storage_quota, load_credentials, search_drive_items
+from .google_drive_delivery import delete_drive_item, drive_storage_quota, load_credentials, search_drive_items
 from .jellyfin import JellyfinControlError, JellyfinManager
 from .jellyfin_api import JellyfinApi
 from .public_url import public_base_url

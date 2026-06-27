@@ -6,6 +6,12 @@ from pathlib import Path
 from shutil import rmtree
 from urllib.parse import parse_qs, urlparse
 
+from ..core.errors import (
+    TorrentDuplicateError,
+    TorrentEngineError,
+    TorrentMetadataTimeoutError,
+    TorrentRemovedError,
+)
 from ..core.models import Task, TaskPhase
 from ..services.paths import ensure_inside
 from ..services.transfer_guard import ensure_disk_space
@@ -18,7 +24,7 @@ ERROR_STATES = {"error", "missingFiles", "unknown"}
 TORRENT_METADATA_TIMEOUT = 300
 
 
-class DuplicateTorrentError(RuntimeError):
+class DuplicateTorrentError(TorrentDuplicateError):
     pass
 
 
@@ -74,7 +80,7 @@ async def _wait_for_torrent(
                     "This torrent is already active in qBittorrent"
                 )
         await asyncio.sleep(1)
-    raise TimeoutError("qBittorrent did not add the torrent")
+    raise TorrentEngineError("qBittorrent did not add the torrent")
 
 
 async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, list[dict]]:
@@ -83,7 +89,7 @@ async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, l
             raise asyncio.CancelledError()
         torrents = await qb.info(torrent_hash=task.torrent_hash)
         if not torrents:
-            raise RuntimeError("Torrent disappeared while fetching metadata")
+            raise TorrentRemovedError("Torrent disappeared while fetching metadata")
         torrent = torrents[0]
         task.progress = float(torrent.get("progress", 0))
         task.downloaded = int(torrent.get("downloaded", 0))
@@ -94,7 +100,7 @@ async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, l
         if files and torrent.get("state") not in {"metaDL", "checkingResumeData"}:
             return torrent, files
         await asyncio.sleep(1)
-    raise TimeoutError(
+    raise TorrentMetadataTimeoutError(
         "Torrent metadata download timed out after 5 minutes. "
         "The torrent may be dead or unavailable."
     )
@@ -175,7 +181,7 @@ async def download_torrent(
             raise asyncio.CancelledError()
         torrents = await qb.info(torrent_hash=task.torrent_hash)
         if not torrents:
-            raise RuntimeError("Torrent disappeared from qBittorrent")
+            raise TorrentRemovedError("Torrent disappeared from qBittorrent")
         torrent = torrents[0]
         task.progress = float(torrent.get("progress", 0))
         task.downloaded = int(torrent.get("downloaded", 0))
@@ -191,5 +197,5 @@ async def download_torrent(
             LOGGER.info("Task %s: torrent download complete", task.short_id())
             return content_path
         if state in ERROR_STATES:
-            raise RuntimeError(f"qBittorrent entered state: {state}")
+            raise TorrentEngineError(f"qBittorrent entered state: {state}")
         await asyncio.sleep(2)

@@ -9,8 +9,7 @@ from pyrogram.errors import MessageNotModified
 from pyrogram.types import Message
 
 from ..app import (
-    LOGGER, app, config, format_jellyfin_status, jellyfin, jellyfin_api,
-    jellyfin_buttons, jellyfin_server_info, jellyfin_status_text, owner_filter,
+    LOGGER, app, config, format_jellyfin_status, jellyfin, jellyfin_buttons, jellyfin_server_info, jellyfin_status_text, owner_filter,
     scan_and_prune_jellyfin,
 )
 from ..core.logging_config import log_event

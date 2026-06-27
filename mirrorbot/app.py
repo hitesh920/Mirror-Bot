@@ -14,14 +14,11 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from .core.config import Config
 from .core.logging_config import setup_logging
 from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
-from .core.parser import parse_add_text
-from .core.source_detector import detect_source
 from .context import BotContext
 from .downloaders.gdrive import drive_id_from_url
 from .services.status import format_status
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
-    delete_drive_item,
     drive_item_info,
 )
 from .services.drive_search_pages import DriveSearchPages

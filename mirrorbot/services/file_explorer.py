@@ -1,5 +1,4 @@
 import asyncio
-import html
 import logging
 import secrets
 import shutil
@@ -162,29 +161,36 @@ class FileExplorer:
         if action == "mkdir":
             parent = self._path(data.get("path", ""))
             target = self._path((parent.relative_to(self.root) / self._name(data.get("name", ""))).as_posix(), False)
-            if target.exists(): raise web.HTTPConflict(text="Destination already exists")
+            if target.exists():
+                raise web.HTTPConflict(text="Destination already exists")
             target.mkdir()
             apply_media_permissions(self.root, target)
         elif action == "rename":
             source = self._path(data.get("source", ""))
-            if source == self.root: raise web.HTTPForbidden(text="Cannot rename downloads root")
+            if source == self.root:
+                raise web.HTTPForbidden(text="Cannot rename downloads root")
             target = self._path((source.parent.relative_to(self.root) / self._name(data.get("name", ""))).as_posix(), False)
-            if target.exists(): raise web.HTTPConflict(text="Destination already exists")
+            if target.exists():
+                raise web.HTTPConflict(text="Destination already exists")
             source.rename(target)
             apply_media_permissions(self.root, target)
         elif action in {"copy", "move"}:
             destination = self._path(data.get("destination", ""))
-            if not destination.is_dir(): raise web.HTTPBadRequest(text="Destination is not a folder")
+            if not destination.is_dir():
+                raise web.HTTPBadRequest(text="Destination is not a folder")
             sources = [self._path(relative) for relative in data.get("sources", [])]
-            if not sources: raise web.HTTPBadRequest(text="Select at least one item")
+            if not sources:
+                raise web.HTTPBadRequest(text="Select at least one item")
             targets = [self._path((destination.relative_to(self.root) / source.name).as_posix(), False) for source in sources]
             if len(set(targets)) != len(targets):
                 raise web.HTTPConflict(text="Selected items have duplicate destination names")
             for source, target in zip(sources, targets):
-                if source == self.root: raise web.HTTPForbidden(text="Cannot copy or move downloads root")
+                if source == self.root:
+                    raise web.HTTPForbidden(text="Cannot copy or move downloads root")
                 if source.is_dir() and (destination == source or source in destination.parents):
                     raise web.HTTPBadRequest(text=f"Cannot place {source.name} inside itself")
-                if target.exists(): raise web.HTTPConflict(text=f"Destination already exists: {source.name}")
+                if target.exists():
+                    raise web.HTTPConflict(text=f"Destination already exists: {source.name}")
             if action == "copy":
                 ensure_disk_space(destination, sum(path_size(source) for source in sources))
             for source, target in zip(sources, targets):
@@ -195,14 +201,17 @@ class FileExplorer:
                 apply_media_permissions(self.root, target)
         elif action == "delete":
             targets = [self._path(relative) for relative in data.get("sources", [])]
-            if not targets: raise web.HTTPBadRequest(text="Select at least one item")
-            if self.root in targets: raise web.HTTPForbidden(text="Cannot delete downloads root")
+            if not targets:
+                raise web.HTTPBadRequest(text="Select at least one item")
+            if self.root in targets:
+                raise web.HTTPForbidden(text="Cannot delete downloads root")
             for target in targets:
                 shutil.rmtree(target) if target.is_dir() else target.unlink()
             await self.scan_callback()
         elif action == "upload":
             paths = [self._path(relative) for relative in data.get("sources", [])]
-            if not paths: raise web.HTTPBadRequest(text="Select at least one item")
+            if not paths:
+                raise web.HTTPBadRequest(text="Select at least one item")
             destination = data.get("destination", "")
             if destination not in {"telegram", "google_drive", "buzzheavier"}:
                 raise web.HTTPBadRequest(text="Invalid upload destination")

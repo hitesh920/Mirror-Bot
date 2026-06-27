@@ -3,6 +3,12 @@ from uuid import uuid4
 
 import pytest
 
+from mirrorbot.core.errors import (
+    TorrentDuplicateError,
+    TorrentEngineError,
+    TorrentMetadataTimeoutError,
+    TorrentRemovedError,
+)
 from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
 from mirrorbot.core.parser import parse_add_text
 from mirrorbot.core.source_detector import detect_source
@@ -83,3 +89,10 @@ def test_web_destination_validation_accepts_aliases():
 
     with pytest.raises(Exception):
         dashboard.destination_from_form("")
+
+
+def test_torrent_failures_have_specific_categories():
+    assert TorrentMetadataTimeoutError.category == "torrent_metadata_timeout"
+    assert TorrentRemovedError.category == "torrent_removed"
+    assert TorrentDuplicateError.category == "torrent_duplicate"
+    assert TorrentEngineError.category == "torrent_engine"

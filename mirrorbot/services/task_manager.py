@@ -19,7 +19,7 @@ from ..downloaders.direct import download_direct
 from ..downloaders.gdrive import download_gdrive
 from ..downloaders.qbittorrent import QBittorrentClient
 from ..downloaders.telegram import download_telegram_file
-from ..downloaders.torrent import DuplicateTorrentError, download_torrent
+from ..downloaders.torrent import download_torrent
 from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
 from ..resolvers import resolve_source
@@ -259,18 +259,6 @@ class TaskManager:
                 task=task.short_id(),
                 phase=task.phase.value,
                 error_category="processing",
-                result=exc,
-            )
-        except DuplicateTorrentError as exc:
-            task.transition(TaskPhase.ERROR)
-            task.error = str(exc)
-            log_event(
-                LOGGER,
-                logging.WARNING,
-                "task.failed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                error_category="engine",
                 result=exc,
             )
         except Exception as exc:

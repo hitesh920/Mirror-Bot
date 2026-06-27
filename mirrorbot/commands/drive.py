@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import secrets
 from html import escape
 
 from pyrogram import filters
@@ -11,14 +10,13 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..app import (
     LOGGER, app, config, delete_google_drive_link, drive_search_pages, owner_filter,
-    pending_drive_delete_chats, pending_drive_delete_items,
-    drive_share_pages, start_drive_delete_expiry, take_pending_drive_delete,
+    pending_drive_delete_chats, drive_share_pages, take_pending_drive_delete,
 )
 from ..downloaders.gdrive import drive_id_from_url
 from ..core.logging_config import log_event
 from ..services.drive_sharing import DriveShareError, build_drive_share
 from ..services.google_drive_delivery import (
-    delete_drive_item, drive_item_info, drive_storage_quota, load_credentials,
+    delete_drive_item, drive_storage_quota, load_credentials,
     search_drive_items,
 )
 from ..services.status import human_size

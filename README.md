@@ -352,6 +352,28 @@ The production Docker build compiles the React dashboard with Vite and serves th
 - Temporary pages are token-protected but anyone with the URL can access them until expiry.
 - The bot mounts the Docker socket so it can manage only the configured Jellyfin container; deploy it only on infrastructure you control.
 
+## Development Checks
+
+Production containers keep dependencies lean and do not include pytest. For code changes, run checks from a local or VPS development environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest
+python -m compileall mirrorbot
+cd web && npm ci && npm run build
+```
+
+If the VPS host does not have `python3-venv`, run tests in a disposable container instead:
+
+```bash
+docker compose run --rm --no-deps -v "$PWD:/app" -w /app bot \
+  sh -lc 'pip install -q -r requirements-dev.txt && PYTHONPATH=/app pytest -q'
+```
+
+Runtime files such as `.env`, Google OAuth files, logs, downloads, sessions, and generated dashboard assets are intentionally ignored by git. Keep those on the server only and never commit them.
+
 ## License
 
 No license has been declared yet. Treat this repository as private/proprietary unless a license is added.
