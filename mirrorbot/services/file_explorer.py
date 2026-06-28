@@ -146,6 +146,24 @@ class FileExplorer:
         LOGGER.info("File explorer download token=%s path=%s", session.token[:8], target)
         return web.FileResponse(target)
 
+    def _schedule_scan(self, token: str, reason: str) -> None:
+        async def run_scan() -> None:
+            try:
+                await self.scan_callback()
+                LOGGER.info(
+                    "File explorer background scan complete token=%s reason=%s",
+                    token[:8],
+                    reason,
+                )
+            except Exception:
+                LOGGER.exception(
+                    "File explorer background scan failed token=%s reason=%s",
+                    token[:8],
+                    reason,
+                )
+
+        asyncio.create_task(run_scan())
+
     async def _action(self, request: web.Request) -> web.Response:
         session = self._session(request)
         action = request.match_info["action"]
@@ -207,7 +225,7 @@ class FileExplorer:
                 raise web.HTTPForbidden(text="Cannot delete downloads root")
             for target in targets:
                 shutil.rmtree(target) if target.is_dir() else target.unlink()
-            await self.scan_callback()
+            self._schedule_scan(session.token, "delete")
         elif action == "upload":
             paths = [self._path(relative) for relative in data.get("sources", [])]
             if not paths:
@@ -307,16 +325,16 @@ function up(){if(path)load(path.split('/').slice(0,-1).join('/'))}
 function renderBreadcrumbs(){const crumbs=document.querySelector('#crumbs');const parts=path?path.split('/').filter(Boolean):[];let acc='';let html=`<button type="button" onclick="load('')">Downloads</button>`;for(const part of parts){acc=acc?`${acc}/${part}`:part;html+=`<span class="sep">/</span><button type="button" onclick="load(decodeURIComponent('${enc(acc)}'))">${esc(part)}</button>`}crumbs.innerHTML=html;document.querySelector('#parentBtn').disabled=!path}
 function clearSelection(){document.querySelectorAll('.pick').forEach(x=>x.checked=false);updateSelection()}
 function updateSelection(){const count=selected().length;document.querySelector('#selectedCount').textContent=`${count} selected`;document.querySelector('#selectionBar').classList.toggle('active',count>0);document.querySelector('#defaultTools').classList.toggle('hidden',count>0);document.querySelector('#renameBtn').disabled=count!==1;const picks=[...document.querySelectorAll('.pick')];document.querySelector('#all').checked=picks.length>0&&picks.every(x=>x.checked);document.querySelectorAll('tr.row').forEach(row=>{const pick=row.querySelector('.pick');row.classList.toggle('selected',!!pick&&pick.checked)})}
-async function load(p=path){let r=await fetch(`/local/${token}/api/list?path=${encodeURIComponent(p)}`);if(!r.ok){document.body.innerHTML='<main><h2>Session expired</h2></main>';return}let d=await r.json();path=d.path;expiresAt=d.expiresAt;asked=false;document.querySelector('#count').textContent=`${d.items.length} item${d.items.length===1?'':'s'}`;renderBreadcrumbs();const parent=path?`<tr class="row parent-row"><td class="cell check"></td><td class="cell"><div class="file-main"><span class="file-icon folder"></span><div class="file-name"><button type="button" onclick="up()">Parent folder</button><div class="file-sub">Go up one level</div></div></div></td><td class="cell type">Folder</td><td class="cell size">-</td><td class="cell actions"></td></tr>`:'';const items=d.items.map(i=>`<tr class="row"><td class="cell check"><input class="pick" type="checkbox" value="${esc(i.path)}" onchange="updateSelection()"></td><td class="cell"><div class="file-main"><span class="file-icon ${i.type==='folder'?'folder':'file'}"></span><div class="file-name"><button type="button" onclick="openItem(decodeURIComponent('${enc(i.path)}'),'${i.type}')">${esc(i.name)}</button><div class="file-sub">${esc(i.path)}</div></div></div></td><td class="cell type">${i.type}</td><td class="cell size">${i.size}</td><td class="cell actions">${i.type==='file'?`<a class="download" href="/local/${token}/download?path=${encodeURIComponent(i.path)}">Download</a>`:''}</td></tr>`).join('');document.querySelector('#rows').innerHTML=parent+(items||`<tr><td class="empty-state" colspan="5"><strong>This folder is empty</strong>Create a folder or move files here.</td></tr>`);document.querySelector('#all').checked=false;updateSelection()}
+async function load(p=path){let r=await fetch(`/local/${token}/api/list?path=${encodeURIComponent(p)}&_=${Date.now()}`,{cache:'no-store'});if(!r.ok){document.body.innerHTML='<main><h2>Session expired</h2></main>';return}let d=await r.json();path=d.path;expiresAt=d.expiresAt;asked=false;document.querySelector('#count').textContent=`${d.items.length} item${d.items.length===1?'':'s'}`;renderBreadcrumbs();const parent=path?`<tr class="row parent-row"><td class="cell check"></td><td class="cell"><div class="file-main"><span class="file-icon folder"></span><div class="file-name"><button type="button" onclick="up()">Parent folder</button><div class="file-sub">Go up one level</div></div></div></td><td class="cell type">Folder</td><td class="cell size">-</td><td class="cell actions"></td></tr>`:'';const items=d.items.map(i=>`<tr class="row"><td class="cell check"><input class="pick" type="checkbox" value="${esc(i.path)}" onchange="updateSelection()"></td><td class="cell"><div class="file-main"><span class="file-icon ${i.type==='folder'?'folder':'file'}"></span><div class="file-name"><button type="button" onclick="openItem(decodeURIComponent('${enc(i.path)}'),'${i.type}')">${esc(i.name)}</button><div class="file-sub">${esc(i.path)}</div></div></div></td><td class="cell type">${i.type}</td><td class="cell size">${i.size}</td><td class="cell actions">${i.type==='file'?`<a class="download" href="/local/${token}/download?path=${encodeURIComponent(i.path)}">Download</a>`:''}</td></tr>`).join('');document.querySelector('#rows').innerHTML=parent+(items||`<tr><td class="empty-state" colspan="5"><strong>This folder is empty</strong>Create a folder or move files here.</td></tr>`);document.querySelector('#all').checked=false;updateSelection()}
 function openItem(p,t){if(t==='folder')load(p)}
 async function mkdir(){let name=prompt('Folder name');if(name)await act('mkdir',{path,name})}
 async function renameOne(){let s=selected();if(s.length!==1)return toast('Select one item');let name=prompt('New name',s[0].split('/').pop());if(name)await act('rename',{source:s[0],name})}
 async function copyMove(a){let s=selected();if(!s.length)return toast('Select items');let destination=prompt('Destination path under downloads',path);if(destination!==null)await act(a,{sources:s,destination})}
-async function removeItems(){let s=selected();if(!s.length)return toast('Select items');if(confirm('Permanently delete?\n'+s.join('\n')))await act('delete',{sources:s})}
+async function removeItems(){let s=selected();if(!s.length)return toast('Select items');if(confirm('Permanently delete?\n'+s.join('\n'))){toast('Deleting...');await act('delete',{sources:s})}}
 function destinationLabel(destination){return destination==='telegram'?'Telegram':destination==='google_drive'?'Google Drive':'BuzzHeavier'}
 async function uploadSelected(){let destination=document.querySelector('#uploadDest').value;let s=selected();if(!s.length)return toast('Select items');await act('upload',{sources:s,destination});toast(`${destinationLabel(destination)} upload tasks started`)}
 async function scan(){await act('scan');toast('Jellyfin scan requested')}
-async function act(a,d={}){try{await api(a,d);await load();clearSelection()}catch(e){toast(e.message)}}
+async function act(a,d={}){try{await api(a,d);clearSelection();await load(path);if(a==='delete')toast('Deleted')}catch(e){toast(e.message)}}
 async function extendSession(){let d=await api('extend');expiresAt=d.expiresAt;asked=false;document.querySelector('#extend').close();toast('Session extended')}
 document.querySelector('#all').onchange=e=>{document.querySelectorAll('.pick').forEach(x=>x.checked=e.target.checked);updateSelection()};
 setInterval(()=>{let n=Math.max(0,Math.ceil(expiresAt-Date.now()/1000));document.querySelector('#timer').textContent=`Expires in ${Math.floor(n/60)}:${String(n%60).padStart(2,'0')}`;if(n<=60&&!asked){asked=true;document.querySelector('#extend').showModal()}if(!n){window.close();document.body.innerHTML='<main><h2>Session expired</h2></main>'}},1000);load();
