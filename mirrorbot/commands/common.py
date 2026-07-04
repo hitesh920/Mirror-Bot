@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from html import escape
 from pathlib import Path
 
@@ -22,6 +23,23 @@ from ..services.speedtest import SpeedtestError, run_speedtest
 
 
 speedtest_lock = asyncio.Lock()
+
+
+def format_uptime(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts[:3])
 
 
 @app.on_message(filters.command("start") & owner_filter)
@@ -54,8 +72,11 @@ async def status(_, message: Message):
 async def stats(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.stats", result="requested")
     disk = psutil.disk_usage(str(config.local_download_root))
+    process = psutil.Process(os.getpid())
+    uptime = format_uptime(int(time.time() - process.create_time()))
     await message.reply(
         "Bot stats:\n"
+        f"Uptime: {uptime}\n"
         f"CPU: {psutil.cpu_percent()}%\n"
         f"RAM: {psutil.virtual_memory().percent}%\n"
         f"Local free: {disk.free // (1024 ** 3)} GiB\n"
