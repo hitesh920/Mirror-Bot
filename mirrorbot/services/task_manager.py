@@ -136,9 +136,27 @@ class TaskManager:
                 task.current_file = downloaded.name
                 if task.options.extract:
                     self._start_processing_phase(task, TaskPhase.EXTRACTING, downloaded)
-                    downloaded = await extract_path(
-                        downloaded, task, task.options.extract_password
-                    )
+                    try:
+                        downloaded = await extract_path(
+                            downloaded, task, task.options.extract_password
+                        )
+                    except (
+                        ArchiveCorruptError,
+                        ArchivePasswordError,
+                        ArchiveUnsupportedError,
+                    ):
+                        raise
+                    except RuntimeError as exc:
+                        LOGGER.warning(
+                            "Task %s: extraction failed, falling back to original file: %s",
+                            task.short_id(),
+                            exc,
+                        )
+                        task.current_file = downloaded.name
+                        task.progress = 0
+                        task.downloaded = 0
+                        task.speed = 0
+                        task.eta = 0
                     self._raise_if_cancelled(task)
                 if task.options.zip:
                     self._start_processing_phase(task, TaskPhase.ARCHIVING, downloaded)
