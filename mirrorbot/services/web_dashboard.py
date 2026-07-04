@@ -10,6 +10,7 @@ import psutil
 from aiohttp import web
 
 from ..core.config import Config
+from ..core.errors import DiskSpaceError
 from ..core.logging_config import create_log_export, log_event
 from ..core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
 from ..core.source_detector import detect_source
@@ -22,6 +23,7 @@ from .public_url import public_base_url
 from .speedtest import SpeedtestError, run_speedtest
 from .status import human_size
 from .task_manager import TaskManager
+from .transfer_guard import ensure_disk_space
 from .web.auth import SESSION_COOKIE, credentials_match, is_public_path, new_session_token, set_session_cookie
 from .web.routes import register_dashboard_routes
 from .web.serializers import task_json
@@ -248,6 +250,7 @@ class WebDashboard:
                             chunk = await part.read_chunk(1024 * 1024)
                             if not chunk:
                                 break
+                            ensure_disk_space(target, len(chunk))
                             await asyncio.to_thread(output.write, chunk)
                     saved_files.append(target)
                 else:
@@ -265,6 +268,9 @@ class WebDashboard:
             self.spawn_transfer(task)
             log_event(LOGGER, logging.INFO, "web.upload", task=task.short_id(), destination=destination.value, files=len(saved_files))
             return web.json_response({"ok": True, "task": task.short_id()})
+        except DiskSpaceError as exc:
+            rmtree(staging, ignore_errors=True)
+            raise web.HTTPInsufficientStorage(text=str(exc))
         except Exception:
             rmtree(staging, ignore_errors=True)
             raise
@@ -319,7 +325,7 @@ class WebDashboard:
         return web.json_response({"ok": True, "result": str(result), "state": status.state, "health": status.health, "running": status.running})
 
     async def api_local(self, request: web.Request) -> web.Response:
-        url = await self.file_explorer_getter().create(0)
+        url = await self.file_explorer_getter().create(self.config.owner_id)
         return web.json_response({"ok": True, "url": url})
 
     async def api_drive_search(self, request: web.Request) -> web.Response:

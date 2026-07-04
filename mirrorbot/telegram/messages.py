@@ -79,6 +79,16 @@ def result_list(title: str, items: list[str], links: list[str] | None = None) ->
     return "\n".join(lines)
 
 
+def warning_list(items: list[str]) -> str:
+    if not items:
+        return ""
+    lines = ["<b>Warnings:</b>"]
+    lines.extend(f"<code>{escape(item[:160])}</code>" for item in items[:5])
+    if len(items) > 5:
+        lines.append(f"<i>...and {len(items) - 5} more</i>")
+    return "\n".join(lines)
+
+
 def completion_message(task) -> str:
     name = escape(task.result_name or task.name or task.source.type.value)
     if task.destination == Destination.TELEGRAM:
@@ -88,6 +98,7 @@ def completion_message(task) -> str:
             "<b>Uploaded to:</b> <code>Telegram</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             result_list("Uploaded files", task.result_files, task.result_links),
+            warning_list(task.processing_warnings),
         ]
     elif task.destination == Destination.GOOGLE_DRIVE:
         sections = [
@@ -96,6 +107,7 @@ def completion_message(task) -> str:
             "<b>Uploaded to:</b> <code>Google Drive</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
+            warning_list(task.processing_warnings),
         ]
     elif task.destination == Destination.BUZZHEAVIER:
         sections = [
@@ -104,6 +116,7 @@ def completion_message(task) -> str:
             "<b>Uploaded to:</b> <code>BuzzHeavier</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             result_list("BuzzHeavier links", task.result_files, task.result_links),
+            warning_list(task.processing_warnings),
         ]
     else:
         local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
@@ -115,6 +128,7 @@ def completion_message(task) -> str:
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
             result_list("Files", task.result_files),
             result_list("Folders", task.result_folders),
+            warning_list(task.processing_warnings),
         ]
     return "\n".join(section for section in sections if section)
 
@@ -142,4 +156,5 @@ def completion_payload(task, jellyfin_url: str) -> dict:
         "folders": task.result_folders,
         "links": links,
         "path": str(task.result_path or ""),
+        "warnings": task.processing_warnings,
     }

@@ -92,6 +92,7 @@ class Task:
     result_files: list[str] = field(default_factory=list)
     result_folders: list[str] = field(default_factory=list)
     result_links: list[str] = field(default_factory=list)
+    processing_warnings: list[str] = field(default_factory=list)
     torrent_hash: str = ""
     selection_url: str = ""
     created_at: float = field(default_factory=time)

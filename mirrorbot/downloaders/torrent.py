@@ -135,10 +135,10 @@ async def download_torrent(
     task.size = sum(file.get("size", 0) for file in files)
 
     selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
-    while (
-        selector.selection is None
-        or selector.selection.torrent_hash != task.torrent_hash
-    ):
+    selection = selector.get(task.torrent_hash)
+    while selection is None:
+        if selection_job.done():
+            await selection_job
         if task.cancelled:
             selection_job.cancel()
             try:
@@ -148,9 +148,8 @@ async def download_torrent(
             await qb.delete(task.torrent_hash, True)
             raise asyncio.CancelledError()
         await asyncio.sleep(0.2)
-    task.selection_url = (
-        f"{selector.public_base_url}/select/{selector.selection.token}"
-    )
+        selection = selector.get(task.torrent_hash)
+    task.selection_url = f"{selector.public_base_url}/select/{selection.token}"
     try:
         selector_message = await on_selector_ready(task) if on_selector_ready else None
     except Exception:

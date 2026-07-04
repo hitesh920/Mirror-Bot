@@ -35,6 +35,7 @@ from ..core.errors import TaskFailure
 from ..core.logging_config import log_event
 
 LOGGER = logging.getLogger(__name__)
+MAX_TERMINAL_TASKS = 200
 
 
 class TaskManager:
@@ -147,6 +148,9 @@ class TaskManager:
                     ):
                         raise
                     except RuntimeError as exc:
+                        task.processing_warnings.append(
+                            "Extraction failed, so the original file was delivered."
+                        )
                         LOGGER.warning(
                             "Task %s: extraction failed, falling back to original file: %s",
                             task.short_id(),
@@ -325,6 +329,7 @@ class TaskManager:
                 task=task.short_id(),
                 phase=task.phase.value,
             )
+            self._prune_terminal_tasks()
         return task
 
     async def run_local_upload(self, task: Task, path: Path, telegram_client) -> Task:
@@ -428,6 +433,7 @@ class TaskManager:
                 task=task.short_id(),
                 phase=task.phase.value,
             )
+            self._prune_terminal_tasks()
         return task
 
     async def _download(
@@ -512,6 +518,18 @@ class TaskManager:
 
     def active_tasks(self) -> list[Task]:
         return [task for task in self.tasks.values() if task.phase not in {TaskPhase.COMPLETE, TaskPhase.CANCELLED, TaskPhase.ERROR}]
+
+    def terminal_tasks(self) -> list[Task]:
+        return [task for task in self.tasks.values() if task.terminal]
+
+    def _prune_terminal_tasks(self) -> None:
+        terminal = sorted(
+            self.terminal_tasks(),
+            key=lambda task: task.created_at,
+            reverse=True,
+        )
+        for task in terminal[MAX_TERMINAL_TASKS:]:
+            self.tasks.pop(task.id, None)
 
     @staticmethod
     def _record_result_manifest(task: Task, path: Path) -> None:

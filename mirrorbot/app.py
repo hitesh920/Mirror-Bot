@@ -653,6 +653,9 @@ async def explorer_upload(
     destination_name: str,
 ) -> None:
     destination = Destination(destination_name)
+    can_notify_telegram = app is not None and chat_id > 0
+    if destination == Destination.TELEGRAM and not can_notify_telegram:
+        raise RuntimeError("Telegram is unavailable for this file explorer session")
     for path in paths:
         task = manager.create_task(
             config.owner_id,
@@ -665,6 +668,8 @@ async def explorer_upload(
 
         async def runner(upload_task=task, upload_path=path):
             await manager.run_local_upload(upload_task, upload_path, app)
+            if not can_notify_telegram:
+                return
             if upload_task.phase == TaskPhase.COMPLETE:
                 await app.send_message(
                     chat_id,
@@ -678,7 +683,8 @@ async def explorer_upload(
             await update_status_message(chat_id)
 
         manager.spawn(runner(), name="transfer-task")
-    await send_live_status(chat_id)
+    if can_notify_telegram:
+        await send_live_status(chat_id)
 
 def get_file_explorer() -> FileExplorer:
     global file_explorer

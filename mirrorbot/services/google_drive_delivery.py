@@ -8,6 +8,7 @@ from time import monotonic
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from ..core.config import Config
@@ -17,6 +18,8 @@ from ..downloaders.process import path_size
 LOGGER = logging.getLogger(__name__)
 DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+UPLOAD_RETRY_STATUSES = {429, 500, 502, 503, 504}
+UPLOAD_RETRIES = 3
 
 
 def load_credentials(config: Config) -> Credentials:
@@ -40,6 +43,12 @@ def drive_service(config: Config):
         credentials=load_credentials(config),
         cache_discovery=False,
     )
+
+
+def retryable_upload_error(exc: Exception) -> bool:
+    if isinstance(exc, HttpError):
+        return int(getattr(exc.resp, "status", 0) or 0) in UPLOAD_RETRY_STATUSES
+    return isinstance(exc, (OSError, TimeoutError))
 
 
 def drive_storage_quota(config: Config) -> dict:
@@ -273,6 +282,17 @@ class GoogleDriveUploader:
                     exc_info=True,
                 )
 
+    async def cleanup_created(self, reason: str) -> None:
+        if not self.created_ids:
+            return
+        LOGGER.info(
+            "Task %s: cleaning partial Google Drive upload ids=%s reason=%s",
+            self.task.short_id(),
+            len(self.created_ids),
+            reason,
+        )
+        await asyncio.to_thread(self.delete_created)
+
     async def upload(self) -> None:
         if not self.config.google_drive_folder_id:
             raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured")
@@ -330,7 +350,10 @@ class GoogleDriveUploader:
                 self.total_size,
             )
         except asyncio.CancelledError:
-            await asyncio.to_thread(self.delete_created)
+            await self.cleanup_created("cancelled")
+            raise
+        except Exception:
+            await self.cleanup_created("failed")
             raise
 
     async def upload_folder(self, folder: Path, parent_id: str) -> None:
@@ -381,10 +404,29 @@ class GoogleDriveUploader:
         )
         response = None
         file_size = file_path.stat().st_size
+        retry_attempt = 0
         while response is None:
             if self.task.cancelled:
                 raise asyncio.CancelledError()
-            status, response = await asyncio.to_thread(request.next_chunk)
+            try:
+                status, response = await asyncio.to_thread(request.next_chunk)
+                retry_attempt = 0
+            except Exception as exc:
+                if (
+                    retryable_upload_error(exc)
+                    and retry_attempt < UPLOAD_RETRIES
+                    and not self.task.cancelled
+                ):
+                    retry_attempt += 1
+                    LOGGER.warning(
+                        "Task %s: retrying Google Drive upload chunk attempt=%s file=%r",
+                        self.task.short_id(),
+                        retry_attempt,
+                        display_name,
+                    )
+                    await asyncio.sleep(min(10, 2**retry_attempt))
+                    continue
+                raise
             current = int(file_size * status.progress()) if status else file_size
             self.update_progress(current)
         file_id = response["id"]

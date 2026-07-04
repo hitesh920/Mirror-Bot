@@ -565,6 +565,7 @@ function TaskList({ tasks, compact = false, refresh, empty }) {
 function TaskCard({ task, compact, refresh }) {
   const progress = task.progress ?? 0;
   const links = task.result?.links || [];
+  const warnings = task.warnings || task.result?.warnings || [];
   const cancel = async () => {
     await api(`/api/cancel/${task.id}`, { method: "POST" });
     refresh?.();
@@ -595,6 +596,13 @@ function TaskCard({ task, compact, refresh }) {
         </div>
       )}
       {task.error && <pre>{task.error}</pre>}
+      {Boolean(warnings.length) && (
+        <div className="task-warning">
+          {warnings.slice(0, 3).map((warning, index) => (
+            <span key={`${warning}-${index}`}>{warning}</span>
+          ))}
+        </div>
+      )}
       <div className="task-actions">
         {task.selection_url && !task.terminal && <a className="button-link" href={appUrl(task.selection_url)} target="_blank" rel="noreferrer">Selector <ExternalLink size={14} /></a>}
         {!task.terminal && <button className="danger small-button" type="button" onClick={cancel}>Cancel</button>}

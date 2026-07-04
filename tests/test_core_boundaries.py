@@ -1,7 +1,12 @@
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiohttp import web
+from aiohttp.client_exceptions import ClientResponseError
 
 from mirrorbot.core.errors import (
     NetworkTimeoutError,
@@ -13,6 +18,11 @@ from mirrorbot.core.errors import (
 from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
 from mirrorbot.core.parser import parse_add_text
 from mirrorbot.core.source_detector import detect_source
+from mirrorbot.downloaders.direct import retryable_direct_error
+from mirrorbot.downloaders.torrent_selector import TorrentSelector
+from mirrorbot.services import google_drive_delivery as gdrive_delivery
+from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
+from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.web.auth import credentials_match, is_public_path
 from mirrorbot.services.web_dashboard import WebDashboard
 from mirrorbot.telegram.state import ExpiringStore
@@ -101,3 +111,109 @@ def test_torrent_failures_have_specific_categories():
 
 def test_network_timeout_has_specific_category():
     assert NetworkTimeoutError.category == "network_timeout"
+
+
+def test_direct_retry_classifier():
+    assert retryable_direct_error(NetworkTimeoutError("timeout"))
+    assert retryable_direct_error(
+        ClientResponseError(None, (), status=503, message="temporary")
+    )
+    assert not retryable_direct_error(
+        ClientResponseError(None, (), status=404, message="missing")
+    )
+
+
+@pytest.mark.asyncio
+async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypatch):
+    source = tmp_path / "file.bin"
+    source.write_bytes(b"data")
+    task = make_task()
+    task.destination = Destination.GOOGLE_DRIVE
+
+    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(google_drive_folder_id="root")
+    uploader.service = object()
+    uploader.created_ids = ["created-file"]
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded_base = 0
+    uploader.started = 1
+    uploader.upload_file = AsyncMock(side_effect=RuntimeError("network failed"))
+    uploader.cleanup_created = AsyncMock()
+    monkeypatch.setattr(
+        gdrive_delivery,
+        "unique_drive_name",
+        lambda _service, _parent_id, name: name,
+    )
+
+    with pytest.raises(RuntimeError, match="network failed"):
+        await uploader.upload()
+
+    uploader.cleanup_created.assert_awaited_once_with("failed")
+
+
+@pytest.mark.asyncio
+async def test_torrent_selector_tracks_multiple_pending_selections():
+    selector = TorrentSelector(object(), "http://selector", 8001, 5)
+    selector._start_server = AsyncMock()
+    selector._stop_server = AsyncMock()
+
+    first = asyncio.create_task(selector.select("hash-one", [{"index": 0, "name": "a.bin"}]))
+    second = asyncio.create_task(selector.select("hash-two", [{"index": 0, "name": "b.bin"}]))
+
+    for _ in range(20):
+        if selector.get("hash-one") and selector.get("hash-two"):
+            break
+        await asyncio.sleep(0.01)
+
+    first_selection = selector.get("hash-one")
+    second_selection = selector.get("hash-two")
+    assert first_selection is not None
+    assert second_selection is not None
+    assert first_selection.token != second_selection.token
+
+    first_selection.submitted.set()
+    second_selection.submitted.set()
+
+    assert await first == f"http://selector/select/{first_selection.token}"
+    assert await second == f"http://selector/select/{second_selection.token}"
+    assert selector.get("hash-one") is None
+    assert selector.get("hash-two") is None
+    selector._stop_server.assert_awaited_once()
+
+
+def test_task_manager_prunes_old_terminal_tasks():
+    manager = TaskManager.__new__(TaskManager)
+    manager.tasks = {}
+    for index in range(MAX_TERMINAL_TASKS + 5):
+        task = make_task()
+        task.created_at = index
+        task.transition(TaskPhase.COMPLETE)
+        manager.tasks[task.id] = task
+
+    manager._prune_terminal_tasks()
+
+    assert len(manager.tasks) == MAX_TERMINAL_TASKS
+    assert min(task.created_at for task in manager.tasks.values()) == 5
+
+
+@pytest.mark.asyncio
+async def test_dashboard_local_explorer_uses_owner_chat_id():
+    class Explorer:
+        def __init__(self):
+            self.chat_id = None
+
+        async def create(self, chat_id):
+            self.chat_id = chat_id
+            return "http://example.local/local/token"
+
+    explorer = Explorer()
+    dashboard = WebDashboard.__new__(WebDashboard)
+    dashboard.config = SimpleNamespace(owner_id=12345)
+    dashboard.file_explorer_getter = lambda: explorer
+
+    response = await dashboard.api_local(None)
+
+    assert isinstance(response, web.Response)
+    assert explorer.chat_id == 12345

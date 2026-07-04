@@ -2,10 +2,12 @@ import asyncio
 import logging
 from email.message import Message
 from pathlib import Path
+from shutil import rmtree
 from time import monotonic
 from urllib.parse import unquote, urlparse
 
 import aiohttp
+import aiofiles
 
 from ..core.errors import NetworkTimeoutError
 from ..core.models import Task
@@ -15,6 +17,8 @@ from ..services.transfer_guard import ensure_disk_space
 LOGGER = logging.getLogger(__name__)
 
 DIRECT_DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=60, sock_read=600)
+DIRECT_DOWNLOAD_RETRIES = 2
+RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 
 def filename_from_url(url: str) -> str:
@@ -35,10 +39,48 @@ def _network_timeout_error() -> NetworkTimeoutError:
     return NetworkTimeoutError("Network read timed out while downloading")
 
 
+def retryable_direct_error(exc: Exception) -> bool:
+    if isinstance(exc, NetworkTimeoutError):
+        return True
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return exc.status in RETRYABLE_HTTP_STATUSES
+    return isinstance(exc, (aiohttp.ClientError, OSError, TimeoutError))
+
+
 async def download_direct(task: Task) -> Path:
     collection = task.source.metadata.get("collection")
     if isinstance(collection, ResolvedCollection):
         return await download_collection(task, collection)
+    return await download_single_direct_with_retries(task)
+
+
+async def download_single_direct_with_retries(task: Task) -> Path:
+    last_error: Exception | None = None
+    for attempt in range(1, DIRECT_DOWNLOAD_RETRIES + 2):
+        if attempt > 1:
+            task.downloaded = 0
+            task.progress = 0
+            task.speed = 0
+            task.eta = 0
+            rmtree(task.work_dir, ignore_errors=True)
+            LOGGER.warning(
+                "Task %s: retrying direct download attempt=%s",
+                task.short_id(),
+                attempt - 1,
+            )
+            await asyncio.sleep(min(10, 2 ** (attempt - 1)))
+        try:
+            return await download_single_direct(task)
+        except Exception as exc:
+            if not retryable_direct_error(exc) or attempt > DIRECT_DOWNLOAD_RETRIES:
+                raise
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise RuntimeError("Direct download failed")
+
+
+async def download_single_direct(task: Task) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
     original_filename = filename_from_url(task.source.value)
     requested_name = safe_name(task.options.name) if task.options.name else ""
@@ -68,12 +110,12 @@ async def download_direct(task: Task) -> Path:
             task.size = total
             ensure_disk_space(target, total)
             started = monotonic()
-            with target.open("wb") as file:
+            async with aiofiles.open(target, "wb") as file:
                 try:
                     async for chunk in response.content.iter_chunked(1024 * 512):
                         if task.cancelled:
                             raise asyncio.CancelledError()
-                        file.write(chunk)
+                        await file.write(chunk)
                         task.downloaded += len(chunk)
                         elapsed = monotonic() - started
                         task.speed = int(task.downloaded / elapsed) if elapsed else 0
@@ -137,12 +179,12 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
                 allow_redirects=True,
             ) as response:
                 response.raise_for_status()
-                with target.open("wb") as file:
+                async with aiofiles.open(target, "wb") as file:
                     try:
                         async for chunk in response.content.iter_chunked(1024 * 512):
                             if task.cancelled:
                                 raise asyncio.CancelledError()
-                            file.write(chunk)
+                            await file.write(chunk)
                             async with lock:
                                 task.downloaded += len(chunk)
                                 elapsed = monotonic() - started

@@ -85,54 +85,57 @@ class TorrentSelector:
         self.port = port
         self.timeout = timeout
         self.lock = asyncio.Lock()
-        self.selection: Selection | None = None
+        self.selections: dict[str, Selection] = {}
+        self.selections_by_hash: dict[str, Selection] = {}
         self.runner: web.AppRunner | None = None
 
     async def select(self, torrent_hash: str, files: list[dict]) -> str:
+        token = secrets.token_urlsafe(32)
+        selection = Selection(
+            token,
+            torrent_hash,
+            files,
+            asyncio.Event(),
+            asyncio.Event(),
+        )
         async with self.lock:
-            token = secrets.token_urlsafe(32)
-            selection = Selection(
-                token,
-                torrent_hash,
-                files,
-                asyncio.Event(),
-                asyncio.Event(),
-            )
             await self._start_server()
-            self.selection = selection
-            url = f"{self.public_base_url}/select/{token}"
-            LOGGER.info("Torrent selector opened hash=%s", torrent_hash[:8])
-            try:
-                await asyncio.wait_for(
-                    self.selection.submitted.wait(), timeout=self.timeout
-                )
-                if selection.cancelled:
-                    raise asyncio.CancelledError()
-                return url
-            except TimeoutError as exc:
-                raise TimeoutError("Torrent file selection timed out") from exc
-            finally:
-                await self._stop_server()
-                selection.closed.set()
-                self.selection = None
-                LOGGER.info("Torrent selector closed hash=%s", torrent_hash[:8])
+            self.selections[token] = selection
+            self.selections_by_hash[torrent_hash] = selection
+        url = f"{self.public_base_url}/select/{token}"
+        LOGGER.info("Torrent selector opened hash=%s", torrent_hash[:8])
+        try:
+            await asyncio.wait_for(selection.submitted.wait(), timeout=self.timeout)
+            if selection.cancelled:
+                raise asyncio.CancelledError()
+            return url
+        except TimeoutError as exc:
+            raise TimeoutError("Torrent file selection timed out") from exc
+        finally:
+            await self._drop_selection(selection)
+            selection.closed.set()
+            LOGGER.info("Torrent selector closed hash=%s", torrent_hash[:8])
+
+    def get(self, torrent_hash: str) -> Selection | None:
+        return self.selections_by_hash.get(torrent_hash)
 
     async def cancel(self, torrent_hash: str) -> None:
-        selection = self.selection
+        selection = self.selections_by_hash.get(torrent_hash)
         if selection and selection.torrent_hash == torrent_hash:
             selection.cancelled = True
             selection.submitted.set()
             try:
                 await asyncio.wait_for(selection.closed.wait(), timeout=5)
             except TimeoutError:
-                await self._stop_server()
+                await self._drop_selection(selection)
 
     async def cancel_all(self) -> None:
-        selection = self.selection
-        if selection:
+        for selection in list(self.selections.values()):
             await self.cancel(selection.torrent_hash)
 
     async def _start_server(self) -> None:
+        if self.runner:
+            return
         app = web.Application()
         app.router.add_get("/select/{token}", self._show)
         app.router.add_post("/select/{token}", self._submit)
@@ -145,18 +148,24 @@ class TorrentSelector:
             await self.runner.cleanup()
             self.runner = None
 
-    def _valid(self, request: web.Request) -> bool:
-        return bool(
-            self.selection
-            and secrets.compare_digest(
-                request.match_info.get("token", ""), self.selection.token
-            )
-        )
+    async def _drop_selection(self, selection: Selection) -> None:
+        async with self.lock:
+            self.selections.pop(selection.token, None)
+            if self.selections_by_hash.get(selection.torrent_hash) is selection:
+                self.selections_by_hash.pop(selection.torrent_hash, None)
+            if not self.selections:
+                await self._stop_server()
+
+    def _selection(self, request: web.Request) -> Selection:
+        token = request.match_info.get("token", "")
+        selection = self.selections.get(token)
+        if selection is None or not secrets.compare_digest(token, selection.token):
+            raise web.HTTPNotFound()
+        return selection
 
     async def _show(self, request: web.Request) -> web.Response:
-        if not self._valid(request):
-            raise web.HTTPNotFound()
-        rows = render_tree(build_tree(self.selection.files))
+        selection = self._selection(request)
+        rows = render_tree(build_tree(selection.files))
         page = f"""<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Select torrent files</title>
@@ -214,17 +223,16 @@ document.getElementById('search').addEventListener('input',e=>{{const q=e.target
         return web.Response(text=page, content_type="text/html")
 
     async def _submit(self, request: web.Request) -> web.Response:
-        if not self._valid(request):
-            raise web.HTTPNotFound()
+        selection = self._selection(request)
         form = await request.post()
         if form.get("action") == "cancel":
-            self.selection.cancelled = True
-            self.selection.submitted.set()
+            selection.cancelled = True
+            selection.submitted.set()
             return web.Response(
                 text="Torrent cancelled. You can close this page.",
                 content_type="text/plain",
             )
-        all_ids = {file["index"] for file in self.selection.files}
+        all_ids = {file["index"] for file in selection.files}
         selected = {
             int(value) for value in form.getall("file", []) if value.isdecimal()
         } & all_ids
@@ -233,12 +241,12 @@ document.getElementById('search').addEventListener('input',e=>{{const q=e.target
                 text="Select at least one file.", status=400, content_type="text/plain"
             )
         skipped = [file_id for file_id in all_ids if file_id not in selected]
-        await self.qb.set_file_priority(self.selection.torrent_hash, skipped, 0)
+        await self.qb.set_file_priority(selection.torrent_hash, skipped, 0)
         await self.qb.set_file_priority(
-            self.selection.torrent_hash, sorted(selected), 1
+            selection.torrent_hash, sorted(selected), 1
         )
-        await self.qb.start(self.selection.torrent_hash)
-        self.selection.submitted.set()
+        await self.qb.start(selection.torrent_hash)
+        selection.submitted.set()
         return web.Response(
             text="Selection saved. You can close this page.",
             content_type="text/plain",

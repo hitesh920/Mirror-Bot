@@ -41,6 +41,7 @@ def task_json(task: Task, completion_payload) -> dict:
         "speed": f"{human_size(task.speed)}/s" if task.speed else "-",
         "eta": human_duration(task.eta),
         "error": task.error,
+        "warnings": task.processing_warnings,
         "terminal": task.terminal,
         "selection_url": task.selection_url if task.phase.value == "selecting" and not task.terminal else "",
         "result": completion_payload(task) if task.terminal else None,

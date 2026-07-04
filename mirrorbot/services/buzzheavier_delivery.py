@@ -15,10 +15,15 @@ from .telegram_delivery import upload_files
 LOGGER = logging.getLogger(__name__)
 UPLOAD_BASE = "https://w.buzzheavier.com"
 UPLOAD_CHUNK_SIZE = 16 * 1024 * 1024
+UPLOAD_RETRIES = 3
 
 
 class BuzzHeavierUploadError(TaskFailure):
     category = "engine"
+
+
+class RetryableBuzzHeavierUploadError(RuntimeError):
+    pass
 
 
 class BuzzHeavierUploader:
@@ -90,27 +95,47 @@ class BuzzHeavierUploader:
             "Content-Type": "application/octet-stream",
             "Content-Length": str(file_size),
         }
-        try:
-            async with session.put(
-                upload_url,
-                data=self._chunks(file_path, file_size),
-                headers=headers,
-            ) as response:
-                text = await response.text()
-                if response.status >= 400:
+        for attempt in range(1, UPLOAD_RETRIES + 2):
+            try:
+                async with session.put(
+                    upload_url,
+                    data=self._chunks(file_path, file_size),
+                    headers=headers,
+                ) as response:
+                    text = await response.text()
+                    if response.status >= 500:
+                        raise RetryableBuzzHeavierUploadError(
+                            f"BuzzHeavier upload failed with HTTP {response.status}"
+                        )
+                    if response.status >= 400:
+                        raise BuzzHeavierUploadError(
+                            f"BuzzHeavier upload failed with HTTP {response.status}"
+                        )
+                    try:
+                        payload = await response.json(content_type=None)
+                    except Exception as exc:
+                        raise BuzzHeavierUploadError("BuzzHeavier returned an invalid response") from exc
+                break
+            except BuzzHeavierUploadError:
+                raise
+            except (
+                RetryableBuzzHeavierUploadError,
+                aiohttp.ClientError,
+                OSError,
+                TimeoutError,
+            ) as exc:
+                self._update_progress(0)
+                if attempt > UPLOAD_RETRIES or self.task.cancelled:
                     raise BuzzHeavierUploadError(
-                        f"BuzzHeavier upload failed with HTTP {response.status}"
-                    )
-                try:
-                    payload = await response.json(content_type=None)
-                except Exception as exc:
-                    raise BuzzHeavierUploadError("BuzzHeavier returned an invalid response") from exc
-        except BuzzHeavierUploadError:
-            raise
-        except (aiohttp.ClientError, OSError, TimeoutError) as exc:
-            raise BuzzHeavierUploadError(
-                "BuzzHeavier upload connection failed. The upload host may be rejecting this server or temporarily unavailable."
-            ) from exc
+                        "BuzzHeavier upload connection failed. The upload host may be rejecting this server or temporarily unavailable."
+                    ) from exc
+                LOGGER.warning(
+                    "Task %s: retrying BuzzHeavier upload attempt=%s file=%r",
+                    self.task.short_id(),
+                    attempt,
+                    relative_name,
+                )
+                await asyncio.sleep(min(10, 2**attempt))
         file_id = (payload.get("data") or {}).get("id") or payload.get("id")
         if not file_id:
             raise BuzzHeavierUploadError("BuzzHeavier response did not include a file id")

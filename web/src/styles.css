@@ -735,6 +735,18 @@ textarea {
   padding: 11px;
 }
 
+.task-warning {
+  display: grid;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, #f5b84b 38%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #f5b84b 12%, var(--surface));
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 720;
+}
+
 .task-actions {
   margin-top: 11px;
 }
