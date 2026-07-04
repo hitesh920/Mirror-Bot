@@ -32,8 +32,10 @@ TEMP_PAGE_CSS = """
   }
 }
 * { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
 body {
   margin: 0;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -71,6 +73,7 @@ h2, h3 { margin-top: 0; }
   padding: 4px 9px;
 }
 main {
+  width: 100%;
   max-width: 1180px;
   margin: 18px auto;
   padding: 0 18px;
@@ -83,6 +86,7 @@ form, .panel, table {
 }
 table {
   width: 100%;
+  min-width: 0;
   border-collapse: separate;
   border-spacing: 0;
   overflow: hidden;
@@ -168,7 +172,9 @@ button.danger, .danger, .cancel {
   flex-wrap: wrap;
   padding: 11px;
 }
-.tools input { flex: 1; min-width: 220px; }
+.tools input { flex: 1; min-width: min(220px, 100%); }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+a { overflow-wrap: anywhere; }
 .name { overflow-wrap: anywhere; }
 .empty {
   color: var(--muted);
@@ -199,8 +205,23 @@ dialog {
 dialog::backdrop { background: rgba(15,20,27,.62); }
 @media (max-width: 700px) {
   .top { padding: 18px 12px 12px; }
-  main { margin: 12px auto; padding: 0 8px; }
-  .tools input { order: -1; flex-basis: 100%; }
+  main { margin: 12px auto; padding: 0 10px; }
+  h1 { font-size: 21px; }
+  .sub, .meta { gap: 7px; }
+  .sub span, .meta span { min-height: 26px; padding: 3px 8px; }
+  form, .panel, table { border-radius: 8px; }
+  .tools, .bar { position: sticky; top: 0; align-items: stretch; }
+  .tools input { order: -1; flex: 1 1 100%; min-width: 0; }
+  .tools button, .tools a.download, .tools .button-link { flex: 1 1 auto; }
+  input[type="search"], input[type="text"], input:not([type]) { min-width: 0; }
+  button, a.download, .button-link { min-height: 40px; }
   th, td { padding: 9px 8px; }
+  #toast { left: 12px; right: 12px; bottom: 12px; max-width: none; text-align: center; }
+  dialog { width: calc(100vw - 24px); padding: 18px; }
+}
+@media (max-width: 440px) {
+  main { padding: 0 8px; }
+  button, a.download, .button-link { width: 100%; }
+  .sub span, .meta span { max-width: 100%; }
 }
 """
