@@ -6,6 +6,7 @@ from collections import defaultdict
 from html import escape
 from pathlib import Path
 from time import time
+from urllib.error import HTTPError, URLError
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
@@ -68,6 +69,7 @@ pending_local_metadata_tasks: dict[str, object] = {}
 pending_jellyfin_scan_reasons: set[str] = set()
 local_metadata_job: asyncio.Task | None = None
 last_jellyfin_auto_scan_at = 0.0
+jellyfin_scan_lock = asyncio.Lock()
 status_text: dict[int, str] = {}
 status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 series_promotion_job: asyncio.Task | None = None
@@ -476,40 +478,65 @@ def ensure_jellyfin_running() -> None:
     except Exception:
         LOGGER.exception("Unexpected Jellyfin startup check failure")
 
-async def scan_and_prune_jellyfin() -> int:
-    removed = 0
+def _temporary_jellyfin_error(exc: Exception) -> bool:
+    return isinstance(exc, (HTTPError, URLError, TimeoutError))
+
+
+def _jellyfin_error_detail(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        return f"HTTP {exc.code}: {exc.reason}"
+    return str(exc) or type(exc).__name__
+
+
+async def _request_jellyfin_scan(stage: str) -> bool:
     try:
         await asyncio.to_thread(jellyfin_api.scan_library)
-    except Exception:
-        LOGGER.exception("Jellyfin library scan failed before missing-media prune")
+        return True
+    except Exception as exc:
+        if _temporary_jellyfin_error(exc):
+            LOGGER.warning(
+                "Jellyfin library scan failed stage=%s error=%s",
+                stage,
+                _jellyfin_error_detail(exc),
+            )
+        else:
+            LOGGER.exception("Jellyfin library scan failed stage=%s", stage)
+        return False
 
-    was_running = False
-    try:
-        missing_count = await asyncio.to_thread(jellyfin_api.count_missing_media_items)
-        if not missing_count:
-            return 0
 
-        status = await asyncio.to_thread(jellyfin.status)
-        was_running = status.running
-        if was_running:
-            await asyncio.to_thread(jellyfin.stop)
-        removed = await asyncio.to_thread(jellyfin_api.prune_missing_media_items)
-    except Exception:
-        LOGGER.exception("Jellyfin missing-media prune failed")
-    finally:
-        if was_running:
-            try:
-                await asyncio.to_thread(jellyfin.start)
-            except Exception:
-                LOGGER.exception("Jellyfin restart after missing-media prune failed")
+async def scan_and_prune_jellyfin() -> int:
+    if jellyfin_scan_lock.locked():
+        LOGGER.info("Jellyfin scan skipped because another scan is already running")
+        return 0
 
-    if removed:
-        await asyncio.sleep(6)
+    async with jellyfin_scan_lock:
+        removed = 0
+        await _request_jellyfin_scan("before-prune")
+
+        was_running = False
         try:
-            await asyncio.to_thread(jellyfin_api.scan_library)
+            missing_count = await asyncio.to_thread(jellyfin_api.count_missing_media_items)
+            if not missing_count:
+                return 0
+
+            status = await asyncio.to_thread(jellyfin.status)
+            was_running = status.running
+            if was_running:
+                await asyncio.to_thread(jellyfin.stop)
+            removed = await asyncio.to_thread(jellyfin_api.prune_missing_media_items)
         except Exception:
-            LOGGER.exception("Jellyfin library scan failed after missing-media prune")
-    return removed
+            LOGGER.exception("Jellyfin missing-media prune failed")
+        finally:
+            if was_running:
+                try:
+                    await asyncio.to_thread(jellyfin.start)
+                except Exception:
+                    LOGGER.exception("Jellyfin restart after missing-media prune failed")
+
+        if removed:
+            await asyncio.sleep(6)
+            await _request_jellyfin_scan("after-prune")
+        return removed
 
 async def explorer_scan() -> None:
     await scan_and_prune_jellyfin()

@@ -32,3 +32,11 @@ class TorrentDuplicateError(TorrentError):
 
 class TorrentEngineError(TorrentError):
     category = "torrent_engine"
+
+
+class NetworkError(TaskFailure):
+    category = "network"
+
+
+class NetworkTimeoutError(NetworkError):
+    category = "network_timeout"

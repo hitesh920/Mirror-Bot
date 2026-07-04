@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlparse
 
 import aiohttp
 
+from ..core.errors import NetworkTimeoutError
 from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
 from ..services.transfer_guard import ensure_disk_space
@@ -26,6 +27,10 @@ def filename_from_headers(response: aiohttp.ClientResponse) -> str:
     message = Message()
     message["content-disposition"] = disposition
     return Path(message.get_filename("") or "").name
+
+
+def _network_timeout_error() -> NetworkTimeoutError:
+    return NetworkTimeoutError("Network read timed out while downloading")
 
 
 async def download_direct(task: Task) -> Path:
@@ -62,20 +67,23 @@ async def download_direct(task: Task) -> Path:
             ensure_disk_space(target, total)
             started = monotonic()
             with target.open("wb") as file:
-                async for chunk in response.content.iter_chunked(1024 * 512):
-                    if task.cancelled:
-                        raise asyncio.CancelledError()
-                    file.write(chunk)
-                    task.downloaded += len(chunk)
-                    elapsed = monotonic() - started
-                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                    if total:
-                        task.progress = task.downloaded / total
-                        task.eta = (
-                            int((total - task.downloaded) / task.speed)
-                            if task.speed
-                            else 0
-                        )
+                try:
+                    async for chunk in response.content.iter_chunked(1024 * 512):
+                        if task.cancelled:
+                            raise asyncio.CancelledError()
+                        file.write(chunk)
+                        task.downloaded += len(chunk)
+                        elapsed = monotonic() - started
+                        task.speed = int(task.downloaded / elapsed) if elapsed else 0
+                        if total:
+                            task.progress = task.downloaded / total
+                            task.eta = (
+                                int((total - task.downloaded) / task.speed)
+                                if task.speed
+                                else 0
+                            )
+                except TimeoutError as exc:
+                    raise _network_timeout_error() from exc
             LOGGER.info(
                 "Task %s: direct download complete name=%r bytes=%s",
                 task.short_id(),
@@ -128,21 +136,24 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
             ) as response:
                 response.raise_for_status()
                 with target.open("wb") as file:
-                    async for chunk in response.content.iter_chunked(1024 * 512):
-                        if task.cancelled:
-                            raise asyncio.CancelledError()
-                        file.write(chunk)
-                        async with lock:
-                            task.downloaded += len(chunk)
-                            elapsed = monotonic() - started
-                            task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                            if task.size:
-                                task.progress = min(task.downloaded / task.size, 1)
-                                task.eta = (
-                                    int((task.size - task.downloaded) / task.speed)
-                                    if task.speed
-                                    else 0
-                                )
+                    try:
+                        async for chunk in response.content.iter_chunked(1024 * 512):
+                            if task.cancelled:
+                                raise asyncio.CancelledError()
+                            file.write(chunk)
+                            async with lock:
+                                task.downloaded += len(chunk)
+                                elapsed = monotonic() - started
+                                task.speed = int(task.downloaded / elapsed) if elapsed else 0
+                                if task.size:
+                                    task.progress = min(task.downloaded / task.size, 1)
+                                    task.eta = (
+                                        int((task.size - task.downloaded) / task.speed)
+                                        if task.speed
+                                        else 0
+                                    )
+                    except TimeoutError as exc:
+                        raise _network_timeout_error() from exc
 
     LOGGER.info(
         "Task %s: starting collection download name=%r files=%s",

@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from mirrorbot.core.errors import (
+    NetworkTimeoutError,
     TorrentDuplicateError,
     TorrentEngineError,
     TorrentMetadataTimeoutError,
@@ -96,3 +97,7 @@ def test_torrent_failures_have_specific_categories():
     assert TorrentRemovedError.category == "torrent_removed"
     assert TorrentDuplicateError.category == "torrent_duplicate"
     assert TorrentEngineError.category == "torrent_engine"
+
+
+def test_network_timeout_has_specific_category():
+    assert NetworkTimeoutError.category == "network_timeout"
