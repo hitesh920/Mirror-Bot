@@ -14,6 +14,8 @@ from ..services.transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 
+DIRECT_DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=60, sock_read=600)
+
 
 def filename_from_url(url: str) -> str:
     name = Path(unquote(urlparse(url).path)).name
@@ -49,7 +51,7 @@ async def download_direct(task: Task) -> Path:
     )
     headers = {"User-Agent": USER_AGENT, **(task.source.metadata.get("headers") or {})}
     cookies = task.source.metadata.get("cookies") or {}
-    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+    async with aiohttp.ClientSession(headers=headers, cookies=cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT) as session:
         async with session.get(task.source.value, allow_redirects=True) as response:
             response.raise_for_status()
             total = int(response.headers.get("content-length", "0") or 0)
@@ -161,7 +163,7 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
         task.name,
         len(collection.files),
     )
-    async with aiohttp.ClientSession(headers=base_headers, cookies=base_cookies) as session:
+    async with aiohttp.ClientSession(headers=base_headers, cookies=base_cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT) as session:
         downloads = [
             asyncio.create_task(download_item(item, target, session))
             for item, target in zip(collection.files, targets)
