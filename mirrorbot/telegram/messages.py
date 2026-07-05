@@ -92,10 +92,15 @@ def warning_list(items: list[str]) -> str:
 def completion_message(task) -> str:
     name = escape(task.result_name or task.name or task.source.type.value)
     if task.destination == Destination.TELEGRAM:
+        upload_label = (
+            "Telegram dump channel"
+            if getattr(task, "telegram_upload_mode", "") == "dump_channel"
+            else "Telegram"
+        )
         sections = [
             "<b>Task complete</b>",
             f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>Telegram</code>",
+            f"<b>Uploaded to:</b> <code>{upload_label}</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             result_list("Uploaded files", task.result_files, task.result_links),
             warning_list(task.processing_warnings),

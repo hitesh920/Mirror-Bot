@@ -654,7 +654,10 @@ async def explorer_upload(
 ) -> None:
     destination = Destination(destination_name)
     can_notify_telegram = app is not None and chat_id > 0
-    if destination == Destination.TELEGRAM and not can_notify_telegram:
+    can_upload_telegram = app is not None and (
+        chat_id > 0 or bool(config.telegram_dump_chat_id)
+    )
+    if destination == Destination.TELEGRAM and not can_upload_telegram:
         raise RuntimeError("Telegram is unavailable for this file explorer session")
     for path in paths:
         task = manager.create_task(

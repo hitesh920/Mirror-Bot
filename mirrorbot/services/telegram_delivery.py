@@ -55,6 +55,7 @@ def telegram_media_type_from_metadata(path: Path, metadata: MediaMetadata) -> st
 async def send_telegram_file(
     client: Client,
     task: Task,
+    upload_chat_id: int | str,
     item: Path,
     caption: str,
     progress,
@@ -63,7 +64,7 @@ async def send_telegram_file(
     thumb: Path | None,
 ):
     common = {
-        "chat_id": task.chat_id,
+        "chat_id": upload_chat_id,
         "caption": caption,
         "parse_mode": ParseMode.DISABLED,
         "disable_notification": True,
@@ -164,11 +165,76 @@ async def split_file(
     return parts
 
 
+def telegram_chat_id(value: str) -> int | str | None:
+    value = value.strip()
+    if not value:
+        return None
+    if value.lstrip("-").isdigit():
+        return int(value)
+    return value
+
+
+def telegram_message_link(
+    message,
+    upload_chat_id: int | str,
+    request_chat_id: int,
+) -> str:
+    if getattr(message, "link", None):
+        return message.link
+    if isinstance(upload_chat_id, int) and upload_chat_id < 0:
+        channel_id = str(upload_chat_id)
+        if channel_id.startswith("-100"):
+            return f"https://t.me/c/{channel_id[4:]}/{message.id}"
+    if request_chat_id > 0:
+        return f"tg://openmessage?user_id={request_chat_id}&message_id={message.id}"
+    return ""
+
+
 async def upload_to_telegram(
     task: Task,
     path: Path,
     client: Client,
     split_size: int,
+    dump_chat_id: str = "",
+) -> int:
+    upload_chat_id = telegram_chat_id(dump_chat_id)
+    if upload_chat_id is None:
+        if task.chat_id <= 0:
+            raise RuntimeError("Telegram dump channel is not configured")
+        return await _upload_to_telegram_chat(
+            task, path, client, split_size, task.chat_id, "request_chat"
+        )
+
+    try:
+        return await _upload_to_telegram_chat(
+            task, path, client, split_size, upload_chat_id, "dump_channel"
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        if task.result_links:
+            raise
+        if task.chat_id <= 0:
+            raise RuntimeError(
+                "Telegram dump channel is unavailable and no request chat is available"
+            ) from exc
+        LOGGER.warning(
+            "Task %s: Telegram dump channel upload failed before posting; falling back to request chat: %s",
+            task.short_id(),
+            exc,
+        )
+        return await _upload_to_telegram_chat(
+            task, path, client, split_size, task.chat_id, "request_chat"
+        )
+
+
+async def _upload_to_telegram_chat(
+    task: Task,
+    path: Path,
+    client: Client,
+    split_size: int,
+    upload_chat_id: int | str,
+    upload_mode: str,
 ) -> int:
     files = upload_files(path)
     if not files:
@@ -188,6 +254,12 @@ async def upload_to_telegram(
     task.result_files = []
     task.result_folders = []
     task.result_links = []
+    task.telegram_upload_mode = upload_mode
+    LOGGER.info(
+        "Task %s: Telegram delivery target=%s",
+        task.short_id(),
+        upload_mode,
+    )
 
     try:
         for source, relative_name in files:
@@ -255,6 +327,7 @@ async def upload_to_telegram(
                 message = await send_telegram_file(
                     client,
                     task,
+                    upload_chat_id,
                     item,
                     caption,
                     progress,
@@ -270,11 +343,7 @@ async def upload_to_telegram(
                 sent += 1
                 task.result_files.append(current_file)
                 task.result_links.append(
-                    message.link
-                    or (
-                        f"tg://openmessage?user_id={task.chat_id}"
-                        f"&message_id={message.id}"
-                    )
+                    telegram_message_link(message, upload_chat_id, task.chat_id)
                 )
                 LOGGER.info(
                     "Task %s: Telegram upload complete name=%r",

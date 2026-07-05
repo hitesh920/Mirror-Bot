@@ -35,6 +35,7 @@ class Config:
     jellyfin_api_key: str
     tmdb_api_key: str
     buzzheavier_account_id: str
+    telegram_dump_chat_id: str
     web_port: int
     web_username: str
     web_password: str
@@ -86,6 +87,7 @@ class Config:
             jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
             tmdb_api_key=getenv("TMDB_API_KEY", ""),
             buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
+            telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
             web_port=_int("WEB_PORT", 8000),
             web_username=getenv("WEB_USERNAME", ""),
             web_password=getenv("WEB_PASSWORD", ""),

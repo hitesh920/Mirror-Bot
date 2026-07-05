@@ -211,6 +211,7 @@ class TaskManager:
                             downloaded,
                             telegram_client,
                             self.config.telegram_leech_split_size,
+                            self.config.telegram_dump_chat_id,
                         ),
                     )
                 elif task.destination == Destination.GOOGLE_DRIVE:
@@ -356,6 +357,7 @@ class TaskManager:
                             path,
                             telegram_client,
                             self.config.telegram_leech_split_size,
+                            self.config.telegram_dump_chat_id,
                         ),
                     )
                 elif task.destination == Destination.GOOGLE_DRIVE:

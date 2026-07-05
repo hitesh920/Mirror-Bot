@@ -24,8 +24,10 @@ from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
+from mirrorbot.services.telegram_delivery import telegram_chat_id, telegram_message_link
 from mirrorbot.services.web.auth import credentials_match, is_public_path
 from mirrorbot.services.web_dashboard import WebDashboard
+from mirrorbot.telegram.messages import completion_message
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -64,6 +66,33 @@ def test_task_cancel_is_idempotent():
     assert task.cancelled is True
     assert task.cancel_event.is_set()
     assert task.cancel_reason == "test"
+
+
+def test_telegram_dump_chat_id_parser():
+    assert telegram_chat_id("") is None
+    assert telegram_chat_id("-1001234567890") == -1001234567890
+    assert telegram_chat_id("@dump_channel") == "@dump_channel"
+
+
+def test_private_channel_message_link_fallback():
+    message = SimpleNamespace(id=77, link=None)
+
+    assert (
+        telegram_message_link(message, -1001234567890, 123)
+        == "https://t.me/c/1234567890/77"
+    )
+
+
+def test_telegram_completion_mentions_dump_channel():
+    task = make_task()
+    task.result_name = "video.mkv"
+    task.result_files = ["video.mkv"]
+    task.result_links = ["https://t.me/c/123/77"]
+    task.telegram_upload_mode = "dump_channel"
+
+    text = completion_message(task)
+
+    assert "Telegram dump channel" in text
 
 
 def test_terminal_transition_is_not_overwritten():
