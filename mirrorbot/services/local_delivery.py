@@ -38,10 +38,18 @@ async def deliver_to_local(
         if downloaded.is_file():
             await _copy_file(task, downloaded, staging / downloaded.name, started)
         else:
+            wrapper = _single_top_level_folder(downloaded) if category == "movies" else None
             for item in sorted(downloaded.rglob("*")):
                 if item.is_symlink():
                     raise RuntimeError("Local delivery refuses symbolic links")
                 relative = item.relative_to(downloaded)
+                if wrapper is not None:
+                    if item == wrapper:
+                        continue
+                    try:
+                        relative = item.relative_to(wrapper)
+                    except ValueError:
+                        pass
                 if item.is_file() and category == "series":
                     season = clean_release_title(item.name)[2]
                     if season is not None:
@@ -70,6 +78,13 @@ async def deliver_to_local(
         return target
     finally:
         rmtree(staging, ignore_errors=True)
+
+
+def _single_top_level_folder(path: Path) -> Path | None:
+    items = [item for item in path.iterdir() if not item.name.startswith("__MACOSX")]
+    if len(items) == 1 and items[0].is_dir() and not items[0].is_symlink():
+        return items[0]
+    return None
 
 
 async def _copy_file(task: Task, source: Path, destination: Path, started: float) -> None:

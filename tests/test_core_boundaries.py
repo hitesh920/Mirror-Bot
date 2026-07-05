@@ -200,6 +200,25 @@ async def test_series_delivery_skips_empty_original_release_folder(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_movie_delivery_flattens_single_release_wrapper_folder(tmp_path):
+    local_root = tmp_path / "media"
+    downloaded = tmp_path / "extracted" / "Obsession.2026.1080p.WEB-DL"
+    downloaded.mkdir(parents=True)
+    movie = downloaded / "Obsession.2026.1080p.WEB-DL.mkv"
+    movie.write_bytes(b"movie")
+    task = make_task()
+    task.destination = Destination.LOCAL_MOVIES
+    task.work_dir = tmp_path / "work"
+    match = MediaMatch("movie", "Obsession", "2026", confidence=1.0)
+
+    await deliver_to_local(task, downloaded.parent, local_root, "movies", match)
+
+    target = local_root / "movies" / "Obsession (2026)"
+    assert (target / "Obsession.2026.1080p.WEB-DL.mkv").is_file()
+    assert not (target / "Obsession.2026.1080p.WEB-DL").exists()
+
+
+@pytest.mark.asyncio
 async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypatch):
     source = tmp_path / "file.bin"
     source.write_bytes(b"data")
