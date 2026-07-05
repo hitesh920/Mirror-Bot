@@ -49,6 +49,8 @@ async def deliver_to_local(
                 destination = staging / relative
                 ensure_inside(local_root, destination)
                 if item.is_dir():
+                    if category == "series":
+                        continue
                     destination.mkdir(parents=True, exist_ok=True)
                 elif item.is_file():
                     if destination.exists():

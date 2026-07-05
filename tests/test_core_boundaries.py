@@ -23,6 +23,8 @@ from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
+from mirrorbot.services.local_delivery import deliver_to_local
+from mirrorbot.services.media_library import MediaMatch
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import telegram_chat_id, telegram_message_link
 from mirrorbot.services.web.auth import credentials_match, is_public_path
@@ -175,6 +177,26 @@ async def test_probe_media_reads_video_metadata(monkeypatch):
     assert metadata.height == 1080
     assert metadata.artist == "A"
     assert metadata.title == "T"
+
+
+@pytest.mark.asyncio
+async def test_series_delivery_skips_empty_original_release_folder(tmp_path):
+    local_root = tmp_path / "media"
+    downloaded = tmp_path / "extracted" / "You.S01.720p.Hindi.Eng.Vegamovies.NL"
+    downloaded.mkdir(parents=True)
+    episode = downloaded / "You.S01E01.720p.Hindi.English.Vegamovies.NL.mkv"
+    episode.write_bytes(b"episode")
+    task = make_task()
+    task.work_dir = tmp_path / "work"
+    match = MediaMatch("tv", "You", "2018", season=1, confidence=1.0)
+
+    await deliver_to_local(task, downloaded.parent, local_root, "series", match)
+
+    target = local_root / "series" / "You (2018)"
+    assert (
+        target / "Season 01" / "You.S01E01.720p.Hindi.English.Vegamovies.NL.mkv"
+    ).is_file()
+    assert not (target / "You.S01.720p.Hindi.Eng.Vegamovies.NL").exists()
 
 
 @pytest.mark.asyncio
