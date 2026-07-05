@@ -8,6 +8,7 @@ from time import monotonic
 import aiofiles
 from pyrogram import Client
 from pyrogram.enums import ParseMode
+from pyrogram.errors import FloodWait, RPCError
 
 from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
@@ -19,6 +20,7 @@ VIDEO_EXTENSIONS = {".mkv", ".m4v", ".mov", ".mp4", ".webm"}
 AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 PHOTO_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 ANIMATION_EXTENSIONS = {".gif"}
+TELEGRAM_SEND_RETRIES = 3
 
 
 def upload_files(path: Path) -> list[tuple[Path, str]]:
@@ -100,6 +102,34 @@ async def send_telegram_file(
         force_document=True,
         **common,
     )
+
+
+async def send_telegram_file_with_retry(*args, task: Task):
+    for attempt in range(1, TELEGRAM_SEND_RETRIES + 1):
+        try:
+            return await send_telegram_file(*args)
+        except FloodWait as exc:
+            wait_for = int(getattr(exc, "value", 0) or 0)
+            if attempt >= TELEGRAM_SEND_RETRIES:
+                raise
+            LOGGER.warning(
+                "Task %s: Telegram FloodWait while uploading; retrying in %ss attempt=%s",
+                task.short_id(),
+                wait_for,
+                attempt,
+            )
+            await asyncio.sleep(min(max(wait_for, 1), 60))
+        except TimeoutError:
+            if attempt >= TELEGRAM_SEND_RETRIES:
+                raise
+            LOGGER.warning(
+                "Task %s: Telegram upload timed out before completion; retrying attempt=%s",
+                task.short_id(),
+                attempt,
+            )
+            await asyncio.sleep(min(10, 2**attempt))
+        except RPCError:
+            raise
 
 
 async def split_file(
@@ -324,7 +354,7 @@ async def _upload_to_telegram_chat(
                     metadata.width,
                     metadata.height,
                 )
-                message = await send_telegram_file(
+                message = await send_telegram_file_with_retry(
                     client,
                     task,
                     upload_chat_id,
@@ -334,6 +364,7 @@ async def _upload_to_telegram_chat(
                     media_type,
                     metadata,
                     thumb,
+                    task=task,
                 )
                 if message is None:
                     raise asyncio.CancelledError()

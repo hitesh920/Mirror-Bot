@@ -34,6 +34,7 @@ from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
 from .services.startup import cleanup_abandoned_downloads, prepare_local_library
 from .services.web_dashboard import WebDashboard
+from .services.telegram_delivery import telegram_chat_id
 from .telegram import keyboards as telegram_keyboards
 from .telegram import messages as telegram_messages
 
@@ -742,6 +743,25 @@ async def wait_for_shutdown_signal() -> None:
             pass
     await stop_event.wait()
 
+
+async def validate_telegram_dump_channel() -> None:
+    upload_chat_id = telegram_chat_id(config.telegram_dump_chat_id)
+    if app is None or upload_chat_id is None:
+        return
+    try:
+        chat = await app.get_chat(upload_chat_id)
+        LOGGER.info(
+            "Telegram dump channel reachable id=%s title=%r",
+            getattr(chat, "id", upload_chat_id),
+            getattr(chat, "title", "") or getattr(chat, "username", ""),
+        )
+    except Exception:
+        LOGGER.warning(
+            "Telegram dump channel is not reachable. Telegram uploads will fall back to the requester chat when possible.",
+            exc_info=True,
+        )
+
+
 async def main() -> None:
     global web_dashboard
     LOGGER.info("========== BOT STARTED ================")
@@ -776,6 +796,7 @@ async def main() -> None:
             LOGGER.info("Starting Telegram UI")
             await app.start()
             telegram_started = True
+            await validate_telegram_dump_channel()
         except Exception:
             if config.enable_web_ui:
                 LOGGER.exception("Telegram UI failed to start; web dashboard remains available")

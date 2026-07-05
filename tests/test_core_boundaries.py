@@ -22,6 +22,10 @@ from mirrorbot.downloaders.direct import retryable_direct_error
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
+from mirrorbot.services.buzzheavier_delivery import (
+    buzzheavier_upload_name,
+    duplicate_basenames,
+)
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
 from mirrorbot.services.local_delivery import deliver_to_local
 from mirrorbot.services.media_library import MediaMatch
@@ -29,7 +33,7 @@ from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import telegram_chat_id, telegram_message_link
 from mirrorbot.services.web.auth import credentials_match, is_public_path
 from mirrorbot.services.web_dashboard import WebDashboard
-from mirrorbot.telegram.messages import completion_message
+from mirrorbot.telegram.messages import completion_message, completion_payload
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -95,6 +99,28 @@ def test_telegram_completion_mentions_dump_channel():
     text = completion_message(task)
 
     assert "Telegram dump channel" in text
+
+
+def test_telegram_completion_payload_includes_result_links():
+    task = make_task()
+    task.result_links = ["https://t.me/c/123/77"]
+
+    payload = completion_payload(task, "http://jellyfin.local")
+
+    assert payload["links"] == [{"label": "Open 1", "url": "https://t.me/c/123/77"}]
+
+
+def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
+    files = [
+        (Path("season1/video.mkv"), "season1/video.mkv"),
+        (Path("season2/video.mkv"), "season2/video.mkv"),
+        (Path("poster.jpg"), "poster.jpg"),
+    ]
+    duplicates = duplicate_basenames(files)
+
+    assert duplicates == {"video.mkv"}
+    assert buzzheavier_upload_name("season1/video.mkv", duplicates) == "season1 - video.mkv"
+    assert buzzheavier_upload_name("poster.jpg", duplicates) == "poster.jpg"
 
 
 def test_terminal_transition_is_not_overwritten():
@@ -246,6 +272,42 @@ async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypat
         await uploader.upload()
 
     uploader.cleanup_created.assert_awaited_once_with("failed")
+
+
+def test_gdrive_permission_creation_retries(monkeypatch):
+    class PermissionCreate:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("temporary")
+
+    class Permissions:
+        def __init__(self, create):
+            self.create_call = create
+
+        def create(self, **_kwargs):
+            return self.create_call
+
+    class Service:
+        def __init__(self, create):
+            self.create_call = create
+
+        def permissions(self):
+            return Permissions(self.create_call)
+
+    create_call = PermissionCreate()
+    task = make_task()
+    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
+    uploader.task = task
+    uploader.service = Service(create_call)
+    monkeypatch.setattr(gdrive_delivery, "sleep", lambda _seconds: None)
+
+    uploader.set_public_permission("file-id")
+
+    assert create_call.calls == 2
 
 
 @pytest.mark.asyncio

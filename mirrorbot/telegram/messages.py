@@ -142,6 +142,12 @@ def completion_payload(task, jellyfin_url: str) -> dict:
     links = []
     if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
         links.append({"label": "Open Google Drive", "url": task.result_links[0]})
+    elif task.destination == Destination.TELEGRAM:
+        links.extend(
+            {"label": f"Open {index}", "url": link}
+            for index, link in enumerate(task.result_links[:10], start=1)
+            if link
+        )
     elif task.destination == Destination.BUZZHEAVIER:
         links.extend(
             {"label": f"Open {index}", "url": link}

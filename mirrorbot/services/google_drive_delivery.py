@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import pickle
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -262,11 +262,23 @@ class GoogleDriveUploader:
         return folder_id
 
     def set_public_permission(self, file_id: str) -> None:
-        self.service.permissions().create(
-            fileId=file_id,
-            body={"type": "anyone", "role": "reader"},
-            supportsAllDrives=True,
-        ).execute()
+        for attempt in range(1, UPLOAD_RETRIES + 2):
+            try:
+                self.service.permissions().create(
+                    fileId=file_id,
+                    body={"type": "anyone", "role": "reader"},
+                    supportsAllDrives=True,
+                ).execute()
+                return
+            except Exception as exc:
+                if not retryable_upload_error(exc) or attempt > UPLOAD_RETRIES:
+                    raise
+                LOGGER.warning(
+                    "Task %s: retrying Google Drive permission creation attempt=%s",
+                    self.task.short_id(),
+                    attempt,
+                )
+                sleep(min(10, 2**attempt))
 
     def delete_created(self) -> None:
         for file_id in reversed(self.created_ids):

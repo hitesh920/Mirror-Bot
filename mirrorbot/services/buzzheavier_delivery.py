@@ -55,6 +55,7 @@ class BuzzHeavierUploader:
                 for item in sorted(self.path.rglob("*"))
                 if item.is_dir()
             ]
+        duplicate_names = duplicate_basenames(files)
 
         headers = {}
         if self.config.buzzheavier_account_id:
@@ -65,7 +66,13 @@ class BuzzHeavierUploader:
             for file_path, relative_name in files:
                 if self.task.cancelled:
                     raise asyncio.CancelledError()
-                link = await self._upload_one(session, file_path, relative_name)
+                upload_name = buzzheavier_upload_name(relative_name, duplicate_names)
+                link = await self._upload_one(
+                    session,
+                    file_path,
+                    relative_name,
+                    upload_name,
+                )
                 self.task.result_files.append(relative_name)
                 self.task.result_links.append(link)
 
@@ -80,17 +87,22 @@ class BuzzHeavierUploader:
         )
 
     async def _upload_one(
-        self, session: aiohttp.ClientSession, file_path: Path, relative_name: str
+        self,
+        session: aiohttp.ClientSession,
+        file_path: Path,
+        relative_name: str,
+        upload_name: str,
     ) -> str:
         file_size = file_path.stat().st_size
         self.task.current_file = relative_name
         LOGGER.info(
-            "Task %s: uploading BuzzHeavier file name=%r size=%s",
+            "Task %s: uploading BuzzHeavier file name=%r upload_name=%r size=%s",
             self.task.short_id(),
             relative_name,
+            upload_name,
             file_size,
         )
-        upload_url = f"{UPLOAD_BASE}/{quote(file_path.name)}"
+        upload_url = f"{UPLOAD_BASE}/{quote(upload_name, safe='')}"
         headers = {
             "Content-Type": "application/octet-stream",
             "Content-Length": str(file_size),
@@ -179,3 +191,18 @@ class BuzzHeavierUploader:
 async def upload_to_buzzheavier(task: Task, path: Path, config: Config) -> None:
     uploader = BuzzHeavierUploader(task, path, config)
     await uploader.upload()
+
+
+def duplicate_basenames(files: list[tuple[Path, str]]) -> set[str]:
+    counts: dict[str, int] = {}
+    for _file_path, relative_name in files:
+        name = Path(relative_name).name
+        counts[name] = counts.get(name, 0) + 1
+    return {name for name, count in counts.items() if count > 1}
+
+
+def buzzheavier_upload_name(relative_name: str, duplicate_names: set[str]) -> str:
+    name = Path(relative_name).name
+    if name not in duplicate_names:
+        return name
+    return relative_name.replace("/", " - ")
