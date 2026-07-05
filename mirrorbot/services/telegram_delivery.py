@@ -11,6 +11,7 @@ from pyrogram.enums import ParseMode
 
 from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
+from .media_metadata import MediaMetadata, create_video_thumbnail, probe_media
 from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +44,14 @@ def telegram_media_type(path: Path) -> str:
     return "document"
 
 
+def telegram_media_type_from_metadata(path: Path, metadata: MediaMetadata) -> str:
+    if metadata.is_video:
+        return "video"
+    if metadata.is_audio:
+        return "audio"
+    return telegram_media_type(path)
+
+
 async def send_telegram_file(
     client: Client,
     task: Task,
@@ -50,6 +59,8 @@ async def send_telegram_file(
     caption: str,
     progress,
     media_type: str,
+    metadata: MediaMetadata,
+    thumb: Path | None,
 ):
     common = {
         "chat_id": task.chat_id,
@@ -63,16 +74,28 @@ async def send_telegram_file(
             video=str(item),
             supports_streaming=True,
             no_sound=False,
+            duration=metadata.duration or 0,
+            width=metadata.width or 0,
+            height=metadata.height or 0,
+            thumb=str(thumb) if thumb else None,
             **common,
         )
     if media_type == "audio":
-        return await client.send_audio(audio=str(item), **common)
+        return await client.send_audio(
+            audio=str(item),
+            duration=metadata.duration or 0,
+            performer=metadata.artist or None,
+            title=metadata.title or item.stem,
+            thumb=str(thumb) if thumb else None,
+            **common,
+        )
     if media_type == "photo":
         return await client.send_photo(photo=str(item), **common)
     if media_type == "animation":
         return await client.send_animation(animation=str(item), **common)
     return await client.send_document(
         document=str(item),
+        thumb=str(thumb) if thumb else None,
         force_document=True,
         **common,
     )
@@ -152,6 +175,7 @@ async def upload_to_telegram(
         raise RuntimeError("Nothing to upload to Telegram")
 
     parts_dir = task.work_dir / ".telegram-parts"
+    thumbs_dir = task.work_dir / ".telegram-thumbs"
     total_size = path_size(path)
     task.size = total_size
     task.downloaded = 0
@@ -203,15 +227,30 @@ async def upload_to_telegram(
                     )
 
                 caption = current_file[:1024]
+                metadata = MediaMetadata()
+                thumb = None
                 media_type = (
                     telegram_media_type(item) if len(outgoing) == 1 else "document"
                 )
+                if len(outgoing) == 1:
+                    metadata = await probe_media(item)
+                    media_type = telegram_media_type_from_metadata(item, metadata)
+                    if media_type == "video":
+                        thumb = await create_video_thumbnail(
+                            item,
+                            thumbs_dir,
+                            metadata.duration,
+                        )
                 LOGGER.info(
-                    "Task %s: uploading Telegram file name=%r size=%s type=%s",
+                    "Task %s: uploading Telegram file name=%r size=%s type=%s thumb=%s duration=%s size=%sx%s",
                     task.short_id(),
                     current_file,
                     item.stat().st_size,
                     media_type,
+                    bool(thumb),
+                    metadata.duration,
+                    metadata.width,
+                    metadata.height,
                 )
                 message = await send_telegram_file(
                     client,
@@ -220,6 +259,8 @@ async def upload_to_telegram(
                     caption,
                     progress,
                     media_type,
+                    metadata,
+                    thumb,
                 )
                 if message is None:
                     raise asyncio.CancelledError()
@@ -253,3 +294,4 @@ async def upload_to_telegram(
         return sent
     finally:
         rmtree(parts_dir, ignore_errors=True)
+        rmtree(thumbs_dir, ignore_errors=True)

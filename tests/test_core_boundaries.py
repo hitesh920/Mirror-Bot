@@ -20,6 +20,7 @@ from mirrorbot.core.parser import parse_add_text
 from mirrorbot.core.source_detector import detect_source
 from mirrorbot.downloaders.direct import retryable_direct_error
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
+from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
@@ -121,6 +122,30 @@ def test_direct_retry_classifier():
     assert not retryable_direct_error(
         ClientResponseError(None, (), status=404, message="missing")
     )
+
+
+@pytest.mark.asyncio
+async def test_probe_media_reads_video_metadata(monkeypatch):
+    async def fake_run(*_args, timeout=60):
+        return 0, (
+            '{"format":{"duration":"42.4","tags":{"artist":"A","title":"T"}},'
+            '"streams":['
+            '{"codec_type":"video","codec_name":"h264","width":1920,"height":1080},'
+            '{"codec_type":"audio","codec_name":"aac"}'
+            ']}'
+        ), ""
+
+    monkeypatch.setattr(media_metadata, "_run_command", fake_run)
+
+    metadata = await media_metadata.probe_media(Path("video.mkv"))
+
+    assert metadata.is_video is True
+    assert metadata.is_audio is True
+    assert metadata.duration == 42
+    assert metadata.width == 1920
+    assert metadata.height == 1080
+    assert metadata.artist == "A"
+    assert metadata.title == "T"
 
 
 @pytest.mark.asyncio
