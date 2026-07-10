@@ -14,6 +14,7 @@ from googleapiclient.http import MediaFileUpload
 from ..core.config import Config
 from ..core.models import Task
 from ..downloaders.process import path_size
+from .paths import ensure_no_symlinks
 
 LOGGER = logging.getLogger(__name__)
 DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
@@ -49,6 +50,22 @@ def retryable_upload_error(exc: Exception) -> bool:
     if isinstance(exc, HttpError):
         return int(getattr(exc.resp, "status", 0) or 0) in UPLOAD_RETRY_STATUSES
     return isinstance(exc, (OSError, TimeoutError))
+
+
+async def next_drive_chunk(request, created_ids: list[str]):
+    chunk_job = asyncio.create_task(asyncio.to_thread(request.next_chunk))
+    try:
+        return await asyncio.shield(chunk_job)
+    except asyncio.CancelledError:
+        # A worker thread cannot be cancelled. Capture a final file id before
+        # propagating cancellation so the caller can remove the remote item.
+        try:
+            _status, response = await chunk_job
+        except Exception:
+            raise asyncio.CancelledError() from None
+        if response and response.get("id"):
+            created_ids.append(response["id"])
+        raise
 
 
 def drive_storage_quota(config: Config) -> dict:
@@ -316,6 +333,7 @@ class GoogleDriveUploader:
         self.task.result_files = []
         self.task.result_folders = []
         self.task.result_links = []
+        ensure_no_symlinks(self.path)
 
         try:
             if self.path.is_file():
@@ -421,7 +439,7 @@ class GoogleDriveUploader:
             if self.task.cancelled:
                 raise asyncio.CancelledError()
             try:
-                status, response = await asyncio.to_thread(request.next_chunk)
+                status, response = await next_drive_chunk(request, self.created_ids)
                 retry_attempt = 0
             except Exception as exc:
                 if (

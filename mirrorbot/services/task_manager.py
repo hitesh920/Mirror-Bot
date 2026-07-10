@@ -3,18 +3,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
-from time import time
 from uuid import uuid4
 
-from .archive import (
-    ArchiveCorruptError,
-    ArchivePasswordError,
-    ArchiveUnsupportedError,
-    extract_path,
-    zip_path,
-)
 from ..core.config import Config
-from ..core.models import Destination, SourceType, Task, TaskPhase
+from ..core.logging_config import log_event
+from ..core.models import SourceType, Task, TaskPhase
 from ..downloaders.direct import download_direct
 from ..downloaders.gdrive import download_gdrive
 from ..downloaders.qbittorrent import QBittorrentClient
@@ -22,23 +15,16 @@ from ..downloaders.telegram import download_telegram_file
 from ..downloaders.torrent import download_torrent
 from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
-from ..resolvers import resolve_source
-from .local_delivery import deliver_to_local
-from .buzzheavier_delivery import upload_to_buzzheavier
-from .google_drive_delivery import upload_to_gdrive
-from .telegram_delivery import upload_to_telegram
 from .public_url import public_base_url
-from .media_library import media_identity_name, resolve_media
-from .transfer_guard import TransferGuard, ensure_disk_space
 from .task_runner import TaskRunner
-from ..core.errors import TaskFailure
-from ..core.logging_config import log_event
 
 LOGGER = logging.getLogger(__name__)
 MAX_TERMINAL_TASKS = 200
 
 
 class TaskManager:
+    """Owns task registry, engine clients, queueing, and cancellation."""
+
     def __init__(self, config: Config):
         self.config = config
         self.tasks: dict[str, Task] = {}
@@ -48,13 +34,17 @@ class TaskManager:
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
             self.qb,
-            public_base_url(config.torrent_selection_port, config.public_base_url),
+            public_base_url(
+                config.torrent_selection_port, config.public_base_url
+            ),
             config.torrent_selection_port,
             config.torrent_selection_timeout,
         )
         self.runner = TaskRunner(self)
 
-    def create_task(self, user_id, chat_id, message_id, source, destination, options) -> Task:
+    def create_task(
+        self, user_id, chat_id, message_id, source, destination, options
+    ) -> Task:
         if not self.accepting_tasks:
             raise RuntimeError("Bot is shutting down and cannot accept new tasks")
         task_id = str(uuid4())
@@ -102,341 +92,10 @@ class TaskManager:
             on_selector_done=on_selector_done,
         )
 
-    async def _run_task_pipeline(
-        self,
-        task: Task,
-        telegram_reply=None,
-        telegram_client=None,
-        on_selector_ready=None,
-        on_selector_done=None,
+    async def run_local_upload(
+        self, task: Task, path: Path, telegram_client
     ) -> Task:
-        guard_job = None
-        try:
-            async with self._queue_slot(self.task_sem, task):
-                ensure_disk_space(task.work_dir)
-                guard_job = asyncio.create_task(TransferGuard(task).monitor())
-                self._raise_if_cancelled(task)
-                task.transition(TaskPhase.DOWNLOADING)
-                task.source = await self._run_or_cancel(task, resolve_source(task.source))
-                self._raise_if_cancelled(task)
-                downloaded = await self._run_or_cancel(
-                    task,
-                    self._download(
-                        task,
-                        telegram_reply,
-                        telegram_client,
-                        on_selector_ready,
-                        on_selector_done,
-                    ),
-                )
-
-                self._raise_if_cancelled(task)
-                task.transition(TaskPhase.PREPARING)
-                if not task.name:
-                    task.name = downloaded.name
-                task.current_file = downloaded.name
-                if task.options.extract:
-                    self._start_processing_phase(task, TaskPhase.EXTRACTING, downloaded)
-                    try:
-                        downloaded = await extract_path(
-                            downloaded, task, task.options.extract_password
-                        )
-                    except (
-                        ArchiveCorruptError,
-                        ArchivePasswordError,
-                        ArchiveUnsupportedError,
-                    ):
-                        raise
-                    except RuntimeError as exc:
-                        task.processing_warnings.append(
-                            "Extraction failed, so the original file was delivered."
-                        )
-                        LOGGER.warning(
-                            "Task %s: extraction failed, falling back to original file: %s",
-                            task.short_id(),
-                            exc,
-                        )
-                        task.current_file = downloaded.name
-                        task.progress = 0
-                        task.downloaded = 0
-                        task.speed = 0
-                        task.eta = 0
-                    self._raise_if_cancelled(task)
-                if task.options.zip:
-                    self._start_processing_phase(task, TaskPhase.ARCHIVING, downloaded)
-                    downloaded = await zip_path(
-                        downloaded,
-                        task,
-                        task.options.zip_password,
-                        self.config.zip_compression_level,
-                    )
-                    self._raise_if_cancelled(task)
-
-                task.transition(TaskPhase.SCANNING)
-                task.current_file = downloaded.name
-                task.progress = 0
-                task.downloaded = 0
-                task.speed = 0
-                task.eta = 0
-                await asyncio.to_thread(self._record_result_manifest, task, downloaded)
-                self._raise_if_cancelled(task)
-                if task.destination in {
-                    Destination.LOCAL_MOVIES,
-                    Destination.LOCAL_SERIES,
-                }:
-                    task.transition(TaskPhase.MOVING)
-                    task.guard_path = self.config.local_download_root
-                    task.current_file = downloaded.name
-                    category = (
-                        "movies"
-                        if task.destination == Destination.LOCAL_MOVIES
-                        else "series"
-                    )
-                    media_match = await asyncio.to_thread(
-                        resolve_media, media_identity_name(downloaded, category), category, self.config.tmdb_api_key
-                    )
-                    task.library_name = media_match.folder_name
-                    task.result_path = await deliver_to_local(
-                        task, downloaded, self.config.local_download_root, category, media_match
-                    )
-                elif task.destination == Destination.TELEGRAM:
-                    if telegram_client is None:
-                        raise RuntimeError("Telegram client is unavailable")
-                    task.transition(TaskPhase.UPLOADING)
-                    task.current_file = downloaded.name
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_telegram(
-                            task,
-                            downloaded,
-                            telegram_client,
-                            self.config.telegram_leech_split_size,
-                            self.config.telegram_dump_chat_id,
-                        ),
-                    )
-                elif task.destination == Destination.GOOGLE_DRIVE:
-                    task.transition(TaskPhase.UPLOADING)
-                    task.current_file = downloaded.name
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_gdrive(task, downloaded, self.config),
-                    )
-                elif task.destination == Destination.BUZZHEAVIER:
-                    task.transition(TaskPhase.UPLOADING)
-                    task.current_file = downloaded.name
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_buzzheavier(task, downloaded, self.config),
-                    )
-                else:
-                    raise NotImplementedError(
-                        f"{task.destination.value} delivery is not implemented"
-                    )
-                task.transition(TaskPhase.COMPLETE)
-                task.current_file = ""
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.completed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                engine=task.source.type.value,
-                destination=task.destination.value,
-                duration=f"{int(time() - task.created_at)}s",
-            )
-        except asyncio.CancelledError:
-            task.transition(TaskPhase.CANCELLED)
-            task.cancelled = True
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.cancelled",
-                task=task.short_id(),
-                phase=task.phase.value,
-                result=task.cancel_reason or "cancelled",
-            )
-        except TaskFailure as exc:
-            task.transition(TaskPhase.ERROR)
-            task.error = str(exc)
-            task.failure_category = exc.category
-            log_event(
-                LOGGER,
-                logging.WARNING,
-                "task.failed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                error_category=exc.category,
-                result=exc,
-            )
-        except (
-            ArchiveCorruptError,
-            ArchivePasswordError,
-            ArchiveUnsupportedError,
-        ) as exc:
-            task.transition(TaskPhase.ERROR)
-            task.error = str(exc)
-            log_event(
-                LOGGER,
-                logging.WARNING,
-                "task.failed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                error_category="processing",
-                result=exc,
-            )
-        except Exception as exc:
-            if task.cancelled:
-                task.transition(TaskPhase.CANCELLED)
-                log_event(
-                    LOGGER,
-                    logging.INFO,
-                    "task.cancelled",
-                    task=task.short_id(),
-                    phase=task.phase.value,
-                    result=task.cancel_reason or "cancelled during shutdown",
-                )
-            else:
-                task.transition(TaskPhase.ERROR)
-                task.error = str(exc)
-                log_event(
-                    LOGGER,
-                    logging.ERROR,
-                    "task.failed",
-                    task=task.short_id(),
-                    phase=task.phase.value,
-                    error_category="unexpected",
-                    result=exc,
-                )
-                LOGGER.exception("Unexpected task failure task=%s", task.short_id())
-        finally:
-            if guard_job:
-                guard_job.cancel()
-                await asyncio.gather(guard_job, return_exceptions=True)
-            if task.torrent_hash and task.phase in {
-                TaskPhase.CANCELLED,
-                TaskPhase.ERROR,
-            }:
-                try:
-                    await self.qb.delete(task.torrent_hash, True)
-                except Exception:
-                    LOGGER.exception(
-                        "Task %s: failed to clean qBittorrent task", task.short_id()
-                    )
-            self._cleanup(task.work_dir)
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.cleaned",
-                task=task.short_id(),
-                phase=task.phase.value,
-            )
-            self._prune_terminal_tasks()
-        return task
-
-    async def run_local_upload(self, task: Task, path: Path, telegram_client) -> Task:
         return await self.runner.run_local_upload(task, path, telegram_client)
-
-    async def _run_local_upload_pipeline(self, task: Task, path: Path, telegram_client) -> Task:
-        guard_job = None
-        try:
-            async with self._queue_slot(self.task_sem, task):
-                guard_job = asyncio.create_task(TransferGuard(task).monitor())
-                task.transition(TaskPhase.SCANNING)
-                task.name = path.name
-                task.current_file = path.name
-                await asyncio.to_thread(self._record_result_manifest, task, path)
-                self._raise_if_cancelled(task)
-                task.transition(TaskPhase.UPLOADING)
-                if task.destination == Destination.TELEGRAM:
-                    if telegram_client is None:
-                        raise RuntimeError("Telegram client is unavailable")
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_telegram(
-                            task,
-                            path,
-                            telegram_client,
-                            self.config.telegram_leech_split_size,
-                            self.config.telegram_dump_chat_id,
-                        ),
-                    )
-                elif task.destination == Destination.GOOGLE_DRIVE:
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_gdrive(task, path, self.config),
-                    )
-                elif task.destination == Destination.BUZZHEAVIER:
-                    await self._run_or_cancel(
-                        task,
-                        upload_to_buzzheavier(task, path, self.config),
-                    )
-                else:
-                    raise NotImplementedError(
-                        f"{task.destination.value} local upload is not implemented"
-                    )
-                task.transition(TaskPhase.COMPLETE)
-                task.current_file = ""
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.completed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                engine=task.source.type.value,
-                destination=task.destination.value,
-                duration=f"{int(time() - task.created_at)}s",
-            )
-        except asyncio.CancelledError:
-            task.transition(TaskPhase.CANCELLED)
-            task.cancelled = True
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.cancelled",
-                task=task.short_id(),
-                phase=task.phase.value,
-                result=task.cancel_reason or "cancelled",
-            )
-        except TaskFailure as exc:
-            task.transition(TaskPhase.ERROR)
-            task.error = str(exc)
-            task.failure_category = exc.category
-            log_event(
-                LOGGER,
-                logging.WARNING,
-                "task.failed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                error_category=exc.category,
-                result=exc,
-            )
-        except Exception as exc:
-            task.transition(TaskPhase.ERROR)
-            task.error = str(exc)
-            log_event(
-                LOGGER,
-                logging.ERROR,
-                "task.failed",
-                task=task.short_id(),
-                phase=task.phase.value,
-                error_category="unexpected",
-                result=exc,
-            )
-            LOGGER.exception("Unexpected local upload failure task=%s", task.short_id())
-        finally:
-            if guard_job:
-                guard_job.cancel()
-                await asyncio.gather(guard_job, return_exceptions=True)
-            self._cleanup(task.work_dir)
-            log_event(
-                LOGGER,
-                logging.INFO,
-                "task.cleaned",
-                task=task.short_id(),
-                phase=task.phase.value,
-            )
-            self._prune_terminal_tasks()
-        return task
 
     async def _download(
         self,
@@ -447,10 +106,14 @@ class TaskManager:
         on_selector_done=None,
     ) -> Path:
         if task.source.type == SourceType.TELEGRAM_FILE:
-            return await download_telegram_file(task, telegram_reply, telegram_client)
+            return await download_telegram_file(
+                task, telegram_reply, telegram_client
+            )
         if task.source.type == SourceType.TORRENT_FILE:
             torrent_file = (
-                await download_telegram_file(task, telegram_reply, telegram_client)
+                await download_telegram_file(
+                    task, telegram_reply, telegram_client
+                )
                 if telegram_reply is not None
                 else None
             )
@@ -481,21 +144,25 @@ class TaskManager:
             if not path.exists():
                 raise FileNotFoundError("Local source path does not exist")
             task.name = task.options.name or path.name
-            task.size = path.stat().st_size if path.is_file() else sum(
-                item.stat().st_size for item in path.rglob("*") if item.is_file()
+            task.size = (
+                path.stat().st_size
+                if path.is_file()
+                else sum(
+                    item.stat().st_size
+                    for item in path.rglob("*")
+                    if item.is_file()
+                )
             )
             task.downloaded = task.size
             task.progress = 1
             return path
-        raise NotImplementedError(f"{task.source.type.value} download is planned but not implemented in this pass")
+        raise NotImplementedError(
+            f"{task.source.type.value} download is not implemented"
+        )
 
     def cancel(self, task_id: str) -> bool:
         task = self.get(task_id)
-        if task is None or task.phase in {
-            TaskPhase.COMPLETE,
-            TaskPhase.CANCELLED,
-            TaskPhase.ERROR,
-        }:
+        if task is None or task.terminal:
             return False
         if not task.request_cancel():
             return False
@@ -519,7 +186,7 @@ class TaskManager:
         return None
 
     def active_tasks(self) -> list[Task]:
-        return [task for task in self.tasks.values() if task.phase not in {TaskPhase.COMPLETE, TaskPhase.CANCELLED, TaskPhase.ERROR}]
+        return [task for task in self.tasks.values() if not task.terminal]
 
     def terminal_tasks(self) -> list[Task]:
         return [task for task in self.tasks.values() if task.terminal]
@@ -549,15 +216,24 @@ class TaskManager:
             elif item.is_dir():
                 task.result_folders.append(relative)
 
-    def _cleanup(self, path: Path) -> None:
+    @staticmethod
+    def _cleanup(path: Path) -> None:
         if path.exists():
             rmtree(path, ignore_errors=True)
 
     @staticmethod
-    def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
+    def _start_processing_phase(
+        task: Task, phase: TaskPhase, path: Path
+    ) -> None:
         task.transition(phase, path.name)
-        task.size = path.stat().st_size if path.is_file() else sum(
-            item.stat().st_size for item in path.rglob("*") if item.is_file()
+        task.size = (
+            path.stat().st_size
+            if path.is_file()
+            else sum(
+                item.stat().st_size
+                for item in path.rglob("*")
+                if item.is_file()
+            )
         )
         task.downloaded = 0
         task.progress = 0
@@ -579,7 +255,9 @@ class TaskManager:
         jobs = list(self.runner_jobs)
         if jobs:
             try:
-                await asyncio.wait_for(asyncio.gather(*jobs, return_exceptions=True), timeout)
+                await asyncio.wait_for(
+                    asyncio.gather(*jobs, return_exceptions=True), timeout
+                )
             except TimeoutError:
                 for job in jobs:
                     job.cancel()
@@ -604,7 +282,9 @@ class TaskManager:
         return await operation
 
     @asynccontextmanager
-    async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):
+    async def _queue_slot(
+        self, semaphore: asyncio.Semaphore, task: Task
+    ):
         self._raise_if_cancelled(task)
         acquire = asyncio.create_task(semaphore.acquire())
         cancelled = asyncio.create_task(task.cancel_event.wait())

@@ -164,6 +164,43 @@ class FileExplorer:
 
         asyncio.create_task(run_scan())
 
+    def _create_folder(self, target: Path) -> None:
+        target.mkdir()
+        apply_media_permissions(self.root, target)
+
+    def _rename_path(self, source: Path, target: Path) -> None:
+        source.rename(target)
+        apply_media_permissions(self.root, target)
+
+    def _copy_or_move_paths(
+        self,
+        action: str,
+        destination: Path,
+        sources: list[Path],
+        targets: list[Path],
+    ) -> None:
+        if action == "copy":
+            ensure_disk_space(destination, sum(path_size(source) for source in sources))
+        else:
+            cross_device_size = sum(
+                path_size(source)
+                for source in sources
+                if source.stat().st_dev != destination.stat().st_dev
+            )
+            if cross_device_size:
+                ensure_disk_space(destination, cross_device_size)
+        for source, target in zip(sources, targets):
+            if action == "copy":
+                shutil.copytree(source, target) if source.is_dir() else shutil.copy2(source, target)
+            else:
+                shutil.move(str(source), str(target))
+            apply_media_permissions(self.root, target)
+
+    @staticmethod
+    def _delete_paths(targets: list[Path]) -> None:
+        for target in targets:
+            shutil.rmtree(target) if target.is_dir() else target.unlink()
+
     async def _action(self, request: web.Request) -> web.Response:
         session = self._session(request)
         action = request.match_info["action"]
@@ -181,8 +218,7 @@ class FileExplorer:
             target = self._path((parent.relative_to(self.root) / self._name(data.get("name", ""))).as_posix(), False)
             if target.exists():
                 raise web.HTTPConflict(text="Destination already exists")
-            target.mkdir()
-            apply_media_permissions(self.root, target)
+            await asyncio.to_thread(self._create_folder, target)
         elif action == "rename":
             source = self._path(data.get("source", ""))
             if source == self.root:
@@ -190,8 +226,7 @@ class FileExplorer:
             target = self._path((source.parent.relative_to(self.root) / self._name(data.get("name", ""))).as_posix(), False)
             if target.exists():
                 raise web.HTTPConflict(text="Destination already exists")
-            source.rename(target)
-            apply_media_permissions(self.root, target)
+            await asyncio.to_thread(self._rename_path, source, target)
         elif action in {"copy", "move"}:
             destination = self._path(data.get("destination", ""))
             if not destination.is_dir():
@@ -209,22 +244,20 @@ class FileExplorer:
                     raise web.HTTPBadRequest(text=f"Cannot place {source.name} inside itself")
                 if target.exists():
                     raise web.HTTPConflict(text=f"Destination already exists: {source.name}")
-            if action == "copy":
-                ensure_disk_space(destination, sum(path_size(source) for source in sources))
-            for source, target in zip(sources, targets):
-                if action == "copy":
-                    shutil.copytree(source, target) if source.is_dir() else shutil.copy2(source, target)
-                else:
-                    shutil.move(str(source), str(target))
-                apply_media_permissions(self.root, target)
+            await asyncio.to_thread(
+                self._copy_or_move_paths,
+                action,
+                destination,
+                sources,
+                targets,
+            )
         elif action == "delete":
             targets = [self._path(relative) for relative in data.get("sources", [])]
             if not targets:
                 raise web.HTTPBadRequest(text="Select at least one item")
             if self.root in targets:
                 raise web.HTTPForbidden(text="Cannot delete downloads root")
-            for target in targets:
-                shutil.rmtree(target) if target.is_dir() else target.unlink()
+            await asyncio.to_thread(self._delete_paths, targets)
             self._schedule_scan(session.token, "delete")
         elif action == "upload":
             paths = [self._path(relative) for relative in data.get("sources", [])]

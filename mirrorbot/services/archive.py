@@ -10,6 +10,7 @@ from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 PROGRESS_PATTERN = re.compile(rb"(?<!\d)(\d{1,3})%")
+MAX_DIAGNOSTIC_OUTPUT = 128 * 1024
 
 
 class ArchivePasswordError(RuntimeError):
@@ -32,11 +33,13 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
         stderr=PIPE,
         start_new_session=True,
     )
-    output: list[bytes] = []
+    output = bytearray()
 
     async def read_stream(stream) -> None:
         while chunk := await stream.read(4096):
-            output.append(chunk)
+            output.extend(chunk)
+            if len(output) > MAX_DIAGNOSTIC_OUTPUT:
+                del output[:-MAX_DIAGNOSTIC_OUTPUT]
             matches = PROGRESS_PATTERN.findall(chunk)
             if matches:
                 percent = min(100, int(matches[-1]))
@@ -54,7 +57,7 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
             raise asyncio.CancelledError()
         await asyncio.sleep(0.25)
     await asyncio.gather(*readers)
-    detail = b"".join(output).decode(errors="replace").strip()
+    detail = output.decode(errors="replace").strip()
     if process.returncode:
         if (
             "Break signaled" in detail

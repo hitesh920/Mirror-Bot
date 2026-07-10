@@ -13,6 +13,7 @@ from pyrogram.errors import FloodWait, RPCError
 from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
 from .media_metadata import MediaMetadata, create_video_thumbnail, probe_media
+from .paths import ensure_no_symlinks
 from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ TELEGRAM_SEND_RETRIES = 3
 
 
 def upload_files(path: Path) -> list[tuple[Path, str]]:
+    ensure_no_symlinks(path)
     if path.is_file():
         return [(path, path.name)]
     return [
@@ -118,16 +120,7 @@ async def send_telegram_file_with_retry(*args, task: Task):
                 wait_for,
                 attempt,
             )
-            await asyncio.sleep(min(max(wait_for, 1), 60))
-        except TimeoutError:
-            if attempt >= TELEGRAM_SEND_RETRIES:
-                raise
-            LOGGER.warning(
-                "Task %s: Telegram upload timed out before completion; retrying attempt=%s",
-                task.short_id(),
-                attempt,
-            )
-            await asyncio.sleep(min(10, 2**attempt))
+            await asyncio.sleep(max(wait_for, 1))
         except RPCError:
             raise
 
@@ -241,7 +234,7 @@ async def upload_to_telegram(
         )
     except asyncio.CancelledError:
         raise
-    except Exception as exc:
+    except RPCError as exc:
         if task.result_links:
             raise
         if task.chat_id <= 0:

@@ -28,6 +28,14 @@ class DuplicateTorrentError(TorrentDuplicateError):
     pass
 
 
+def selected_torrent_size(files: list[dict]) -> int:
+    return sum(
+        int(file.get("size", 0) or 0)
+        for file in files
+        if int(file.get("priority", 0) or 0) != 0
+    )
+
+
 def magnet_info_hash(magnet: str) -> str:
     for value in parse_qs(urlparse(magnet).query).get("xt", []):
         if not value.lower().startswith("urn:btih:"):
@@ -167,7 +175,9 @@ async def download_torrent(
             await asyncio.sleep(1)
         await selection_job
         task.transition(TaskPhase.DOWNLOADING)
-        selected_size = sum(file.get("size", 0) for file in files if file.get("priority", 0) != 0)
+        selected_files = await qb.files(task.torrent_hash)
+        selected_size = selected_torrent_size(selected_files)
+        task.size = selected_size
         ensure_disk_space(task.work_dir, selected_size)
     finally:
         task.selection_url = ""

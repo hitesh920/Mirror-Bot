@@ -2,7 +2,6 @@ import asyncio
 import logging
 import secrets
 import signal
-from collections import defaultdict
 from html import escape
 from pathlib import Path
 from time import time
@@ -17,7 +16,6 @@ from .core.logging_config import setup_logging
 from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .context import BotContext
 from .downloaders.gdrive import drive_id_from_url
-from .services.status import format_status
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
     drive_item_info,
@@ -37,6 +35,7 @@ from .services.web_dashboard import WebDashboard
 from .services.telegram_delivery import telegram_chat_id
 from .telegram import keyboards as telegram_keyboards
 from .telegram import messages as telegram_messages
+from .telegram.status import TelegramStatus
 
 setup_logging()
 LOGGER = logging.getLogger(__name__)
@@ -64,15 +63,11 @@ drive_share_pages = DriveSharePages(
     8005,
     300,
 )
-status_messages: dict[int, Message] = {}
-status_jobs: dict[int, asyncio.Task] = {}
 pending_local_metadata_tasks: dict[str, object] = {}
 pending_jellyfin_scan_reasons: set[str] = set()
 local_metadata_job: asyncio.Task | None = None
 last_jellyfin_auto_scan_at = 0.0
 jellyfin_scan_lock = asyncio.Lock()
-status_text: dict[int, str] = {}
-status_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 series_promotion_job: asyncio.Task | None = None
 PENDING_ADD_TIMEOUT = 120
 JELLYFIN_AUTO_SCAN_COOLDOWN = 180
@@ -89,6 +84,12 @@ app = (
     )
     if config.enable_telegram_ui and config.bot_token
     else None
+)
+telegram_status = TelegramStatus(
+    app,
+    manager,
+    background,
+    config.status_update_interval,
 )
 context = BotContext(
     config=config,
@@ -108,13 +109,6 @@ def owner_only(_, __, message: Message) -> bool:
     return bool(not shutting_down and user and user.id == config.owner_id)
 
 owner_filter = filters.create(owner_only)
-
-def chat_tasks(chat_id: int):
-    return [
-        task
-        for task in manager.active_tasks()
-        if task.chat_id == chat_id and task.status_visible
-    ]
 
 async def expire_pending_add(token: str) -> None:
     try:
@@ -189,77 +183,16 @@ def take_pending_drive_delete(token: str) -> dict | None:
     return item
 
 async def update_status_message(chat_id: int) -> None:
-    async with status_locks[chat_id]:
-        tasks = chat_tasks(chat_id)
-        if not tasks:
-            message = status_messages.pop(chat_id, None)
-            status_text.pop(chat_id, None)
-            if message:
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-            return
-
-        text = format_status(tasks)
-        message = status_messages.get(chat_id)
-        if message is None:
-            status_messages[chat_id] = await app.send_message(
-                chat_id, text, parse_mode=ParseMode.HTML, disable_notification=True
-            )
-            status_text[chat_id] = text
-        elif status_text.get(chat_id) != text:
-            try:
-                await message.edit_text(text, parse_mode=ParseMode.HTML)
-                status_text[chat_id] = text
-            except Exception:
-                LOGGER.exception("Could not update status message chat=%s", chat_id)
+    await telegram_status.update(chat_id)
 
 async def replace_status_message(chat_id: int) -> None:
-    async with status_locks[chat_id]:
-        text = format_status(chat_tasks(chat_id))
-        new_message = await app.send_message(
-            chat_id, text, parse_mode=ParseMode.HTML, disable_notification=True
-        )
-        old_message = status_messages.get(chat_id)
-        status_messages[chat_id] = new_message
-        status_text[chat_id] = text
-        if old_message:
-            try:
-                await old_message.delete()
-            except Exception:
-                pass
-
-async def status_loop(chat_id: int) -> None:
-    try:
-        while chat_tasks(chat_id):
-            await update_status_message(chat_id)
-            await asyncio.sleep(config.status_update_interval)
-        await update_status_message(chat_id)
-    finally:
-        status_jobs.pop(chat_id, None)
+    await telegram_status.replace(chat_id)
 
 async def start_live_status(chat_id: int, message: Message) -> None:
-    async with status_locks[chat_id]:
-        old_message = status_messages.get(chat_id)
-        text = format_status(chat_tasks(chat_id))
-        await message.edit_text(text, parse_mode=ParseMode.HTML)
-        status_messages[chat_id] = message
-        status_text[chat_id] = text
-        if old_message and old_message.id != message.id:
-            try:
-                await old_message.delete()
-            except Exception:
-                pass
-    job = status_jobs.get(chat_id)
-    if job is None or job.done():
-        status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
+    await telegram_status.start(chat_id, message)
 
 async def send_live_status(chat_id: int) -> None:
-    await update_status_message(chat_id)
-    job = status_jobs.get(chat_id)
-    if job is None or job.done():
-        status_jobs[chat_id] = background.create(status_loop(chat_id), name="status-loop")
+    await telegram_status.send(chat_id)
 
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
@@ -344,11 +277,6 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             if task.phase == TaskPhase.DOWNLOADING:
                 task.status_visible = True
                 await replace_status_message(task.chat_id)
-                job = status_jobs.get(task.chat_id)
-                if job is None or job.done():
-                    status_jobs[task.chat_id] = background.create(
-                        status_loop(task.chat_id), name="status-loop"
-                    )
 
         await manager.run_task(
             task,
@@ -404,9 +332,6 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
     if not is_torrent:
         await asyncio.sleep(0)
         await replace_status_message(task.chat_id)
-        job = status_jobs.get(task.chat_id)
-        if job is None or job.done():
-            status_jobs[task.chat_id] = background.create(status_loop(task.chat_id), name="status-loop")
 
 async def delete_google_drive_link(message: Message, link: str) -> None:
     try:
@@ -728,7 +653,8 @@ async def shutdown_bot() -> None:
         return
     shutting_down = True
     LOGGER.info("Graceful shutdown started")
-    for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()) + list(status_jobs.values()):
+    telegram_status.cancel_jobs()
+    for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()):
         job.cancel()
     await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer, close_web_dashboard))
     LOGGER.info("Graceful shutdown complete")

@@ -12,6 +12,17 @@ def ensure_inside(root: Path, target: Path) -> None:
         raise ValueError(f"Refusing to operate outside {root}")
 
 
+def ensure_no_symlinks(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"Symbolic links are not allowed: {path.name}")
+    if not path.is_dir():
+        return
+    for item in path.rglob("*"):
+        if item.is_symlink():
+            relative = item.relative_to(path).as_posix()
+            raise RuntimeError(f"Symbolic links are not allowed: {relative}")
+
+
 def local_category_root(local_root: Path, category: str) -> Path:
     if category not in {"movies", "series"}:
         raise ValueError("Unknown local category")

@@ -1,5 +1,7 @@
 import asyncio
+import os
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -19,18 +21,26 @@ from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, T
 from mirrorbot.core.parser import parse_add_text
 from mirrorbot.core.source_detector import detect_source
 from mirrorbot.downloaders.direct import retryable_direct_error
+from mirrorbot.downloaders.torrent import selected_torrent_size
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
+from mirrorbot.services import telegram_delivery
 from mirrorbot.services.buzzheavier_delivery import (
     buzzheavier_upload_name,
     duplicate_basenames,
 )
-from mirrorbot.services.google_drive_delivery import GoogleDriveUploader
+from mirrorbot.services.file_explorer import FileExplorer
+from mirrorbot.services.google_drive_delivery import GoogleDriveUploader, next_drive_chunk
 from mirrorbot.services.local_delivery import deliver_to_local
 from mirrorbot.services.media_library import MediaMatch
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
-from mirrorbot.services.telegram_delivery import telegram_chat_id, telegram_message_link
+from mirrorbot.services.telegram_delivery import (
+    telegram_chat_id,
+    telegram_message_link,
+    upload_files,
+    upload_to_telegram,
+)
 from mirrorbot.services.web.auth import credentials_match, is_public_path
 from mirrorbot.services.web_dashboard import WebDashboard
 from mirrorbot.telegram.messages import completion_message, completion_payload
@@ -121,6 +131,30 @@ def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
     assert duplicates == {"video.mkv"}
     assert buzzheavier_upload_name("season1/video.mkv", duplicates) == "season1 - video.mkv"
     assert buzzheavier_upload_name("poster.jpg", duplicates) == "poster.jpg"
+
+
+def test_upload_tree_rejects_symbolic_links(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret", encoding="utf-8")
+    try:
+        os.symlink(secret, source / "innocent.txt")
+    except OSError:
+        pytest.skip("Symbolic links are unavailable in this environment")
+
+    with pytest.raises(RuntimeError, match="Symbolic links are not allowed"):
+        upload_files(source)
+
+
+def test_selected_torrent_size_uses_current_priorities():
+    files = [
+        {"size": 100, "priority": 0},
+        {"size": 200, "priority": 1},
+        {"size": 300, "priority": 6},
+    ]
+
+    assert selected_torrent_size(files) == 500
 
 
 def test_terminal_transition_is_not_overwritten():
@@ -272,6 +306,73 @@ async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypat
         await uploader.upload()
 
     uploader.cleanup_created.assert_awaited_once_with("failed")
+
+
+@pytest.mark.asyncio
+async def test_gdrive_cancel_captures_file_created_by_inflight_chunk():
+    started = Event()
+    release = Event()
+
+    class Request:
+        def next_chunk(self):
+            started.set()
+            release.wait(timeout=5)
+            return None, {"id": "created-after-cancel"}
+
+    created_ids = []
+    operation = asyncio.create_task(next_drive_chunk(Request(), created_ids))
+    await asyncio.to_thread(started.wait, 2)
+    operation.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+
+    assert created_ids == ["created-after-cancel"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_timeout_does_not_fallback_and_duplicate(monkeypatch, tmp_path):
+    source = tmp_path / "file.bin"
+    source.write_bytes(b"data")
+    task = make_task()
+    upload = AsyncMock(side_effect=TimeoutError("ambiguous timeout"))
+    monkeypatch.setattr(telegram_delivery, "_upload_to_telegram_chat", upload)
+
+    with pytest.raises(TimeoutError, match="ambiguous timeout"):
+        await upload_to_telegram(task, source, object(), 100, "-1001234567890")
+
+    upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_file_explorer_delete_runs_in_worker_thread(tmp_path, monkeypatch):
+    target = tmp_path / "delete-me.bin"
+    target.write_bytes(b"data")
+    explorer = FileExplorer.__new__(FileExplorer)
+    explorer.root = tmp_path
+    explorer._session = lambda _request: SimpleNamespace(token="token")
+    explorer._schedule_scan = lambda *_args: None
+    worker_calls = []
+    original_to_thread = asyncio.to_thread
+
+    async def tracked_to_thread(function, *args, **kwargs):
+        worker_calls.append(function)
+        return await original_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", tracked_to_thread)
+
+    class Request:
+        match_info = {"action": "delete"}
+
+        async def json(self):
+            return {"sources": ["delete-me.bin"]}
+
+    response = await explorer._action(Request())
+
+    assert response.status == 200
+    assert explorer._delete_paths in worker_calls
+    assert not target.exists()
 
 
 def test_gdrive_permission_creation_retries(monkeypatch):
