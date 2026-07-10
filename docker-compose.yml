@@ -3,6 +3,7 @@ services:
     build: .
     container_name: mirror-bot
     restart: unless-stopped
+    stop_grace_period: 40s
     env_file:
       - .env
     depends_on:

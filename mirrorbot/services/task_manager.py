@@ -264,6 +264,36 @@ class TaskManager:
                 await asyncio.gather(*jobs, return_exceptions=True)
         await self.qb.close()
 
+    async def cleanup_orphaned_torrents(self, attempts: int = 30) -> int:
+        torrents = None
+        for attempt in range(1, attempts + 1):
+            try:
+                torrents = await self.qb.info()
+                break
+            except Exception:
+                if attempt >= attempts:
+                    LOGGER.exception(
+                        "Could not inspect qBittorrent for orphaned tasks"
+                    )
+                    return 0
+                await asyncio.sleep(1)
+        removed = 0
+        for torrent in torrents or []:
+            torrent_hash = str(torrent.get("hash") or "")
+            if not torrent_hash:
+                continue
+            try:
+                await self.qb.delete(torrent_hash, True)
+                removed += 1
+            except Exception:
+                LOGGER.exception(
+                    "Could not remove orphaned qBittorrent task hash=%s",
+                    torrent_hash[:8],
+                )
+        if removed:
+            LOGGER.info("Removed %s orphaned qBittorrent task(s)", removed)
+        return removed
+
     async def _run_or_cancel(self, task: Task, awaitable):
         self._raise_if_cancelled(task)
         operation = asyncio.create_task(awaitable)

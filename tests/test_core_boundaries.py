@@ -30,7 +30,9 @@ from mirrorbot.services.buzzheavier_delivery import (
     buzzheavier_upload_name,
     duplicate_basenames,
 )
+from mirrorbot.services.file_explorer import PAGE as FILE_EXPLORER_PAGE
 from mirrorbot.services.file_explorer import FileExplorer
+from mirrorbot.services.page_style import TEMP_PAGE_CSS
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader, next_drive_chunk
 from mirrorbot.services.local_delivery import deliver_to_local
 from mirrorbot.services.media_library import MediaMatch
@@ -145,6 +147,27 @@ def test_upload_tree_rejects_symbolic_links(tmp_path):
 
     with pytest.raises(RuntimeError, match="Symbolic links are not allowed"):
         upload_files(source)
+
+
+def test_mobile_action_bars_reserve_list_space():
+    torrent_page_source = Path(
+        "mirrorbot/downloaders/torrent_selector.py"
+    ).read_text(encoding="utf-8")
+
+    assert "--selectionbar-height" in torrent_page_source
+    assert "ResizeObserver(syncSelectionSpace)" in torrent_page_source
+    assert "--selectionbar-height" in FILE_EXPLORER_PAGE
+    assert "ResizeObserver(syncSelectionSpace)" in FILE_EXPLORER_PAGE
+    assert "[hidden] { display: none !important; }" in TEMP_PAGE_CSS
+
+
+def test_container_shutdown_keeps_qbittorrent_alive_for_bot_cleanup():
+    script = Path("start.sh").read_text(encoding="utf-8")
+    shutdown_block = script.split("shutdown() {", 1)[1].split("}", 1)[0]
+
+    assert 'kill -TERM "$bot_pid"' in shutdown_block
+    assert '"$qbit_pid"' not in shutdown_block
+    assert script.index('wait "$bot_pid"') < script.index('kill -TERM "$qbit_pid"')
 
 
 def test_selected_torrent_size_uses_current_priorities():
@@ -454,6 +477,28 @@ def test_task_manager_prunes_old_terminal_tasks():
 
     assert len(manager.tasks) == MAX_TERMINAL_TASKS
     assert min(task.created_at for task in manager.tasks.values()) == 5
+
+
+@pytest.mark.asyncio
+async def test_startup_removes_orphaned_qbittorrent_tasks():
+    qb = SimpleNamespace(
+        info=AsyncMock(
+            return_value=[
+                {"hash": "a" * 40, "name": "old-one"},
+                {"hash": "b" * 40, "name": "old-two"},
+            ]
+        ),
+        delete=AsyncMock(),
+    )
+    manager = TaskManager.__new__(TaskManager)
+    manager.qb = qb
+
+    removed = await manager.cleanup_orphaned_torrents(attempts=1)
+
+    assert removed == 2
+    assert qb.delete.await_count == 2
+    qb.delete.assert_any_await("a" * 40, True)
+    qb.delete.assert_any_await("b" * 40, True)
 
 
 @pytest.mark.asyncio

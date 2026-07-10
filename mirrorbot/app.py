@@ -693,6 +693,7 @@ async def main() -> None:
     global web_dashboard
     LOGGER.info("========== BOT STARTED ================")
     await asyncio.to_thread(ensure_jellyfin_running)
+    await manager.cleanup_orphaned_torrents()
     cleanup_abandoned_downloads(config.download_dir, config.local_download_root)
     prepare_local_library(config.local_download_root)
 

@@ -32,6 +32,7 @@ TEMP_PAGE_CSS = """
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { max-width: 100%; overflow-x: hidden; }
 body {
   margin: 0;

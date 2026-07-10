@@ -123,6 +123,10 @@ function useHashView() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [view]);
+
   const setView = (id) => {
     setViewState(id);
     window.location.hash = id;
