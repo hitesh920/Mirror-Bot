@@ -67,7 +67,7 @@ async def status(_, message: Message):
 @app.on_message(filters.command("stats") & owner_filter)
 async def stats(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.stats", result="requested")
-    disk = psutil.disk_usage(str(config.local_download_root))
+    disk = psutil.disk_usage(str(config.download_dir))
     process = psutil.Process(os.getpid())
     uptime = format_uptime(int(time.time() - process.create_time()))
     await message.reply(
@@ -75,7 +75,7 @@ async def stats(_, message: Message):
         f"Uptime: {uptime}\n"
         f"CPU: {psutil.cpu_percent()}%\n"
         f"RAM: {psutil.virtual_memory().percent}%\n"
-        f"Local free: {disk.free // (1024 ** 3)} GiB\n"
+        f"Workspace free: {disk.free // (1024 ** 3)} GiB\n"
         f"Tasks: {len(manager.active_tasks())}"
     )
 

@@ -25,21 +25,14 @@ class Config:
     owner_id: int
     telegram_api_id: int
     telegram_api_hash: str
-    local_download_root: Path
     google_drive_folder_id: str
     task_limit: int
     status_update_interval: int
     public_base_url: str
     torrent_selection_port: int
     torrent_selection_timeout: int
-    jellyfin_api_key: str
-    tmdb_api_key: str
     buzzheavier_account_id: str
     telegram_dump_chat_id: str
-    web_port: int
-    web_username: str
-    web_password: str
-    enable_web_ui: bool
     enable_telegram_ui: bool
 
     download_dir: Path = Path("/app/downloads")
@@ -56,11 +49,8 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         load_dotenv()
-        required = ["LOCAL_DOWNLOAD_ROOT"]
-        enable_web_ui = _bool("ENABLE_WEB_UI", True)
         enable_telegram_ui = _bool("ENABLE_TELEGRAM_UI", True)
-        if enable_web_ui:
-            required.extend(["WEB_USERNAME", "WEB_PASSWORD"])
+        required = []
         if enable_telegram_ui:
             required.extend([
                 "BOT_TOKEN",
@@ -77,20 +67,13 @@ class Config:
             owner_id=_int("OWNER_ID"),
             telegram_api_id=_int("TELEGRAM_API_ID"),
             telegram_api_hash=getenv("TELEGRAM_API_HASH", ""),
-            local_download_root=Path(getenv("LOCAL_DOWNLOAD_ROOT", "")),
             google_drive_folder_id=getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
             task_limit=max(1, _int("TASK_LIMIT", 10)),
             status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
             public_base_url=getenv("PUBLIC_BASE_URL", ""),
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8001),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
-            jellyfin_api_key=getenv("JELLYFIN_API_KEY", ""),
-            tmdb_api_key=getenv("TMDB_API_KEY", ""),
             buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
-            web_port=_int("WEB_PORT", 8000),
-            web_username=getenv("WEB_USERNAME", ""),
-            web_password=getenv("WEB_PASSWORD", ""),
-            enable_web_ui=enable_web_ui,
             enable_telegram_ui=enable_telegram_ui,
         )

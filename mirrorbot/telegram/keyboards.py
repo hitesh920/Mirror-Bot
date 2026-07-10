@@ -6,19 +6,12 @@ from ..core.models import Destination
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Local", callback_data=f"dest:local:{token}")],
             [
                 InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
                 InlineKeyboardButton("Google Drive", callback_data=f"dest:gdrive:{token}"),
             ],
             [InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}")],
         ]
-    )
-
-
-def local_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Movies", callback_data=f"local:movies:{token}"), InlineKeyboardButton("Series", callback_data=f"local:series:{token}")]]
     )
 
 
@@ -61,24 +54,7 @@ def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def jellyfin_buttons(jellyfin_url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("Open Jellyfin", url=jellyfin_url)],
-            [
-                InlineKeyboardButton("Start", callback_data="jf:start"),
-                InlineKeyboardButton("Stop", callback_data="jf:stop"),
-            ],
-            [
-                InlineKeyboardButton("Restart", callback_data="jf:restart"),
-                InlineKeyboardButton("Refresh", callback_data="jf:refresh"),
-            ],
-            [InlineKeyboardButton("Scan Library", callback_data="jf:scan")],
-        ]
-    )
-
-
-def completion_buttons(task, jellyfin_url: str) -> InlineKeyboardMarkup | None:
+def completion_buttons(task) -> InlineKeyboardMarkup | None:
     if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
         return InlineKeyboardMarkup([[InlineKeyboardButton("Open Google Drive", url=task.result_links[0])]])
     if task.destination == Destination.BUZZHEAVIER and task.result_links:
@@ -89,6 +65,4 @@ def completion_buttons(task, jellyfin_url: str) -> InlineKeyboardMarkup | None:
             for index, link in enumerate(task.result_links[:10], start=1)
         ]
         return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
-    if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("Open Jellyfin", url=jellyfin_url)]])
     return None

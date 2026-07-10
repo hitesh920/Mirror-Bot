@@ -8,7 +8,7 @@ from pyrogram.types import Message
 
 from ..app import (
     ADD_USAGE, LOGGER, answer_expired_selection, app, config, destination_buttons,
-    launch_selected_task, local_buttons, owner_filter, pending_adds,
+    launch_selected_task, owner_filter, pending_adds,
     start_pending_add_expiry, ytdlp_audio_buttons, ytdlp_buttons,
     ytdlp_video_buttons,
 )
@@ -132,9 +132,6 @@ async def destination_choice(_, query):
     if token not in pending_adds:
         await answer_expired_selection(query)
         return
-    if dest == "local":
-        await query.message.edit("Choose local category:", reply_markup=local_buttons(token))
-        return
     if dest == "telegram":
         await launch_selected_task(query, token, Destination.TELEGRAM)
         return
@@ -145,13 +142,3 @@ async def destination_choice(_, query):
         await launch_selected_task(query, token, Destination.BUZZHEAVIER)
         return
     await query.answer("Unknown destination", show_alert=True)
-
-
-@app.on_callback_query(filters.regex(r"^local:"))
-async def local_choice(_, query):
-    if query.from_user.id != config.owner_id:
-        await query.answer("Not allowed", show_alert=True)
-        return
-    _, category, token = query.data.split(":", 2)
-    destination = Destination.LOCAL_MOVIES if category == "movies" else Destination.LOCAL_SERIES
-    await launch_selected_task(query, token, destination)

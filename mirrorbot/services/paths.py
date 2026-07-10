@@ -21,12 +21,3 @@ def ensure_no_symlinks(path: Path) -> None:
         if item.is_symlink():
             relative = item.relative_to(path).as_posix()
             raise RuntimeError(f"Symbolic links are not allowed: {relative}")
-
-
-def local_category_root(local_root: Path, category: str) -> Path:
-    if category not in {"movies", "series"}:
-        raise ValueError("Unknown local category")
-    target = local_root / category
-    ensure_inside(local_root, target)
-    target.mkdir(parents=True, exist_ok=True)
-    return target

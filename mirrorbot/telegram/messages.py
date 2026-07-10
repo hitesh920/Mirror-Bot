@@ -24,15 +24,13 @@ HELP_TEXT = "\n".join(
         "<code>/stats</code> - bot/server stats",
         "<code>/speedtest</code> - test server network speed",
         "<code>/gdstats</code> - Google Drive auth and quota",
-        "<code>/jellyfin</code> - manage Jellyfin",
-        "<code>/local</code> - temporary local file explorer",
         "",
         "<b>Manage</b>",
         "<code>/cancel &lt;task-id&gt;</code> - cancel one task",
         "<code>/cancelall</code> - cancel all active tasks",
         "<code>/restart</code> - gracefully restart Mirror-Bot",
         "<code>/logs</code> - send recent sanitized application logs",
-        "<code>/delete</code> - delete Local or Google Drive items",
+        "<code>/delete</code> - delete a Google Drive item",
         "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
         "",
         "<b>Google Drive</b>",
@@ -40,27 +38,6 @@ HELP_TEXT = "\n".join(
         "<code>/share &lt;drive-link&gt;</code> - temporary public Drive share page",
     ]
 )
-
-
-def format_jellyfin_status(status, jellyfin_url: str, action: str = "Status", server_info: dict | None = None) -> str:
-    running = "yes" if status.running else "no"
-    lines = [
-        "<b>Jellyfin</b>",
-        f"<b>Action:</b> <code>{escape(action)}</code>",
-        f"<b>Container:</b> <code>{escape(status.name)}</code>",
-        f"<b>State:</b> <code>{escape(status.state)}</code>",
-        f"<b>Health:</b> <code>{escape(status.health)}</code>",
-        f"<b>Running:</b> <code>{running}</code>",
-    ]
-    if server_info:
-        lines.extend(
-            [
-                f"<b>Server:</b> <code>{escape(server_info.get('ServerName', 'unknown'))}</code>",
-                f"<b>Version:</b> <code>{escape(server_info.get('Version', 'unknown'))}</code>",
-            ]
-        )
-    lines.append(f"<b>URL:</b> <code>{escape(jellyfin_url)}</code>")
-    return "\n".join(lines)
 
 
 def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
@@ -124,48 +101,5 @@ def completion_message(task) -> str:
             warning_list(task.processing_warnings),
         ]
     else:
-        local_name = escape(task.library_name or task.result_name or task.name or task.source.type.value)
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{local_name}</code>",
-            f"<b>Uploaded to:</b> <code>{escape(str(task.result_path or 'Local'))}</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
-            result_list("Files", task.result_files),
-            result_list("Folders", task.result_folders),
-            warning_list(task.processing_warnings),
-        ]
+        raise ValueError(f"Unsupported completion destination: {task.destination.value}")
     return "\n".join(section for section in sections if section)
-
-
-def completion_payload(task, jellyfin_url: str) -> dict:
-    links = []
-    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
-        links.append({"label": "Open Google Drive", "url": task.result_links[0]})
-    elif task.destination == Destination.TELEGRAM:
-        links.extend(
-            {"label": f"Open {index}", "url": link}
-            for index, link in enumerate(task.result_links[:10], start=1)
-            if link
-        )
-    elif task.destination == Destination.BUZZHEAVIER:
-        links.extend(
-            {"label": f"Open {index}", "url": link}
-            for index, link in enumerate(task.result_links[:10], start=1)
-        )
-    elif task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-        links.append({"label": "Open Jellyfin", "url": jellyfin_url})
-    name = (
-        task.library_name or task.result_name or task.name or task.source.type.value
-        if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-        else task.result_name or task.name or task.source.type.value
-    )
-    return {
-        "name": name,
-        "destination": task.destination.value,
-        "files": task.result_files,
-        "folders": task.result_folders,
-        "links": links,
-        "path": str(task.result_path or ""),
-        "warnings": task.processing_warnings,
-    }

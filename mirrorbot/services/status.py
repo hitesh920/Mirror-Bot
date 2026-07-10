@@ -60,7 +60,6 @@ def task_status(task: Task, number: int) -> str:
         TaskPhase.EXTRACTING,
         TaskPhase.ARCHIVING,
         TaskPhase.SPLITTING,
-        TaskPhase.MOVING,
         TaskPhase.DELIVERING,
         TaskPhase.UPLOADING,
     }:
@@ -71,8 +70,6 @@ def task_status(task: Task, number: int) -> str:
         lines.append(f"<code>{progress_bar(task.progress)}</code> <b>{percent}</b>")
         if task.phase == TaskPhase.UPLOADING:
             processed_label = "Uploaded"
-        elif task.phase == TaskPhase.MOVING:
-            processed_label = "Moved"
         else:
             processed_label = "Processed"
         lines.append(field(processed_label, human_size(task.downloaded)))

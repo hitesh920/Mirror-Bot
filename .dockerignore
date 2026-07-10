@@ -8,5 +8,3 @@ logs
 credentials.json
 token.pickle
 token.pickel
-web/node_modules
-mirrorbot/web_dist

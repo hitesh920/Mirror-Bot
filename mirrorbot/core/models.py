@@ -17,13 +17,10 @@ class SourceType(str, Enum):
     TORRENT_FILE = "torrent_file"
     YTDLP = "ytdlp"
     GOOGLE_DRIVE = "google_drive"
-    LOCAL_PATH = "local_path"
     UNSUPPORTED = "unsupported"
 
 
 class Destination(str, Enum):
-    LOCAL_MOVIES = "local_movies"
-    LOCAL_SERIES = "local_series"
     TELEGRAM = "telegram"
     GOOGLE_DRIVE = "google_drive"
     BUZZHEAVIER = "buzzheavier"
@@ -40,7 +37,6 @@ class TaskPhase(str, Enum):
     EXTRACTING = "extracting"
     ARCHIVING = "archiving"
     SPLITTING = "splitting"
-    MOVING = "moving"
     DELIVERING = "delivering"
     UPLOADING = "uploading"
     COMPLETE = "complete"
@@ -88,7 +84,6 @@ class Task:
     error: str = ""
     result_path: Path | None = None
     result_name: str = ""
-    library_name: str = ""
     result_files: list[str] = field(default_factory=list)
     result_folders: list[str] = field(default_factory=list)
     result_links: list[str] = field(default_factory=list)

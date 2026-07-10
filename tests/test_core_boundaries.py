@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from aiohttp import web
 from aiohttp.client_exceptions import ClientResponseError
 
 from mirrorbot.core.errors import (
@@ -17,6 +16,7 @@ from mirrorbot.core.errors import (
     TorrentMetadataTimeoutError,
     TorrentRemovedError,
 )
+from mirrorbot.core.config import Config
 from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
 from mirrorbot.core.parser import parse_add_text
 from mirrorbot.core.source_detector import detect_source
@@ -30,12 +30,8 @@ from mirrorbot.services.buzzheavier_delivery import (
     buzzheavier_upload_name,
     duplicate_basenames,
 )
-from mirrorbot.services.file_explorer import PAGE as FILE_EXPLORER_PAGE
-from mirrorbot.services.file_explorer import FileExplorer
 from mirrorbot.services.page_style import TEMP_PAGE_CSS
 from mirrorbot.services.google_drive_delivery import GoogleDriveUploader, next_drive_chunk
-from mirrorbot.services.local_delivery import deliver_to_local
-from mirrorbot.services.media_library import MediaMatch
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
     telegram_chat_id,
@@ -43,9 +39,8 @@ from mirrorbot.services.telegram_delivery import (
     upload_files,
     upload_to_telegram,
 )
-from mirrorbot.services.web.auth import credentials_match, is_public_path
-from mirrorbot.services.web_dashboard import WebDashboard
-from mirrorbot.telegram.messages import completion_message, completion_payload
+from mirrorbot.telegram.messages import completion_message
+from mirrorbot.telegram.keyboards import destination_buttons
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -113,15 +108,6 @@ def test_telegram_completion_mentions_dump_channel():
     assert "Telegram dump channel" in text
 
 
-def test_telegram_completion_payload_includes_result_links():
-    task = make_task()
-    task.result_links = ["https://t.me/c/123/77"]
-
-    payload = completion_payload(task, "http://jellyfin.local")
-
-    assert payload["links"] == [{"label": "Open 1", "url": "https://t.me/c/123/77"}]
-
-
 def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
     files = [
         (Path("season1/video.mkv"), "season1/video.mkv"),
@@ -156,12 +142,45 @@ def test_mobile_action_bars_reserve_list_space():
 
     assert "--selectionbar-height" in torrent_page_source
     assert "ResizeObserver(syncSelectionSpace)" in torrent_page_source
-    assert "--selectionbar-height" in FILE_EXPLORER_PAGE
-    assert "ResizeObserver(syncSelectionSpace)" in FILE_EXPLORER_PAGE
-    assert 'class="selection-head"' in FILE_EXPLORER_PAGE
-    assert 'class="file-actions"' in FILE_EXPLORER_PAGE
-    assert "grid-template-columns:repeat(4,minmax(0,1fr))" in FILE_EXPLORER_PAGE
     assert "[hidden] { display: none !important; }" in TEMP_PAGE_CSS
+
+
+def test_telegram_only_public_surface():
+    assert {destination.value for destination in Destination} == {
+        "telegram",
+        "google_drive",
+        "buzzheavier",
+    }
+    assert "local_path" not in {source.value for source in SourceType}
+    labels = [
+        button.text
+        for row in destination_buttons("token").inline_keyboard
+        for button in row
+    ]
+    assert labels == ["Telegram", "Google Drive", "BuzzHeavier"]
+
+    removed_config = {
+        "local_download_root",
+        "jellyfin_api_key",
+        "tmdb_api_key",
+        "enable_web_ui",
+        "web_port",
+        "web_username",
+        "web_password",
+    }
+    assert removed_config.isdisjoint(Config.__dataclass_fields__)
+
+
+def test_compose_exposes_only_temporary_page_ports():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    assert '"8001:8001"' in compose
+    assert '"8002:8002"' in compose
+    assert '"8003:8003"' in compose
+    assert '"8000:8000"' not in compose
+    assert '"8004:8004"' not in compose
+    assert '"8005:8005"' not in compose
+    assert "jellyfin:" not in compose
+    assert "docker.sock" not in compose
 
 
 def test_container_shutdown_keeps_qbittorrent_alive_for_bot_cleanup():
@@ -200,24 +219,6 @@ def test_expiring_store_take_and_expiry():
     expired = ExpiringStore[str](ttl_seconds=-1)
     expired.put("old", "value")
     assert expired.get("old") is None
-
-
-def test_web_auth_helpers():
-    assert is_public_path("/login")
-    assert is_public_path("/assets/index.js")
-    assert not is_public_path("/api/state")
-    assert credentials_match("owner", "secret", "owner", "secret")
-    assert not credentials_match("owner", "secret", "owner", "wrong")
-
-
-def test_web_destination_validation_accepts_aliases():
-    dashboard = WebDashboard.__new__(WebDashboard)
-    assert dashboard.destination_from_form("local", "series") == Destination.LOCAL_SERIES
-    assert dashboard.destination_from_form("gdrive") == Destination.GOOGLE_DRIVE
-    assert dashboard.destination_from_form("google_drive") == Destination.GOOGLE_DRIVE
-
-    with pytest.raises(Exception):
-        dashboard.destination_from_form("")
 
 
 def test_torrent_failures_have_specific_categories():
@@ -263,45 +264,6 @@ async def test_probe_media_reads_video_metadata(monkeypatch):
     assert metadata.height == 1080
     assert metadata.artist == "A"
     assert metadata.title == "T"
-
-
-@pytest.mark.asyncio
-async def test_series_delivery_skips_empty_original_release_folder(tmp_path):
-    local_root = tmp_path / "media"
-    downloaded = tmp_path / "extracted" / "You.S01.720p.Hindi.Eng.Vegamovies.NL"
-    downloaded.mkdir(parents=True)
-    episode = downloaded / "You.S01E01.720p.Hindi.English.Vegamovies.NL.mkv"
-    episode.write_bytes(b"episode")
-    task = make_task()
-    task.work_dir = tmp_path / "work"
-    match = MediaMatch("tv", "You", "2018", season=1, confidence=1.0)
-
-    await deliver_to_local(task, downloaded.parent, local_root, "series", match)
-
-    target = local_root / "series" / "You (2018)"
-    assert (
-        target / "Season 01" / "You.S01E01.720p.Hindi.English.Vegamovies.NL.mkv"
-    ).is_file()
-    assert not (target / "You.S01.720p.Hindi.Eng.Vegamovies.NL").exists()
-
-
-@pytest.mark.asyncio
-async def test_movie_delivery_flattens_single_release_wrapper_folder(tmp_path):
-    local_root = tmp_path / "media"
-    downloaded = tmp_path / "extracted" / "Obsession.2026.1080p.WEB-DL"
-    downloaded.mkdir(parents=True)
-    movie = downloaded / "Obsession.2026.1080p.WEB-DL.mkv"
-    movie.write_bytes(b"movie")
-    task = make_task()
-    task.destination = Destination.LOCAL_MOVIES
-    task.work_dir = tmp_path / "work"
-    match = MediaMatch("movie", "Obsession", "2026", confidence=1.0)
-
-    await deliver_to_local(task, downloaded.parent, local_root, "movies", match)
-
-    target = local_root / "movies" / "Obsession (2026)"
-    assert (target / "Obsession.2026.1080p.WEB-DL.mkv").is_file()
-    assert not (target / "Obsession.2026.1080p.WEB-DL").exists()
 
 
 @pytest.mark.asyncio
@@ -369,36 +331,6 @@ async def test_telegram_timeout_does_not_fallback_and_duplicate(monkeypatch, tmp
         await upload_to_telegram(task, source, object(), 100, "-1001234567890")
 
     upload.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_file_explorer_delete_runs_in_worker_thread(tmp_path, monkeypatch):
-    target = tmp_path / "delete-me.bin"
-    target.write_bytes(b"data")
-    explorer = FileExplorer.__new__(FileExplorer)
-    explorer.root = tmp_path
-    explorer._session = lambda _request: SimpleNamespace(token="token")
-    explorer._schedule_scan = lambda *_args: None
-    worker_calls = []
-    original_to_thread = asyncio.to_thread
-
-    async def tracked_to_thread(function, *args, **kwargs):
-        worker_calls.append(function)
-        return await original_to_thread(function, *args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", tracked_to_thread)
-
-    class Request:
-        match_info = {"action": "delete"}
-
-        async def json(self):
-            return {"sources": ["delete-me.bin"]}
-
-    response = await explorer._action(Request())
-
-    assert response.status == 200
-    assert explorer._delete_paths in worker_calls
-    assert not target.exists()
 
 
 def test_gdrive_permission_creation_retries(monkeypatch):
@@ -502,24 +434,3 @@ async def test_startup_removes_orphaned_qbittorrent_tasks():
     assert qb.delete.await_count == 2
     qb.delete.assert_any_await("a" * 40, True)
     qb.delete.assert_any_await("b" * 40, True)
-
-
-@pytest.mark.asyncio
-async def test_dashboard_local_explorer_uses_owner_chat_id():
-    class Explorer:
-        def __init__(self):
-            self.chat_id = None
-
-        async def create(self, chat_id):
-            self.chat_id = chat_id
-            return "http://example.local/local/token"
-
-    explorer = Explorer()
-    dashboard = WebDashboard.__new__(WebDashboard)
-    dashboard.config = SimpleNamespace(owner_id=12345)
-    dashboard.file_explorer_getter = lambda: explorer
-
-    response = await dashboard.api_local(None)
-
-    assert isinstance(response, web.Response)
-    assert explorer.chat_id == 12345

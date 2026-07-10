@@ -6,45 +6,18 @@ services:
     stop_grace_period: 40s
     env_file:
       - .env
-    depends_on:
-      - jellyfin
     ports:
-      # Main web app
-      - "8000:8000"
       # Torrent selector
       - "8001:8001"
       # Google Drive search pages
       - "8002:8002"
-      # Temporary local file explorer
-      - "8004:8004"
-      # Temporary Google Drive folder share pages
-      - "8005:8005"
+      # Temporary Google Drive share pages
+      - "8003:8003"
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
       - ./credentials.json:/app/data/google/credentials.json:ro
       - ./token.pickle:/app/data/google/token.pickle
-      - ./downloads:/media
-      - ./data/jellyfin/config/data:/jellyfin-data
-      - /var/run/docker.sock:/var/run/docker.sock
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  jellyfin:
-    image: jellyfin/jellyfin:latest
-    container_name: jellyfin
-    restart: unless-stopped
-    ports:
-      - "8003:8096"
-    volumes:
-      - ./data/jellyfin/config:/config
-      - ./data/jellyfin/cache:/cache
-      - ./downloads:/media:ro
-    environment:
-      - TZ=${TZ:-Asia/Kolkata}
     logging:
       driver: json-file
       options:

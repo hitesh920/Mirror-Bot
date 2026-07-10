@@ -24,7 +24,7 @@ class DriveSharePage:
 
 
 class DriveSharePages:
-    def __init__(self, public_base_url: str, port: int = 8004, timeout: int = 300):
+    def __init__(self, public_base_url: str, port: int = 8003, timeout: int = 300):
         self.public_base_url = public_base_url.rstrip("/")
         self.port = port
         self.timeout = timeout

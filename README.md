@@ -1,379 +1,224 @@
-<div align="center">
++# Mirror-Bot
 
-# Mirror-Bot
+A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram, Google Drive, or BuzzHeavier.
 
-A private web dashboard and Telegram-aware transfer manager for downloading, processing, organizing, and delivering files across local storage, Google Drive, Telegram, BuzzHeavier, and Jellyfin.
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
+[![License](https://img.shields.io/github/license/hitesh920/Mirror-Bot)](LICENSE)
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![React](https://img.shields.io/badge/React-Dashboard-61DAFB?logo=react&logoColor=111111)
-![Jellyfin](https://img.shields.io/badge/Jellyfin-Managed-00A4DC?logo=jellyfin&logoColor=white)
-![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4?logo=googledrive&logoColor=white)
+> Mirror-Bot is designed for a single trusted owner. It has no public dashboard and does not provide local media-library storage.
 
-</div>
+## Highlights
 
-> Mirror-Bot is built for personal infrastructure. Use it only with content you are allowed to access, download, store, and share.
+- One `/add` flow for direct URLs, magnets, torrent files, Google Drive, BuzzHeavier, yt-dlp links, and replied Telegram files.
+- Telegram, Google Drive, and BuzzHeavier delivery destinations.
+- Optional Telegram dump channel to keep the bot conversation clean.
+- qBittorrent file selection through a temporary token-protected page.
+- Archive extraction and ZIP creation, including password-protected archives.
+- Live status with progress, size, speed, ETA, phase, and cancellation.
+- Google Drive upload, download, search, share, deletion, and quota tools.
+- Direct-host resolution and shortener bypass support.
+- Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
-## Preview
+## Transfer Flow
 
-![Mirror-Bot dashboard home](docs/screenshots/dashboard-home.png)
+1. Send `/add <link>` or reply to a Telegram file with `/add`.
+2. For yt-dlp sources, choose video/audio and quality.
+3. Choose Telegram, Google Drive, or BuzzHeavier.
+4. For torrents, review and select files on the temporary selector page.
+5. Monitor progress with `/status`.
+6. Receive one completion message with result links.
 
-<details>
-<summary>More dashboard screenshots</summary>
-
-### Add anything
-![Add anything page](docs/screenshots/dashboard-add.png)
-
-### Live status
-![Status page](docs/screenshots/dashboard-status.png)
-
-### Files
-![Files page](docs/screenshots/dashboard-files.png)
-
-### Google Drive
-![Drive page](docs/screenshots/dashboard-drive.png)
-
-### Jellyfin
-![Jellyfin page](docs/screenshots/dashboard-jellyfin.png)
-
-### Admin
-![Admin page](docs/screenshots/dashboard-admin.png)
-
-</details>
-
-## What It Does
-
-Mirror-Bot gives you one control room for transfer work:
-
-- Add direct links, magnets, torrents, Google Drive links, BuzzHeavier links, yt-dlp links, and browser uploads.
-- Choose a destination: local media library, Google Drive, Telegram, or BuzzHeavier.
-- Track live progress, speed, size, ETA, phase, and completed tasks from the web dashboard.
-- Organize local movies and series into Jellyfin-friendly folders using filename parsing and optional TMDb matching.
-- Manage a companion Jellyfin container from the dashboard.
-- Open temporary self-hosted pages for torrent file selection, local file management, Drive search, and Drive sharing.
-- Run admin actions like sanitized log download, speedtest, and graceful restart.
-
-## Dashboard Sections
-
-| Section | Purpose |
-| --- | --- |
-| Home | Resource cards, quick actions, and recent completed work |
-| Add | Smart single-box workflow for links and browser uploads |
-| Status | Active transfers, completed tasks, progress, ETA, and cancellation |
-| Files | Temporary local file explorer and Jellyfin scan actions |
-| Drive | Search, share, delete, and quota tools for Google Drive |
-| Jellyfin | Open, scan, start, stop, and restart the managed Jellyfin service |
-| Admin | Speedtest, sanitized logs, and Mirror-Bot restart |
-
-## Supported Sources
-
-| Source | Notes |
-| --- | --- |
-| Direct HTTP/HTTPS links | Downloads with filename and size detection where available |
-| Direct host links | Uses built-in resolvers for supported hosts |
-| Magnet and torrent links | qBittorrent-powered download with temporary file selector |
-| Google Drive files/folders | Downloaded through the official Google Drive API |
-| yt-dlp links | Video or audio choices, with video up to 1080p and MP3 up to 320 kbps |
-| Telegram files | Available when Telegram UI/session support is enabled |
-| BuzzHeavier | Can be used as a source or upload destination |
-
-## Destinations
-
-### Local Media Library
-
-Local delivery is designed for Jellyfin:
+### Processing Flags
 
 ```text
-movies/Movie Name (Year)/original-file-name.mkv
-series/Series Name (Year)/Season 01/original-episode-name.mkv
+/add <link> -e
+/add <link> -ep password
+/add <link> -z
+/add <link> -zp password
+/add <link> -n "Custom name"
 ```
 
-The bot keeps original media filenames, avoids overwriting existing files, applies writable media permissions, and triggers Jellyfin scan/metadata refresh after local batches complete.
+- `-e`: extract after download
+- `-ep <password>`: extract a password-protected archive
+- `-z`: create a ZIP archive
+- `-zp <password>`: create a password-protected ZIP
+- `-n <name>`: override the task display name
 
-### Google Drive
+Extraction failures fall back to delivering the original archive when the source is otherwise usable.
 
-Google Drive support uses OAuth and the official Drive API for upload, download, search, share-page generation, quota, and deletion.
+## Commands
 
-### Telegram
+| Command | Purpose |
+|---|---|
+| `/add <link>` | Add a URL, magnet, Drive link, BuzzHeavier link, or yt-dlp source |
+| `/add` as a reply | Download a replied Telegram file, torrent file, or link |
+| `/status` | Show live active-task progress |
+| `/stats` | Show uptime, CPU, RAM, disk, and task count |
+| `/cancel <task-id>` | Cancel one task |
+| `/cancelall` | Cancel every active task and selector |
+| `/search <name>` | Search Google Drive on a temporary results page |
+| `/share <drive-link>` | Create a temporary public Drive share page |
+| `/delete <drive-link-or-id>` | Permanently delete a Google Drive item |
+| `/gdstats` | Show Drive authentication and quota |
+| `/speedtest` | Test server network speed |
+| `/logs` | Send the latest sanitized application logs |
+| `/restart` | Gracefully restart Mirror-Bot |
+| `/help` | Show command help |
 
-When Telegram is enabled, Mirror-Bot can upload results back to Telegram, split large files, send media-compatible files as media, and use Telegram file replies as sources.
+All commands are restricted to `OWNER_ID`.
 
-### BuzzHeavier
+## Temporary Pages
 
-BuzzHeavier is available as an upload destination and source resolver. Configure `BUZZHEAVIER_ACCOUNT_ID` for authenticated uploads when required.
+Mirror-Bot has no persistent web dashboard. It opens only short-lived tokenized pages required by Telegram workflows.
 
-## Temporary Web Tools
+| Port | Service |
+|---|---|
+| `8001` | Torrent file selector |
+| `8002` | Google Drive search results |
+| `8003` | Google Drive public share page |
 
-| Tool | Port | Behavior |
-| --- | --- | --- |
-| Main dashboard | `8000` | Persistent authenticated web app, disabled when `ENABLE_WEB_UI=false` |
-| Torrent selector | `8001` | Opens only while a torrent waits for file selection |
-| Drive search page | `8002` | Tokenized temporary search result page |
-| Jellyfin | `8003` | Persistent Jellyfin web UI |
-| Local file explorer | `8004` | Tokenized temporary file manager |
-| Drive share page | `8005` | Tokenized temporary public share page |
+Open these TCP ports in the VPS firewall and cloud ingress rules. Anyone with a valid random URL can access that page until it expires.
 
-Temporary pages use random tokens and expire automatically. For public VPS deployments, open only the ports you need and prefer restrictive firewall rules.
+## Requirements
 
-## Quick Start
+- Docker Engine with Docker Compose
+- Telegram bot token
+- Telegram API ID and API hash
+- Publicly reachable VPS for temporary pages
+- Optional Google OAuth credentials
+- Optional BuzzHeavier account ID
 
-### 1. Clone
+The container includes qBittorrent-nox, FFmpeg, 7-Zip, UnRAR, Deno, and the Python runtime.
+
+## Installation
 
 ```bash
 git clone https://github.com/hitesh920/Mirror-Bot.git
 cd Mirror-Bot
+cp .env.example .env
 ```
 
-### 2. Configure
+Fill the required values in `.env`, then start the bot:
 
 ```bash
-cp .env.example .env
-mkdir -p downloads data/logs data/downloads
+docker compose up -d --build
+docker compose logs -f bot
 ```
 
-Edit `.env`:
+Check the running service:
 
-```dotenv
-BOT_TOKEN=your_bot_token
-OWNER_ID=your_numeric_telegram_user_id
-TELEGRAM_API_ID=your_api_id
-TELEGRAM_API_HASH=your_api_hash
-
-WEB_USERNAME=admin
-WEB_PASSWORD=change_this_password
-LOCAL_DOWNLOAD_ROOT=/media
+```bash
+docker compose ps
 ```
 
-For a web-only setup, keep Telegram command UI disabled:
+Only the `mirror-bot` container should run.
 
-```dotenv
-ENABLE_TELEGRAM_UI=false
-ENABLE_WEB_UI=true
-```
+## Configuration
 
-For Telegram-only operation, disable the main dashboard and keep the bot UI enabled:
+### Required
 
-```dotenv
-ENABLE_TELEGRAM_UI=true
-ENABLE_WEB_UI=false
-```
+| Variable | Description |
+|---|---|
+| `BOT_TOKEN` | Telegram bot token from BotFather |
+| `OWNER_ID` | Telegram user ID allowed to control the bot |
+| `TELEGRAM_API_ID` | Telegram API application ID |
+| `TELEGRAM_API_HASH` | Telegram API application hash |
 
-### 3. Optional Google Drive Files
+### Optional
 
-Place these in the repository root if you want Drive features:
+| Variable | Default | Description |
+|---|---:|---|
+| `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or username for Telegram uploads |
+| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Default Drive upload folder |
+| `BUZZHEAVIER_ACCOUNT_ID` | Empty | BuzzHeavier account identifier |
+| `TASK_LIMIT` | `10` | Maximum concurrent tasks |
+| `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
+| `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port |
+| `TORRENT_SELECTION_TIMEOUT` | `300` | Metadata/selection timeout in seconds |
+| `PUBLIC_BASE_URL` | Auto-detected | Emergency override for generated public URLs |
+| `TZ` | `Asia/Kolkata` | Container timezone |
+| `ENABLE_TELEGRAM_UI` | `true` | Enable Telegram command handling |
+
+### Telegram Dump Channel
+
+1. Create a Telegram channel.
+2. Add the bot as an administrator with permission to post.
+3. Set `TELEGRAM_DUMP_CHAT_ID` to a numeric channel ID such as `-1001234567890` or a resolvable `@username`.
+
+When configured, uploaded files go to the channel and the requesting chat receives only status and completion messages. If the channel is unavailable, PM fallback remains available when the task originated from Telegram.
+
+## Google Drive
+
+Place these files beside `docker-compose.yml`:
 
 ```text
 credentials.json
 token.pickle
 ```
 
-Both files are secrets. Do not commit them.
-
-### 4. Start
-
-```bash
-docker compose up -d --build
-```
-
-Open the dashboard:
+The Compose configuration mounts them at:
 
 ```text
-http://SERVER_IP:8000
+/app/data/google/credentials.json
+/app/data/google/token.pickle
 ```
 
-Open Jellyfin:
+Use the repository token-generation helper when a new OAuth token is required. Keep both files private and never commit them.
+
+## Storage
+
+Persistent runtime data:
 
 ```text
-http://SERVER_IP:8003
+data/
+├── downloads/   # temporary per-task workspaces
+└── logs/        # rotating application logs
 ```
 
-## Configuration Reference
+Completed files are delivered externally. Task workspaces are cleaned after success, failure, cancellation, and startup recovery.
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `BOT_TOKEN` | Telegram mode | Empty | Telegram bot token |
-| `OWNER_ID` | Telegram mode | Empty | Telegram user ID allowed to control the bot |
-| `TELEGRAM_API_ID` | Telegram mode | Empty | Telegram API app ID |
-| `TELEGRAM_API_HASH` | Telegram mode | Empty | Telegram API app hash |
-| `WEB_USERNAME` | Web dashboard | Empty | Dashboard login username |
-| `WEB_PASSWORD` | Web dashboard | Empty | Dashboard login password |
-| `WEB_PORT` | No | `8000` | Main dashboard port |
-| `ENABLE_TELEGRAM_UI` | No | `true` | Enable Telegram command handlers |
-| `LOCAL_DOWNLOAD_ROOT` | Yes | `/media` | Container path for local media output |
-| `GOOGLE_DRIVE_FOLDER_ID` | Drive upload | Empty | Default Drive upload folder |
-| `BUZZHEAVIER_ACCOUNT_ID` | BuzzHeavier | Empty | Optional BuzzHeavier account/token value |
-| `TASK_LIMIT` | No | `10` | Maximum active task count |
-| `STATUS_UPDATE_INTERVAL` | No | `10` | Status refresh interval in seconds |
-| `TORRENT_SELECTION_PORT` | No | `8001` | Torrent selector base port |
-| `TORRENT_SELECTION_TIMEOUT` | No | `300` | Torrent selector timeout in seconds |
-| `PUBLIC_BASE_URL` | No | Auto | Override generated public URLs if auto-detect fails |
-| `JELLYFIN_API_KEY` | Jellyfin scan | Empty | Jellyfin API key for scan and metadata refresh |
-| `TMDB_API_KEY` | Media naming | Empty | TMDb key for movie/series title matching |
-| `TZ` | No | `Asia/Kolkata` | Jellyfin timezone |
-
-Internal defaults are intentionally kept out of `.env` unless they need to be user-tuned.
-
-## Google Drive Token Generation
-
-If you do not already have `token.pickle`, generate it with the helper script:
+## Operations
 
 ```bash
-docker build -t mirror-bot-token-helper .
-docker run --rm -it \
-  -v "$(pwd):/work" \
-  -w /work \
-  mirror-bot-token-helper \
-  python scripts/generate_drive_token.py \
-  --credentials credentials.json \
-  --token token.pickle
-```
-
-Then restart the bot:
-
-```bash
-docker compose up -d --build bot
-```
-
-## Jellyfin Integration
-
-Jellyfin runs as a companion container named `jellyfin`.
-
-Persistent paths:
-
-```text
-data/jellyfin/config
-data/jellyfin/cache
-downloads
-```
-
-Media is mounted into Jellyfin read-only as `/media`. Mirror-Bot can:
-
-- start, stop, and restart Jellyfin;
-- open Jellyfin from the dashboard;
-- trigger scan and metadata refresh;
-- prune stale missing media entries after local deletes and scans.
-
-You lose Jellyfin users, settings, and metadata only if `data/jellyfin/` is deleted.
-
-## Docker Operations
-
-```bash
-# Start or update everything
-docker compose up -d --build
-
-# Restart only Mirror-Bot
-docker compose up -d --build bot
-
-# View logs
+# Follow logs
 docker compose logs -f bot
 
-# Stop services
+# Restart
+docker compose restart bot
+
+# Rebuild after an update
+git pull --ff-only
+docker compose build bot
+docker compose up -d --no-deps --force-recreate bot
+
+# Stop
 docker compose down
-
-# Check status
-docker compose ps
 ```
 
-## Telegram Commands
-
-Telegram commands remain available when `ENABLE_TELEGRAM_UI=true`.
-
-| Command | Description |
-| --- | --- |
-| `/add <link>` | Add a link and choose destination |
-| `/add` as reply | Add a replied Telegram file/link |
-| `/status` | Show live task status |
-| `/cancel <task-id>` | Cancel one task |
-| `/cancelall` | Cancel all active and pending tasks |
-| `/search <query>` | Search Google Drive on a temporary page |
-| `/share <drive-link>` | Create a temporary Drive share page |
-| `/delete <drive-link-or-id>` | Delete a Google Drive item |
-| `/gdstats` | Show Drive quota/auth status |
-| `/local` | Open temporary local file explorer |
-| `/jellyfin` | Manage Jellyfin |
-| `/logs` | Send sanitized recent logs |
-| `/speedtest` | Run network speedtest |
-| `/restart` | Gracefully restart Mirror-Bot |
-| `/help` | Show command help |
-
-All Telegram commands are owner-only.
-
-## Processing Flags
-
-Flags work with links and replied Telegram files:
-
-```text
-/add <link> -z
-/add <link> -zp "zip password"
-/add <link> -e
-/add <link> -ep "archive password"
-/add <link> -n "custom name"
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `-z` | Zip after download |
-| `-zp <password>` | Zip with password |
-| `-e` | Extract after download |
-| `-ep <password>` | Extract with password |
-| `-n <name>` | Custom task/display name |
-
-## Reliability Notes
-
-Mirror-Bot includes:
-
-- central task lifecycle states;
-- active task limit;
-- cancellation for downloads, uploads, selectors, and subprocesses;
-- disk-space reserve checks;
-- stalled-transfer detection;
-- graceful shutdown handling;
-- cleanup after success, failure, cancel, and restart;
-- rotating sanitized logs;
-- Docker log size limits.
+Mirror-Bot forwards shutdown signals, cancels active work, closes temporary page servers, removes qBittorrent leftovers, and waits for cleanup before exit.
 
 ## Development
 
 ```bash
-# Python tests
-pip install -r requirements-dev.txt
-pytest
-
-# Frontend build through Docker
-docker compose build bot
+python -m pip install -r requirements-dev.txt
+pytest -q
+ruff check mirrorbot tests
+docker compose config
 ```
 
-The production Docker build compiles the React dashboard with Vite and serves the generated assets from the Python backend.
+The project keeps Telegram handlers thin and routes transfer work through shared task, downloader, processor, and delivery services.
 
-## Security Notes
+## Security
 
-- Keep `.env`, `credentials.json`, `token.pickle`, Jellyfin API keys, TMDb keys, and Telegram tokens private.
-- Do not expose temporary ports publicly unless needed.
-- Temporary pages are token-protected but anyone with the URL can access them until expiry.
-- The bot mounts the Docker socket so it can manage only the configured Jellyfin container; deploy it only on infrastructure you control.
-
-## Development Checks
-
-Production containers keep dependencies lean and do not include pytest. For code changes, run checks from a local or VPS development environment:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements-dev.txt
-pytest
-python -m compileall mirrorbot
-cd web && npm ci && npm run build
-```
-
-If the VPS host does not have `python3-venv`, run tests in a disposable container instead:
-
-```bash
-docker compose run --rm --no-deps -v "$PWD:/app" -w /app bot \
-  sh -lc 'pip install -q -r requirements-dev.txt && PYTHONPATH=/app pytest -q'
-```
-
-Runtime files such as `.env`, Google OAuth files, logs, downloads, sessions, and generated dashboard assets are intentionally ignored by git. Keep those on the server only and never commit them.
+- Keep `.env`, bot tokens, API credentials, OAuth files, cookies, and dump-channel details private.
+- Temporary pages use random tokens but are still public to anyone who has the URL.
+- Application logs redact secrets, magnets, authorization headers, and tokenized URLs.
+- Google Drive sharing never changes permissions automatically.
+- Run the bot only on infrastructure you control.
+- Review source copyright and service terms before transferring content.
 
 ## License
 
-No license has been declared yet. Treat this repository as private/proprietary unless a license is added.
+See [LICENSE](LICENSE).

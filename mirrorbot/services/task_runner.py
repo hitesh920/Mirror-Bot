@@ -19,8 +19,6 @@ from .archive import (
 )
 from .buzzheavier_delivery import upload_to_buzzheavier
 from .google_drive_delivery import upload_to_gdrive
-from .local_delivery import deliver_to_local
-from .media_library import media_identity_name, resolve_media
 from .paths import ensure_no_symlinks
 from .telegram_delivery import upload_to_telegram
 from .transfer_guard import TransferGuard, ensure_disk_space
@@ -107,41 +105,6 @@ class TaskRunner:
             await self._finalize(task, guard_job)
         return task
 
-    async def run_local_upload(
-        self, task: Task, path: Path, telegram_client
-    ) -> Task:
-        manager = self.manager
-        guard_job = None
-        try:
-            async with manager._queue_slot(manager.task_sem, task):
-                guard_job = asyncio.create_task(TransferGuard(task).monitor())
-                task.transition(TaskPhase.SCANNING)
-                task.name = path.name
-                task.current_file = path.name
-                await asyncio.to_thread(ensure_no_symlinks, path)
-                await asyncio.to_thread(manager._record_result_manifest, task, path)
-                manager._raise_if_cancelled(task)
-                task.transition(TaskPhase.UPLOADING)
-                await self._upload(task, path, telegram_client)
-                task.transition(TaskPhase.COMPLETE)
-                task.current_file = ""
-            self._log_completed(task)
-        except asyncio.CancelledError:
-            self._mark_cancelled(task)
-        except TaskFailure as exc:
-            self._mark_failed(task, exc, exc.category, logging.WARNING)
-        except Exception as exc:
-            if task.cancelled:
-                self._mark_cancelled(task)
-            else:
-                self._mark_failed(task, exc, "unexpected", logging.ERROR)
-                LOGGER.exception(
-                    "Unexpected local upload failure task=%s", task.short_id()
-                )
-        finally:
-            await self._finalize(task, guard_job)
-        return task
-
     async def _process_download(self, task: Task, downloaded: Path) -> Path:
         manager = self.manager
         if task.options.extract:
@@ -184,34 +147,6 @@ class TaskRunner:
     async def _deliver(
         self, task: Task, downloaded: Path, telegram_client
     ) -> None:
-        manager = self.manager
-        if task.destination in {
-            Destination.LOCAL_MOVIES,
-            Destination.LOCAL_SERIES,
-        }:
-            task.transition(TaskPhase.MOVING)
-            task.guard_path = manager.config.local_download_root
-            task.current_file = downloaded.name
-            category = (
-                "movies"
-                if task.destination == Destination.LOCAL_MOVIES
-                else "series"
-            )
-            media_match = await asyncio.to_thread(
-                resolve_media,
-                media_identity_name(downloaded, category),
-                category,
-                manager.config.tmdb_api_key,
-            )
-            task.library_name = media_match.folder_name
-            task.result_path = await deliver_to_local(
-                task,
-                downloaded,
-                manager.config.local_download_root,
-                category,
-                media_match,
-            )
-            return
         task.transition(TaskPhase.UPLOADING)
         task.current_file = downloaded.name
         await self._upload(task, downloaded, telegram_client)

@@ -92,11 +92,6 @@ class TaskManager:
             on_selector_done=on_selector_done,
         )
 
-    async def run_local_upload(
-        self, task: Task, path: Path, telegram_client
-    ) -> Task:
-        return await self.runner.run_local_upload(task, path, telegram_client)
-
     async def _download(
         self,
         task: Task,
@@ -139,23 +134,6 @@ class TaskManager:
             return await download_ytdlp(task)
         if task.source.type == SourceType.GOOGLE_DRIVE:
             return await download_gdrive(task, self.config)
-        if task.source.type == SourceType.LOCAL_PATH:
-            path = Path(task.source.value)
-            if not path.exists():
-                raise FileNotFoundError("Local source path does not exist")
-            task.name = task.options.name or path.name
-            task.size = (
-                path.stat().st_size
-                if path.is_file()
-                else sum(
-                    item.stat().st_size
-                    for item in path.rglob("*")
-                    if item.is_file()
-                )
-            )
-            task.downloaded = task.size
-            task.progress = 1
-            return path
         raise NotImplementedError(
             f"{task.source.type.value} download is not implemented"
         )

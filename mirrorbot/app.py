@@ -3,9 +3,7 @@ import logging
 import secrets
 import signal
 from html import escape
-from pathlib import Path
 from time import time
-from urllib.error import HTTPError, URLError
 
 from pyrogram import Client, filters, idle
 from pyrogram.enums import ParseMode
@@ -13,8 +11,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .core.config import Config
 from .core.logging_config import setup_logging
-from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
-from .context import BotContext
+from .core.models import Destination, Source, SourceType, TaskPhase
 from .downloaders.gdrive import drive_id_from_url
 from .services.task_manager import TaskManager
 from .services.google_drive_delivery import (
@@ -23,15 +20,10 @@ from .services.google_drive_delivery import (
 from .services.drive_search_pages import DriveSearchPages
 from .services.drive_share_pages import DriveSharePages
 from .services.public_url import public_base_url
-from .services.jellyfin import JellyfinControlError, JellyfinManager
-from .services.jellyfin_api import JellyfinApi
-from .services.file_explorer import FileExplorer
-from .services.media_library import promote_yearless_series_folders
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
-from .services.startup import cleanup_abandoned_downloads, prepare_local_library
-from .services.web_dashboard import WebDashboard
+from .services.startup import cleanup_abandoned_downloads
 from .services.telegram_delivery import telegram_chat_id
 from .telegram import keyboards as telegram_keyboards
 from .telegram import messages as telegram_messages
@@ -41,9 +33,6 @@ setup_logging()
 LOGGER = logging.getLogger(__name__)
 config = Config.load()
 manager = TaskManager(config)
-jellyfin = JellyfinManager("jellyfin")
-jellyfin_api = JellyfinApi(config.jellyfin_api_key)
-file_explorer = None
 background = BackgroundTasks()
 runtime = RuntimeCoordinator(manager, background)
 shutting_down = False
@@ -59,18 +48,11 @@ drive_search_pages = DriveSearchPages(
     300,
 )
 drive_share_pages = DriveSharePages(
-    public_base_url(8005, config.public_base_url),
-    8005,
+    public_base_url(8003, config.public_base_url),
+    8003,
     300,
 )
-pending_local_metadata_tasks: dict[str, object] = {}
-pending_jellyfin_scan_reasons: set[str] = set()
-local_metadata_job: asyncio.Task | None = None
-last_jellyfin_auto_scan_at = 0.0
-jellyfin_scan_lock = asyncio.Lock()
-series_promotion_job: asyncio.Task | None = None
 PENDING_ADD_TIMEOUT = 120
-JELLYFIN_AUTO_SCAN_COOLDOWN = 180
 ADD_USAGE = telegram_messages.ADD_USAGE
 HELP_TEXT = telegram_messages.HELP_TEXT
 
@@ -91,18 +73,6 @@ telegram_status = TelegramStatus(
     background,
     config.status_update_interval,
 )
-context = BotContext(
-    config=config,
-    manager=manager,
-    background=background,
-    jellyfin=jellyfin,
-    jellyfin_api=jellyfin_api,
-    drive_search_pages=drive_search_pages,
-    drive_share_pages=drive_share_pages,
-    telegram_app=app,
-    get_file_explorer=lambda: get_file_explorer(),
-)
-web_dashboard: WebDashboard | None = None
 
 def owner_only(_, __, message: Message) -> bool:
     user = message.from_user or message.sender_chat
@@ -198,9 +168,6 @@ async def send_live_status(chat_id: int) -> None:
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
 
-def local_buttons(token: str) -> InlineKeyboardMarkup:
-    return telegram_keyboards.local_buttons(token)
-
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_buttons(token)
 
@@ -210,17 +177,11 @@ def ytdlp_video_buttons(token: str) -> InlineKeyboardMarkup:
 def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_audio_buttons(token)
 
-def result_list(title: str, items: list[str], links: list[str] | None = None) -> str:
-    return telegram_messages.result_list(title, items, links)
-
 def completion_message(task) -> str:
     return telegram_messages.completion_message(task)
 
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
-    return telegram_keyboards.completion_buttons(task, jellyfin_url())
-
-def completion_payload(task) -> dict:
-    return telegram_messages.completion_payload(task, jellyfin_url())
+    return telegram_keyboards.completion_buttons(task)
 
 async def launch_selected_task(query, token: str, destination: Destination) -> None:
     pending = take_pending_add(token)
@@ -286,14 +247,6 @@ async def launch_selected_task(query, token: str, destination: Destination) -> N
             on_selector_ready=selector_ready,
             on_selector_done=selector_done,
         )
-        if task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}:
-            schedule_local_metadata_refresh(task)
-        if (
-            task.phase == TaskPhase.COMPLETE
-            and task.destination == Destination.LOCAL_SERIES
-            and not task.library_name.endswith(")")
-        ):
-            schedule_series_promotion()
         if is_torrent:
             try:
                 await query.message.delete()
@@ -369,284 +322,14 @@ async def delete_google_drive_link(message: Message, link: str) -> None:
     )
     start_drive_delete_expiry(token, prompt)
 
-def jellyfin_url() -> str:
-    return public_base_url(8003, config.public_base_url)
-
-def jellyfin_buttons() -> InlineKeyboardMarkup:
-    return telegram_keyboards.jellyfin_buttons(jellyfin_url())
-
-def format_jellyfin_status(status, action: str = "Status", server_info: dict | None = None) -> str:
-    return telegram_messages.format_jellyfin_status(status, jellyfin_url(), action, server_info)
-
-async def jellyfin_server_info(status) -> dict:
-    if not status.running:
-        return {}
-    try:
-        return await asyncio.to_thread(jellyfin_api.system_info)
-    except Exception as exc:
-        LOGGER.warning("Jellyfin server information failed error=%s", type(exc).__name__)
-        return {}
-
-async def jellyfin_status_text(action: str = "Status") -> str:
-    status = await asyncio.to_thread(jellyfin.status)
-    return format_jellyfin_status(status, action, await jellyfin_server_info(status))
-
-def ensure_jellyfin_running() -> None:
-    try:
-        status = jellyfin.ensure_running()
-        LOGGER.info(
-            "Jellyfin ensure running: container=%s state=%s health=%s",
-            status.name,
-            status.state,
-            status.health,
-        )
-    except JellyfinControlError:
-        LOGGER.exception("Jellyfin ensure running failed")
-    except Exception:
-        LOGGER.exception("Unexpected Jellyfin startup check failure")
-
-def _temporary_jellyfin_error(exc: Exception) -> bool:
-    return isinstance(exc, (HTTPError, URLError, TimeoutError))
-
-
-def _jellyfin_error_detail(exc: Exception) -> str:
-    if isinstance(exc, HTTPError):
-        return f"HTTP {exc.code}: {exc.reason}"
-    return str(exc) or type(exc).__name__
-
-
-async def _request_jellyfin_scan(stage: str) -> bool:
-    try:
-        await asyncio.to_thread(jellyfin_api.scan_library)
-        return True
-    except Exception as exc:
-        if _temporary_jellyfin_error(exc):
-            LOGGER.warning(
-                "Jellyfin library scan failed stage=%s error=%s",
-                stage,
-                _jellyfin_error_detail(exc),
-            )
-        else:
-            LOGGER.exception("Jellyfin library scan failed stage=%s", stage)
-        return False
-
-
-async def scan_and_prune_jellyfin() -> int:
-    if jellyfin_scan_lock.locked():
-        LOGGER.info("Jellyfin scan skipped because another scan is already running")
-        return 0
-
-    async with jellyfin_scan_lock:
-        removed = 0
-        await _request_jellyfin_scan("before-prune")
-
-        was_running = False
-        try:
-            missing_count = await asyncio.to_thread(jellyfin_api.count_missing_media_items)
-            if not missing_count:
-                return 0
-
-            status = await asyncio.to_thread(jellyfin.status)
-            was_running = status.running
-            if was_running:
-                await asyncio.to_thread(jellyfin.stop)
-            removed = await asyncio.to_thread(jellyfin_api.prune_missing_media_items)
-        except Exception:
-            LOGGER.exception("Jellyfin missing-media prune failed")
-        finally:
-            if was_running:
-                try:
-                    await asyncio.to_thread(jellyfin.start)
-                except Exception:
-                    LOGGER.exception("Jellyfin restart after missing-media prune failed")
-
-        if removed:
-            await asyncio.sleep(6)
-            await _request_jellyfin_scan("after-prune")
-        return removed
-
-async def explorer_scan() -> None:
-    await scan_and_prune_jellyfin()
-
-async def refresh_pending_local_metadata() -> None:
-    global last_jellyfin_auto_scan_at, local_metadata_job
-    try:
-        while True:
-            while any(
-                task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-                and not task.terminal
-                for task in manager.tasks.values()
-            ):
-                await asyncio.sleep(5)
-            await asyncio.sleep(2)
-            if any(
-                task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-                and not task.terminal
-                for task in manager.tasks.values()
-            ):
-                continue
-            completed_count = len(pending_local_metadata_tasks)
-            reasons = sorted(pending_jellyfin_scan_reasons)
-            pending_local_metadata_tasks.clear()
-            pending_jellyfin_scan_reasons.clear()
-            if not completed_count and not reasons:
-                return
-            cooldown_wait = max(
-                0,
-                last_jellyfin_auto_scan_at + JELLYFIN_AUTO_SCAN_COOLDOWN - time(),
-            )
-            if cooldown_wait:
-                LOGGER.info(
-                    "Jellyfin auto scan delayed cooldown=%ss reasons=%s",
-                    int(cooldown_wait),
-                    ",".join(reasons) or "local-complete",
-                )
-                await asyncio.sleep(cooldown_wait)
-                if any(
-                    task.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-                    and not task.terminal
-                    for task in manager.tasks.values()
-                ):
-                    continue
-            try:
-                await scan_and_prune_jellyfin()
-                last_jellyfin_auto_scan_at = time()
-            except Exception:
-                LOGGER.exception(
-                    "Jellyfin scan and metadata refresh for completed local task batch failed"
-                )
-                return
-            if not pending_local_metadata_tasks:
-                return
-    finally:
-        local_metadata_job = None
-
-def schedule_local_metadata_refresh(task) -> None:
-    if task.phase == TaskPhase.COMPLETE:
-        pending_local_metadata_tasks[task.id] = task
-        pending_jellyfin_scan_reasons.add("local-complete")
-    schedule_jellyfin_auto_scan()
-
-def schedule_jellyfin_auto_scan() -> None:
-    global local_metadata_job
-    if any(
-        active.destination in {Destination.LOCAL_MOVIES, Destination.LOCAL_SERIES}
-        and not active.terminal
-        for active in manager.tasks.values()
-    ):
-        return
-    if (pending_local_metadata_tasks or pending_jellyfin_scan_reasons) and (
-        local_metadata_job is None or local_metadata_job.done()
-    ):
-        local_metadata_job = background.create(
-            refresh_pending_local_metadata(),
-            name="jellyfin-local-metadata-batch",
-        )
-
-async def promote_series_library() -> None:
-    promoted = 0
-    for attempt in range(3):
-        promotion = await asyncio.to_thread(
-            promote_yearless_series_folders,
-            config.local_download_root,
-            config.tmdb_api_key,
-        )
-        promoted += promotion["promoted"]
-        LOGGER.info(
-            "Series folder promotion pass=%s promoted=%s skipped=%s conflicts=%s",
-            attempt + 1,
-            promotion["promoted"],
-            promotion["skipped"],
-            promotion["conflicts"],
-        )
-        if promotion["skipped"] == 0:
-            break
-        await asyncio.sleep(60)
-    if promoted:
-        pending_jellyfin_scan_reasons.add("series-promotion")
-        schedule_jellyfin_auto_scan()
-
-def schedule_series_promotion() -> None:
-    global series_promotion_job
-    if series_promotion_job is None or series_promotion_job.done():
-        series_promotion_job = background.create(
-            promote_series_library(),
-            name="promote-series-library",
-        )
-
-async def explorer_upload(
-    chat_id: int,
-    paths: list[Path],
-    destination_name: str,
-) -> None:
-    destination = Destination(destination_name)
-    can_notify_telegram = app is not None and chat_id > 0
-    can_upload_telegram = app is not None and (
-        chat_id > 0 or bool(config.telegram_dump_chat_id)
-    )
-    if destination == Destination.TELEGRAM and not can_upload_telegram:
-        raise RuntimeError("Telegram is unavailable for this file explorer session")
-    for path in paths:
-        task = manager.create_task(
-            config.owner_id,
-            chat_id,
-            0,
-            Source(SourceType.LOCAL_PATH, str(path), path.name),
-            destination,
-            AddOptions(),
-        )
-
-        async def runner(upload_task=task, upload_path=path):
-            await manager.run_local_upload(upload_task, upload_path, app)
-            if not can_notify_telegram:
-                return
-            if upload_task.phase == TaskPhase.COMPLETE:
-                await app.send_message(
-                    chat_id,
-                    completion_message(upload_task),
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=completion_buttons(upload_task),
-                    disable_web_page_preview=True,
-                )
-            elif upload_task.error:
-                await app.send_message(chat_id, f"Task {upload_task.short_id()} failed:\n{upload_task.error}", parse_mode=ParseMode.DISABLED)
-            await update_status_message(chat_id)
-
-        manager.spawn(runner(), name="transfer-task")
-    if can_notify_telegram:
-        await send_live_status(chat_id)
-
-def get_file_explorer() -> FileExplorer:
-    global file_explorer
-    if file_explorer is None:
-        file_explorer = FileExplorer(
-            config.local_download_root,
-            public_base_url(8004, config.public_base_url),
-            explorer_upload,
-            explorer_scan,
-            8004,
-        )
-    return file_explorer
-
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
     if app is None:
         LOGGER.info("Telegram UI disabled; command handlers were not registered")
         return
-    from .commands import add, common, drive, jellyfin, local  # noqa: F401
+    from .commands import add, common, drive  # noqa: F401
 
 register_command_handlers()
-
-async def close_file_explorer() -> None:
-    if file_explorer is not None:
-        await file_explorer.close_all()
-
-async def close_web_dashboard() -> None:
-    if web_dashboard is not None:
-        await web_dashboard.close()
-
-def telegram_client():
-    return app
 
 async def shutdown_bot() -> None:
     global shutting_down
@@ -657,7 +340,7 @@ async def shutdown_bot() -> None:
     telegram_status.cancel_jobs()
     for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()):
         job.cancel()
-    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all, close_file_explorer, close_web_dashboard))
+    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all))
     LOGGER.info("Graceful shutdown complete")
 
 async def wait_for_shutdown_signal() -> None:
@@ -690,33 +373,9 @@ async def validate_telegram_dump_channel() -> None:
 
 
 async def main() -> None:
-    global web_dashboard
     LOGGER.info("========== BOT STARTED ================")
-    await asyncio.to_thread(ensure_jellyfin_running)
     await manager.cleanup_orphaned_torrents()
-    cleanup_abandoned_downloads(config.download_dir, config.local_download_root)
-    prepare_local_library(config.local_download_root)
-
-    if config.enable_web_ui:
-        web_dashboard = WebDashboard(
-            config,
-            manager,
-            background,
-            telegram_client,
-            jellyfin,
-            jellyfin_api,
-            drive_search_pages,
-            drive_share_pages,
-            get_file_explorer,
-            schedule_local_metadata_refresh,
-            schedule_series_promotion,
-            completion_payload,
-            scan_and_prune_jellyfin,
-        )
-        await web_dashboard.start()
-    else:
-        web_dashboard = None
-        LOGGER.info("Web dashboard disabled by config")
+    cleanup_abandoned_downloads(config.download_dir)
 
     telegram_started = False
     if app is not None:
@@ -726,12 +385,8 @@ async def main() -> None:
             telegram_started = True
             await validate_telegram_dump_channel()
         except Exception:
-            if config.enable_web_ui:
-                LOGGER.exception("Telegram UI failed to start; web dashboard remains available")
-            else:
-                LOGGER.exception("Telegram UI failed to start")
+            LOGGER.exception("Telegram UI failed to start")
 
-    schedule_series_promotion()
     restart_state = await asyncio.to_thread(take_restart_state)
     if restart_state is not None and telegram_started:
         elapsed = max(0, round(time() - restart_state.requested_at))
