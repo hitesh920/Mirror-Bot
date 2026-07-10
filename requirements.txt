@@ -4,7 +4,6 @@ curl_cffi
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
-aioshutil
 python-dotenv
 kurigram
 tgcrypto
