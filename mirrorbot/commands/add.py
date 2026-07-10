@@ -13,7 +13,7 @@ from ..app import (
     ytdlp_video_buttons,
 )
 from ..core.models import Destination, Source, SourceType
-from ..core.parser import parse_add_text
+from ..core.parser import parse_add_text, replied_link
 from ..core.source_detector import detect_source
 
 
@@ -49,7 +49,7 @@ async def add(_, message: Message):
             )
             source = Source(source_type, "", filename)
         elif reply.text:
-            link = reply.text.split()[0]
+            link = replied_link(reply.text)
 
     if source is None:
         if not link:

@@ -18,7 +18,7 @@ from mirrorbot.core.errors import (
 )
 from mirrorbot.core.config import Config
 from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
-from mirrorbot.core.parser import parse_add_text
+from mirrorbot.core.parser import parse_add_text, replied_link
 from mirrorbot.core.source_detector import detect_source
 from mirrorbot.downloaders.direct import retryable_direct_error
 from mirrorbot.downloaders.torrent import selected_torrent_size
@@ -64,6 +64,39 @@ def test_parse_add_text_flags():
     assert options.zip_password == "secret"
     assert options.extract is True
     assert options.name == "custom"
+
+
+def test_parse_magnet_with_spaces_and_hyphen_preserves_full_uri():
+    magnet = (
+        "magnet:?xt=urn:btih:abc123&dn=www.FiberMovies.com - Movie Name"
+        "&xl=4733575398&tr=udp://tracker.example:6969/announce"
+    )
+
+    link, options = parse_add_text(f"/add {magnet}")
+
+    assert link == magnet.replace(" ", "%20")
+    assert options.extract is False
+    assert options.zip is False
+
+
+def test_parse_magnet_options_only_from_valid_suffix():
+    magnet = "magnet:?xt=urn:btih:abc123&dn=Movie - Release Name"
+
+    link, options = parse_add_text(f"/add {magnet} -e -zp secret")
+
+    assert link == magnet.replace(" ", "%20")
+    assert options.extract is True
+    assert options.zip is True
+    assert options.zip_password == "secret"
+
+
+def test_replied_magnet_preserves_spaces_and_trackers():
+    magnet = (
+        "magnet:?xt=urn:btih:abc123&dn=Movie - Release Name"
+        "&tr=udp://tracker.example:6969/announce"
+    )
+
+    assert replied_link(magnet) == magnet.replace(" ", "%20")
 
 
 def test_detect_source_common_inputs():
