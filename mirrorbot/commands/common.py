@@ -14,8 +14,7 @@ from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
 from ..app import (
-    HELP_TEXT, LOGGER, app, background, chat_tasks, config, manager, owner_filter,
-    replace_status_message, status_jobs, status_loop,
+    HELP_TEXT, LOGGER, app, config, manager, owner_filter, telegram_status,
 )
 from ..core.logging_config import create_log_export, log_event
 from ..services.restart_state import save_restart_state
@@ -55,17 +54,14 @@ async def help_cmd(_, message: Message):
 @app.on_message(filters.command("status") & owner_filter)
 async def status(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.status", result="requested")
-    if not chat_tasks(message.chat.id):
+    if not telegram_status.chat_tasks(message.chat.id):
         await message.reply("No active tasks.")
         return
-    await replace_status_message(message.chat.id)
+    await telegram_status.replace(message.chat.id)
     try:
         await message.delete()
     except Exception:
         pass
-    job = status_jobs.get(message.chat.id)
-    if job is None or job.done():
-        status_jobs[message.chat.id] = background.create(status_loop(message.chat.id), name="status-loop")
 
 
 @app.on_message(filters.command("stats") & owner_filter)

@@ -110,6 +110,7 @@ def owner_only(_, __, message: Message) -> bool:
 
 owner_filter = filters.create(owner_only)
 
+
 async def expire_pending_add(token: str) -> None:
     try:
         await asyncio.sleep(PENDING_ADD_TIMEOUT)
