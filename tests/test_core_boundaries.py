@@ -158,6 +158,9 @@ def test_mobile_action_bars_reserve_list_space():
     assert "ResizeObserver(syncSelectionSpace)" in torrent_page_source
     assert "--selectionbar-height" in FILE_EXPLORER_PAGE
     assert "ResizeObserver(syncSelectionSpace)" in FILE_EXPLORER_PAGE
+    assert 'class="selection-head"' in FILE_EXPLORER_PAGE
+    assert 'class="file-actions"' in FILE_EXPLORER_PAGE
+    assert "grid-template-columns:repeat(4,minmax(0,1fr))" in FILE_EXPLORER_PAGE
     assert "[hidden] { display: none !important; }" in TEMP_PAGE_CSS
 
 
