@@ -1,4 +1,4 @@
-+# Mirror-Bot
+# Mirror-Bot
 
 A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram, Google Drive, or BuzzHeavier.
 
@@ -18,6 +18,7 @@ A private, owner-only Telegram transfer bot for downloading, processing, and del
 - Archive extraction and ZIP creation, including password-protected archives.
 - Live status with progress, size, speed, ETA, phase, and cancellation.
 - Google Drive upload, download, search, share, deletion, and quota tools.
+- Google Drive uploads routed into public General, Movies, Series, or Games folders.
 - Direct-host resolution and shortener bypass support.
 - Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
@@ -26,9 +27,10 @@ A private, owner-only Telegram transfer bot for downloading, processing, and del
 1. Send `/add <link>` or reply to a Telegram file with `/add`.
 2. For yt-dlp sources, choose video/audio and quality.
 3. Choose Telegram, Google Drive, or BuzzHeavier.
-4. For torrents, review and select files on the temporary selector page.
-5. Monitor progress with `/status`.
-6. Receive one completion message with result links.
+4. For Google Drive, choose General, Movies, Series, or Games.
+5. For torrents, review and select files on the temporary selector page.
+6. Monitor progress with `/status`.
+7. Receive one completion message with result links.
 
 ### Processing Flags
 
@@ -131,7 +133,7 @@ Only the `mirror-bot` container should run.
 | Variable | Default | Description |
 |---|---:|---|
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or username for Telegram uploads |
-| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Default Drive upload folder |
+| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Parent folder containing the four managed upload categories |
 | `BUZZHEAVIER_ACCOUNT_ID` | Empty | BuzzHeavier account identifier |
 | `TASK_LIMIT` | `10` | Maximum concurrent tasks |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
@@ -150,6 +152,10 @@ Only the `mirror-bot` container should run.
 When configured, uploaded files go to the channel and the requesting chat receives only status and completion messages. If the channel is unavailable, PM fallback remains available when the task originated from Telegram.
 
 ## Google Drive
+
+At startup, Mirror-Bot finds or creates `General`, `Movies`, `Series`, and
+`Games` inside `GOOGLE_DRIVE_FOLDER_ID`. These folders are made publicly
+readable, and every Telegram Drive upload asks which category to use.
 
 Place these files beside `docker-compose.yml`:
 

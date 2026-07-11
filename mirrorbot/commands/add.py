@@ -1,5 +1,6 @@
 """Add command and destination-selection handlers."""
 
+import asyncio
 from html import escape
 
 from pyrogram import filters
@@ -8,13 +9,17 @@ from pyrogram.types import Message
 
 from ..app import (
     ADD_USAGE, LOGGER, answer_expired_selection, app, config, destination_buttons,
-    launch_selected_task, owner_filter, pending_adds,
+    google_drive_folder_buttons, launch_selected_task, owner_filter, pending_adds,
     start_pending_add_expiry, ytdlp_audio_buttons, ytdlp_buttons,
     ytdlp_video_buttons,
 )
 from ..core.models import Destination, Source, SourceType
 from ..core.parser import parse_add_text, replied_link
 from ..core.source_detector import detect_source
+from ..services.google_drive_delivery import (
+    DRIVE_CATEGORY_FOLDERS,
+    ensure_drive_category_folders,
+)
 
 
 @app.on_message(filters.command("add") & owner_filter)
@@ -136,9 +141,55 @@ async def destination_choice(_, query):
         await launch_selected_task(query, token, Destination.TELEGRAM)
         return
     if dest == "gdrive":
-        await launch_selected_task(query, token, Destination.GOOGLE_DRIVE)
+        await query.message.edit(
+            "Choose Google Drive folder:",
+            reply_markup=google_drive_folder_buttons(token),
+        )
         return
     if dest == "buzzheavier":
         await launch_selected_task(query, token, Destination.BUZZHEAVIER)
         return
     await query.answer("Unknown destination", show_alert=True)
+
+
+@app.on_callback_query(filters.regex(r"^gdfolder:"))
+async def google_drive_folder_choice(_, query):
+    if query.from_user.id != config.owner_id:
+        await query.answer("Not allowed", show_alert=True)
+        return
+    _, category, token = query.data.split(":", 2)
+    if token not in pending_adds:
+        await answer_expired_selection(query)
+        return
+    if category == "back":
+        await query.message.edit(
+            "Choose destination:",
+            reply_markup=destination_buttons(token),
+        )
+        return
+    folder_name = DRIVE_CATEGORY_FOLDERS.get(category)
+    if folder_name is None:
+        await query.answer("Unknown Google Drive folder", show_alert=True)
+        return
+
+    await query.answer("Preparing Google Drive folder...")
+    await query.message.edit("Preparing Google Drive folders...")
+    try:
+        folder_ids = await asyncio.to_thread(
+            ensure_drive_category_folders,
+            config,
+        )
+    except Exception:
+        LOGGER.exception("Google Drive category setup failed")
+        await query.message.edit(
+            "Could not prepare Google Drive folders. Try again.",
+            reply_markup=google_drive_folder_buttons(token),
+        )
+        return
+    await launch_selected_task(
+        query,
+        token,
+        Destination.GOOGLE_DRIVE,
+        drive_folder_id=folder_ids[category],
+        drive_folder_name=folder_name,
+    )

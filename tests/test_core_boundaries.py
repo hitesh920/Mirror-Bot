@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -31,7 +31,13 @@ from mirrorbot.services.buzzheavier_delivery import (
     duplicate_basenames,
 )
 from mirrorbot.services.page_style import TEMP_PAGE_CSS
-from mirrorbot.services.google_drive_delivery import GoogleDriveUploader, next_drive_chunk
+from mirrorbot.services.google_drive_delivery import (
+    DRIVE_CATEGORY_FOLDERS,
+    FOLDER_MIME_TYPE,
+    GoogleDriveUploader,
+    ensure_drive_category_folders,
+    next_drive_chunk,
+)
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
     telegram_chat_id,
@@ -40,7 +46,10 @@ from mirrorbot.services.telegram_delivery import (
     upload_to_telegram,
 )
 from mirrorbot.telegram.messages import completion_message
-from mirrorbot.telegram.keyboards import destination_buttons
+from mirrorbot.telegram.keyboards import (
+    destination_buttons,
+    google_drive_folder_buttons,
+)
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -141,6 +150,17 @@ def test_telegram_completion_mentions_dump_channel():
     assert "Telegram dump channel" in text
 
 
+def test_google_drive_completion_mentions_category():
+    task = make_task()
+    task.destination = Destination.GOOGLE_DRIVE
+    task.result_name = "movie.mkv"
+    task.drive_folder_name = "Movies"
+
+    text = completion_message(task)
+
+    assert "Google Drive / Movies" in text
+
+
 def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
     files = [
         (Path("season1/video.mkv"), "season1/video.mkv"),
@@ -202,6 +222,92 @@ def test_telegram_only_public_surface():
         "web_password",
     }
     assert removed_config.isdisjoint(Config.__dataclass_fields__)
+
+
+def test_google_drive_folder_keyboard_has_categories_and_back():
+    keyboard = google_drive_folder_buttons("42")
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert [button.text for button in buttons] == [
+        "General",
+        "Movies",
+        "Series",
+        "Games",
+        "Back",
+    ]
+    assert [button.callback_data for button in buttons] == [
+        "gdfolder:general:42",
+        "gdfolder:movies:42",
+        "gdfolder:series:42",
+        "gdfolder:games:42",
+        "gdfolder:back:42",
+    ]
+
+
+def test_google_drive_categories_are_public_and_idempotent(monkeypatch):
+    folders = []
+    public_ids = set()
+    files_api = MagicMock()
+    permissions_api = MagicMock()
+    service = MagicMock()
+    service.files.return_value = files_api
+    service.permissions.return_value = permissions_api
+
+    def list_files(**_kwargs):
+        request = MagicMock()
+        request.execute.side_effect = lambda: {"files": list(folders)}
+        return request
+
+    def create_file(body, **_kwargs):
+        request = MagicMock()
+
+        def execute():
+            folder = {
+                "id": f"folder-{len(folders) + 1}",
+                "name": body["name"],
+                "mimeType": FOLDER_MIME_TYPE,
+                "createdTime": f"2026-01-0{len(folders) + 1}T00:00:00Z",
+            }
+            folders.append(folder)
+            return folder
+
+        request.execute.side_effect = execute
+        return request
+
+    def list_permissions(fileId, **_kwargs):
+        request = MagicMock()
+        request.execute.side_effect = lambda: {
+            "permissions": (
+                [{"id": "public", "type": "anyone", "role": "reader"}]
+                if fileId in public_ids
+                else []
+            )
+        }
+        return request
+
+    def create_permission(fileId, **_kwargs):
+        request = MagicMock()
+        request.execute.side_effect = lambda: public_ids.add(fileId) or {}
+        return request
+
+    files_api.list.side_effect = list_files
+    files_api.create.side_effect = create_file
+    permissions_api.list.side_effect = list_permissions
+    permissions_api.create.side_effect = create_permission
+    monkeypatch.setattr(gdrive_delivery, "drive_service", lambda _config: service)
+    config = SimpleNamespace(google_drive_folder_id="root")
+
+    first = ensure_drive_category_folders(config)
+    second = ensure_drive_category_folders(config)
+
+    assert set(first) == set(DRIVE_CATEGORY_FOLDERS)
+    assert second == first
+    assert [folder["name"] for folder in folders] == list(
+        DRIVE_CATEGORY_FOLDERS.values()
+    )
+    assert public_ids == set(first.values())
+    assert files_api.create.call_count == 4
+    assert permissions_api.create.call_count == 4
 
 
 def test_compose_exposes_only_temporary_page_ports():
@@ -305,6 +411,8 @@ async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypat
     source.write_bytes(b"data")
     task = make_task()
     task.destination = Destination.GOOGLE_DRIVE
+    task.drive_folder_id = "category-folder"
+    task.drive_folder_name = "General"
 
     uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
     uploader.task = task
@@ -327,6 +435,84 @@ async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypat
         await uploader.upload()
 
     uploader.cleanup_created.assert_awaited_once_with("failed")
+
+
+@pytest.mark.asyncio
+async def test_gdrive_upload_uses_selected_category_parent(tmp_path, monkeypatch):
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"data")
+    task = make_task()
+    task.destination = Destination.GOOGLE_DRIVE
+    task.drive_folder_id = "movies-folder"
+    task.drive_folder_name = "Movies"
+
+    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(google_drive_folder_id="root")
+    uploader.service = object()
+    uploader.created_ids = []
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded_base = 0
+    uploader.started = 1
+    uploader.upload_file = AsyncMock(return_value="uploaded-file")
+    monkeypatch.setattr(
+        gdrive_delivery,
+        "unique_drive_name",
+        lambda _service, _parent_id, name: name,
+    )
+
+    await uploader.upload()
+
+    uploader.upload_file.assert_awaited_once_with(
+        source,
+        "movie.mkv",
+        "movies-folder",
+        "movie.mkv",
+    )
+
+
+@pytest.mark.asyncio
+async def test_gdrive_upload_without_category_falls_back_to_general(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "file.bin"
+    source.write_bytes(b"data")
+    task = make_task()
+    task.destination = Destination.GOOGLE_DRIVE
+
+    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(google_drive_folder_id="root")
+    uploader.service = object()
+    uploader.created_ids = []
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded_base = 0
+    uploader.started = 1
+    uploader.upload_file = AsyncMock(return_value="uploaded-file")
+    monkeypatch.setattr(
+        gdrive_delivery,
+        "ensure_drive_category_folders",
+        lambda _config: {"general": "general-folder"},
+    )
+    monkeypatch.setattr(
+        gdrive_delivery,
+        "unique_drive_name",
+        lambda _service, _parent_id, name: name,
+    )
+
+    await uploader.upload()
+
+    assert task.drive_folder_id == "general-folder"
+    assert task.drive_folder_name == "General"
+    uploader.upload_file.assert_awaited_once_with(
+        source,
+        "file.bin",
+        "general-folder",
+        "file.bin",
+    )
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import mimetypes
 import pickle
+from threading import Lock
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -21,6 +22,13 @@ DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 UPLOAD_RETRY_STATUSES = {429, 500, 502, 503, 504}
 UPLOAD_RETRIES = 3
+DRIVE_CATEGORY_FOLDERS = {
+    "general": "General",
+    "movies": "Movies",
+    "series": "Series",
+    "games": "Games",
+}
+_CATEGORY_FOLDER_LOCK = Lock()
 
 
 def load_credentials(config: Config) -> Credentials:
@@ -144,6 +152,103 @@ def drive_folder_children(service, folder_id: str) -> list[dict]:
         page_token = response.get("nextPageToken")
         if page_token is None:
             return files
+
+
+def ensure_public_reader(service, file_id: str) -> None:
+    response = (
+        service.permissions()
+        .list(
+            fileId=file_id,
+            supportsAllDrives=True,
+            fields="permissions(id,type,role)",
+        )
+        .execute()
+    )
+    if any(
+        permission.get("type") == "anyone"
+        and permission.get("role") == "reader"
+        for permission in response.get("permissions", [])
+    ):
+        return
+    service.permissions().create(
+        fileId=file_id,
+        body={"type": "anyone", "role": "reader"},
+        supportsAllDrives=True,
+    ).execute()
+
+
+def ensure_drive_category_folders(config: Config) -> dict[str, str]:
+    root_id = config.google_drive_folder_id
+    if not root_id:
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured")
+
+    with _CATEGORY_FOLDER_LOCK:
+        service = drive_service(config)
+        page_token = None
+        children = []
+        while True:
+            response = (
+                service.files()
+                .list(
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                    q=(
+                        f"'{escape_drive_query(root_id)}' in parents "
+                        "and trashed = false"
+                    ),
+                    spaces="drive",
+                    pageSize=200,
+                    fields=(
+                        "nextPageToken,"
+                        "files(id,name,mimeType,createdTime)"
+                    ),
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            children.extend(response.get("files", []))
+            page_token = response.get("nextPageToken")
+            if page_token is None:
+                break
+
+        folder_ids = {}
+        for slug, name in DRIVE_CATEGORY_FOLDERS.items():
+            matches = sorted(
+                (
+                    item
+                    for item in children
+                    if item.get("name") == name
+                    and item.get("mimeType") == FOLDER_MIME_TYPE
+                ),
+                key=lambda item: (item.get("createdTime", ""), item["id"]),
+            )
+            if matches:
+                folder = matches[0]
+                if len(matches) > 1:
+                    LOGGER.warning(
+                        "Multiple Google Drive category folders found name=%r count=%s; using oldest",
+                        name,
+                        len(matches),
+                    )
+            else:
+                folder = (
+                    service.files()
+                    .create(
+                        body={
+                            "name": name,
+                            "mimeType": FOLDER_MIME_TYPE,
+                            "parents": [root_id],
+                            "description": "Managed by Mirror-Bot",
+                        },
+                        fields="id,name,createdTime",
+                        supportsAllDrives=True,
+                    )
+                    .execute()
+                )
+                LOGGER.info("Created Google Drive category folder name=%r", name)
+            ensure_public_reader(service, folder["id"])
+            folder_ids[slug] = folder["id"]
+        return folder_ids
 
 
 def drive_folder_size(service, folder_id: str) -> int:
@@ -325,6 +430,15 @@ class GoogleDriveUploader:
     async def upload(self) -> None:
         if not self.config.google_drive_folder_id:
             raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured")
+        parent_id = self.task.drive_folder_id
+        if not parent_id:
+            category_folders = await asyncio.to_thread(
+                ensure_drive_category_folders,
+                self.config,
+            )
+            parent_id = category_folders["general"]
+            self.task.drive_folder_id = parent_id
+            self.task.drive_folder_name = DRIVE_CATEGORY_FOLDERS["general"]
         self.task.size = self.total_size
         self.task.downloaded = 0
         self.task.progress = 0
@@ -340,13 +454,13 @@ class GoogleDriveUploader:
                 upload_name = await asyncio.to_thread(
                     unique_drive_name,
                     self.service,
-                    self.config.google_drive_folder_id,
+                    parent_id,
                     self.path.name,
                 )
                 file_id = await self.upload_file(
                     self.path,
                     upload_name,
-                    self.config.google_drive_folder_id,
+                    parent_id,
                     self.path.name,
                 )
                 self.task.result_name = upload_name
@@ -357,7 +471,7 @@ class GoogleDriveUploader:
                 root_id = await asyncio.to_thread(
                     self.create_folder,
                     root_name,
-                    self.config.google_drive_folder_id,
+                    parent_id,
                 )
                 uploaded_root = await asyncio.to_thread(
                     drive_item_info,
