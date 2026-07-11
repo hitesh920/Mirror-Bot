@@ -29,6 +29,7 @@ DRIVE_CATEGORY_FOLDERS = {
     "games": "Games",
 }
 _CATEGORY_FOLDER_LOCK = Lock()
+_CATEGORY_FOLDER_IDS: dict[str, str] = {}
 
 
 def load_credentials(config: Config) -> Credentials:
@@ -248,7 +249,18 @@ def ensure_drive_category_folders(config: Config) -> dict[str, str]:
                 LOGGER.info("Created Google Drive category folder name=%r", name)
             ensure_public_reader(service, folder["id"])
             folder_ids[slug] = folder["id"]
-        return folder_ids
+        _CATEGORY_FOLDER_IDS.clear()
+        _CATEGORY_FOLDER_IDS.update(folder_ids)
+        return dict(_CATEGORY_FOLDER_IDS)
+
+
+def drive_category_folder_ids() -> dict[str, str]:
+    with _CATEGORY_FOLDER_LOCK:
+        if set(_CATEGORY_FOLDER_IDS) != set(DRIVE_CATEGORY_FOLDERS):
+            raise RuntimeError(
+                "Google Drive category folders are unavailable. Restart Mirror-Bot."
+            )
+        return dict(_CATEGORY_FOLDER_IDS)
 
 
 def drive_folder_size(service, folder_id: str) -> int:
@@ -432,10 +444,7 @@ class GoogleDriveUploader:
             raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured")
         parent_id = self.task.drive_folder_id
         if not parent_id:
-            category_folders = await asyncio.to_thread(
-                ensure_drive_category_folders,
-                self.config,
-            )
+            category_folders = drive_category_folder_ids()
             parent_id = category_folders["general"]
             self.task.drive_folder_id = parent_id
             self.task.drive_folder_name = DRIVE_CATEGORY_FOLDERS["general"]

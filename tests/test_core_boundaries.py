@@ -35,6 +35,7 @@ from mirrorbot.services.google_drive_delivery import (
     DRIVE_CATEGORY_FOLDERS,
     FOLDER_MIME_TYPE,
     GoogleDriveUploader,
+    drive_category_folder_ids,
     ensure_drive_category_folders,
     next_drive_chunk,
 )
@@ -308,6 +309,12 @@ def test_google_drive_categories_are_public_and_idempotent(monkeypatch):
     assert public_ids == set(first.values())
     assert files_api.create.call_count == 4
     assert permissions_api.create.call_count == 4
+    files_api.reset_mock()
+    permissions_api.reset_mock()
+
+    assert drive_category_folder_ids() == first
+    files_api.list.assert_not_called()
+    permissions_api.list.assert_not_called()
 
 
 def test_compose_exposes_only_temporary_page_ports():
@@ -494,8 +501,8 @@ async def test_gdrive_upload_without_category_falls_back_to_general(
     uploader.upload_file = AsyncMock(return_value="uploaded-file")
     monkeypatch.setattr(
         gdrive_delivery,
-        "ensure_drive_category_folders",
-        lambda _config: {"general": "general-folder"},
+        "drive_category_folder_ids",
+        lambda: {"general": "general-folder"},
     )
     monkeypatch.setattr(
         gdrive_delivery,

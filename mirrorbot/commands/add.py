@@ -1,6 +1,5 @@
 """Add command and destination-selection handlers."""
 
-import asyncio
 from html import escape
 
 from pyrogram import filters
@@ -18,7 +17,7 @@ from ..core.parser import parse_add_text, replied_link
 from ..core.source_detector import detect_source
 from ..services.google_drive_delivery import (
     DRIVE_CATEGORY_FOLDERS,
-    ensure_drive_category_folders,
+    drive_category_folder_ids,
 )
 
 
@@ -172,20 +171,16 @@ async def google_drive_folder_choice(_, query):
         await query.answer("Unknown Google Drive folder", show_alert=True)
         return
 
-    await query.answer("Preparing Google Drive folder...")
-    await query.message.edit("Preparing Google Drive folders...")
     try:
-        folder_ids = await asyncio.to_thread(
-            ensure_drive_category_folders,
-            config,
-        )
+        folder_ids = drive_category_folder_ids()
     except Exception:
-        LOGGER.exception("Google Drive category setup failed")
-        await query.message.edit(
-            "Could not prepare Google Drive folders. Try again.",
-            reply_markup=google_drive_folder_buttons(token),
+        LOGGER.warning("Google Drive category cache is unavailable")
+        await query.answer(
+            "Drive folders are unavailable. Restart Mirror-Bot.",
+            show_alert=True,
         )
         return
+    await query.answer(f"Uploading to {folder_name}")
     await launch_selected_task(
         query,
         token,

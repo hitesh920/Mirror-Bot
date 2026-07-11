@@ -155,7 +155,8 @@ When configured, uploaded files go to the channel and the requesting chat receiv
 
 At startup, Mirror-Bot finds or creates `General`, `Movies`, `Series`, and
 `Games` inside `GOOGLE_DRIVE_FOLDER_ID`. These folders are made publicly
-readable, and every Telegram Drive upload asks which category to use.
+readable, and their IDs are cached until the next restart. Every Telegram
+Drive upload asks which cached category to use without rechecking Drive.
 
 Place these files beside `docker-compose.yml`:
 
