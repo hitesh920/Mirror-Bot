@@ -63,6 +63,7 @@ Extraction failures fall back to delivering the original archive when the source
 | `/search <name>` | Search Google Drive on a temporary results page |
 | `/share <drive-link>` | Create a temporary public Drive share page |
 | `/delete <drive-link-or-id>` | Permanently delete a Google Drive item |
+| `/delete all` | Empty General, Movies, Series, and Games after confirmation |
 | `/gdstats` | Show Drive authentication and quota |
 | `/speedtest` | Test server network speed |
 | `/logs` | Send the latest sanitized application logs |

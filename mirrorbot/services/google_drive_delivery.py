@@ -124,6 +124,42 @@ def delete_drive_item(config: Config, file_id: str) -> dict:
     return item
 
 
+def clear_drive_category_contents(config: Config) -> dict:
+    """Delete children of managed category folders while preserving the roots."""
+    folder_ids = drive_category_folder_ids()
+    service = drive_service(config)
+    deleted = 0
+    failed: list[dict[str, str]] = []
+    category_counts: dict[str, int] = {}
+
+    for key, folder_name in DRIVE_CATEGORY_FOLDERS.items():
+        children = drive_folder_children(service, folder_ids[key])
+        category_counts[folder_name] = 0
+        for item in children:
+            try:
+                service.files().delete(
+                    fileId=item["id"],
+                    supportsAllDrives=True,
+                ).execute()
+            except Exception as exc:
+                failed.append(
+                    {
+                        "category": folder_name,
+                        "name": item.get("name", "Untitled"),
+                        "error": str(exc),
+                    }
+                )
+                continue
+            deleted += 1
+            category_counts[folder_name] += 1
+
+    return {
+        "deleted": deleted,
+        "failed": failed,
+        "categories": category_counts,
+    }
+
+
 def resolve_drive_shortcut(item: dict) -> tuple[str, str]:
     shortcut = item.get("shortcutDetails")
     if shortcut:

@@ -32,6 +32,7 @@ HELP_TEXT = "\n".join(
         "<code>/logs</code> - send recent sanitized application logs",
         "<code>/delete</code> - delete a Google Drive item",
         "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
+        "<code>/delete all</code> - empty all managed Drive folders",
         "",
         "<b>Google Drive</b>",
         "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",

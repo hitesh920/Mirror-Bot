@@ -35,6 +35,7 @@ from mirrorbot.services.google_drive_delivery import (
     DRIVE_CATEGORY_FOLDERS,
     FOLDER_MIME_TYPE,
     GoogleDriveUploader,
+    clear_drive_category_contents,
     drive_category_folder_ids,
     ensure_drive_category_folders,
     next_drive_chunk,
@@ -593,6 +594,48 @@ def test_gdrive_permission_creation_retries(monkeypatch):
     uploader.set_public_permission("file-id")
 
     assert create_call.calls == 2
+
+
+def test_clear_drive_categories_preserves_root_folders(monkeypatch):
+    deleted_ids = []
+
+    class DeleteRequest:
+        def __init__(self, file_id):
+            self.file_id = file_id
+
+        def execute(self):
+            deleted_ids.append(self.file_id)
+
+    class Files:
+        def delete(self, *, fileId, supportsAllDrives):
+            assert supportsAllDrives is True
+            return DeleteRequest(fileId)
+
+    service = SimpleNamespace(files=lambda: Files())
+    folder_ids = {key: f"root-{key}" for key in DRIVE_CATEGORY_FOLDERS}
+    children = {
+        "root-general": [{"id": "general-file", "name": "file.bin"}],
+        "root-movies": [{"id": "movie-folder", "name": "Movie"}],
+        "root-series": [],
+        "root-games": [{"id": "game-folder", "name": "Game"}],
+    }
+    monkeypatch.setattr(gdrive_delivery, "drive_category_folder_ids", lambda: folder_ids)
+    monkeypatch.setattr(gdrive_delivery, "drive_service", lambda _config: service)
+    monkeypatch.setattr(
+        gdrive_delivery,
+        "drive_folder_children",
+        lambda _service, folder_id: children[folder_id],
+    )
+
+    result = clear_drive_category_contents(object())
+
+    assert deleted_ids == ["general-file", "movie-folder", "game-folder"]
+    assert not set(folder_ids.values()).intersection(deleted_ids)
+    assert result == {
+        "deleted": 3,
+        "failed": [],
+        "categories": {"General": 1, "Movies": 1, "Series": 0, "Games": 1},
+    }
 
 
 @pytest.mark.asyncio

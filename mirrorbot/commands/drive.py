@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import secrets
 from html import escape
 
 from pyrogram import filters
@@ -10,13 +11,14 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..app import (
     LOGGER, app, config, delete_google_drive_link, drive_search_pages, owner_filter,
-    pending_drive_delete_chats, drive_share_pages, take_pending_drive_delete,
+    pending_drive_delete_chats, pending_drive_delete_items, drive_share_pages,
+    start_drive_delete_expiry, take_pending_drive_delete,
 )
 from ..downloaders.gdrive import drive_id_from_url
 from ..core.logging_config import log_event
 from ..services.drive_sharing import DriveShareError, build_drive_share
 from ..services.google_drive_delivery import (
-    delete_drive_item, drive_storage_quota, load_credentials,
+    clear_drive_category_contents, delete_drive_item, drive_storage_quota, load_credentials,
     search_drive_items,
 )
 from ..services.status import human_size
@@ -65,7 +67,29 @@ async def delete_cmd(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.delete", result="requested")
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) > 1:
-        await delete_google_drive_link(message, parts[1].strip())
+        target = parts[1].strip()
+        if target.casefold() == "all":
+            token = secrets.token_urlsafe(16)
+            pending_drive_delete_items[token] = {
+                "bulk": True,
+                "name": "All managed Drive contents",
+            }
+            prompt = await message.reply(
+                "<b>Confirm Google Drive cleanup</b>\n"
+                "This permanently deletes everything inside:\n"
+                "<code>General</code>, <code>Movies</code>, <code>Series</code>, and <code>Games</code>.\n\n"
+                "The four category folders themselves will be preserved.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(
+                    [[
+                        InlineKeyboardButton("Delete all contents", callback_data=f"dgdall:{token}"),
+                        InlineKeyboardButton("Cancel", callback_data=f"dgdcancel:{token}"),
+                    ]]
+                ),
+            )
+            start_drive_delete_expiry(token, prompt)
+            return
+        await delete_google_drive_link(message, target)
         return
     pending_drive_delete_chats.add(message.chat.id)
     await message.reply("Send the Google Drive link or file ID to delete.")
@@ -200,6 +224,44 @@ async def confirm_drive_delete(_, query):
     if action == "dgdcancel":
         await query.answer("Cancelled")
         await query.message.edit("Google Drive delete cancelled.")
+        return
+    if action == "dgdall":
+        await query.answer("Deleting Drive contents")
+        await query.message.edit("Deleting managed Google Drive contents...")
+        try:
+            result = await asyncio.to_thread(clear_drive_category_contents, config)
+        except Exception as exc:
+            LOGGER.exception("Google Drive bulk cleanup failed")
+            await query.message.edit(
+                f"Google Drive cleanup failed:\n{exc}",
+                parse_mode=ParseMode.DISABLED,
+            )
+            return
+        failed = result["failed"]
+        log_event(
+            LOGGER,
+            logging.INFO if not failed else logging.WARNING,
+            "command.delete_all",
+            result="complete" if not failed else "partial",
+            deleted=result["deleted"],
+            failed=len(failed),
+        )
+        category_lines = "\n".join(
+            f"<b>{escape(name)}:</b> <code>{count}</code>"
+            for name, count in result["categories"].items()
+        )
+        failure_line = (
+            f"\n<b>Failed:</b> <code>{len(failed)}</code>"
+            if failed
+            else ""
+        )
+        await query.message.edit(
+            "<b>Google Drive cleanup complete</b>\n"
+            f"<b>Deleted:</b> <code>{result['deleted']}</code>\n"
+            f"{category_lines}{failure_line}\n\n"
+            "Category folders were preserved.",
+            parse_mode=ParseMode.HTML,
+        )
         return
     await query.answer("Deleting")
     try:
