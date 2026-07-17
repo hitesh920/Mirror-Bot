@@ -405,7 +405,7 @@ async def prepare_google_drive_categories() -> None:
         )
     except Exception:
         LOGGER.warning(
-            "Google Drive category setup failed during startup; it will be retried when selected",
+            "Google Drive category setup failed during startup; Drive uploads require a bot restart after the issue is fixed",
             exc_info=True,
         )
 

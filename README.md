@@ -9,6 +9,8 @@ A private, owner-only Telegram transfer bot for downloading, processing, and del
 
 > Mirror-Bot is designed for a single trusted owner. It has no public dashboard and does not provide local media-library storage.
 
+For architecture, recovery, deployment, and maintenance details, see the [technical operations guide](docs/MIRROR_BOT_TECHNICAL_GUIDE.md).
+
 ## Highlights
 
 - One `/add` flow for direct URLs, magnets, torrent files, Google Drive, BuzzHeavier, yt-dlp links, and replied Telegram files.
