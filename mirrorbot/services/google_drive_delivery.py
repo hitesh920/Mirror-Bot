@@ -1,4 +1,5 @@
 import asyncio
+from collections import deque
 import logging
 import mimetypes
 import pickle
@@ -164,7 +165,10 @@ def drive_folder_children(service, folder_id: str) -> list[dict]:
                 q=f"'{escape_drive_query(folder_id)}' in parents and trashed = false",
                 spaces="drive",
                 pageSize=200,
-                fields="nextPageToken,files(id,name,mimeType,size,shortcutDetails)",
+                fields=(
+                    "nextPageToken,"
+                    "files(id,name,mimeType,size,webViewLink,shortcutDetails)"
+                ),
                 orderBy="folder,name",
                 pageToken=page_token,
             )
@@ -199,40 +203,40 @@ def drive_folder_size(service, folder_id: str) -> int:
 
 
 def search_drive_items(config: Config, query: str, limit: int = 100) -> list[dict]:
-    safe_query = escape_drive_query(query.strip())
-    if not safe_query:
+    needle = query.strip().casefold()
+    if not needle:
         return []
+    root_id = config.google_drive_folder_id
+    if not root_id:
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured")
+
     service = drive_service(config)
-    response = (
-        service
-        .files()
-        .list(
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-            q=f"name contains '{safe_query}' and trashed = false",
-            spaces="drive",
-            pageSize=max(1, min(limit, 100)),
-            fields="files(id,name,mimeType,size,webViewLink,shortcutDetails)",
-            orderBy="folder,name",
-        )
-        .execute()
-    )
-    results = response.get("files", [])
-    for item in results:
-        file_id, mime_type = resolve_drive_shortcut(item)
-        if mime_type != FOLDER_MIME_TYPE:
+    result_limit = max(1, min(limit, 100))
+    pending = deque([root_id])
+    visited: set[str] = set()
+    results = []
+
+    while pending and len(results) < result_limit:
+        folder_id = pending.popleft()
+        if folder_id in visited:
             continue
-        try:
-            item["size"] = str(drive_folder_size(service, file_id))
-            item["sizeCalculated"] = True
-        except Exception:
-            LOGGER.debug(
-                "Could not calculate Google Drive folder size id=%s",
-                file_id,
-                exc_info=True,
-            )
-            item["sizeCalculated"] = False
-    return results
+        visited.add(folder_id)
+        for item in drive_folder_children(service, folder_id):
+            target_id, mime_type = resolve_drive_shortcut(item)
+            if needle in (item.get("name") or "").casefold():
+                results.append(item)
+                if len(results) >= result_limit:
+                    break
+            if mime_type == FOLDER_MIME_TYPE and target_id not in visited:
+                pending.append(target_id)
+
+    return sorted(
+        results,
+        key=lambda item: (
+            item.get("mimeType") != FOLDER_MIME_TYPE,
+            (item.get("name") or "").casefold(),
+        ),
+    )
 
 
 def unique_drive_name(service, parent_id: str, name: str) -> str:

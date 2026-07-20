@@ -35,6 +35,7 @@ from mirrorbot.services.google_drive_delivery import (
     GoogleDriveUploader,
     clear_drive_folder_contents,
     next_drive_chunk,
+    search_drive_items,
 )
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
@@ -486,6 +487,42 @@ def test_clear_drive_folder_contents_preserves_configured_root(monkeypatch):
         "deleted": 2,
         "failed": [],
     }
+
+
+def test_drive_search_is_recursive_and_scoped_to_configured_root(monkeypatch):
+    folder = "application/vnd.google-apps.folder"
+    children = {
+        "configured-root": [
+            {"id": "nested", "name": "Projects", "mimeType": folder},
+            {"id": "root-file", "name": "notes.txt", "mimeType": "text/plain"},
+        ],
+        "nested": [
+            {"id": "match", "name": ".dart_tool", "mimeType": folder},
+            {"id": "not-match", "name": "dart_style", "mimeType": folder},
+        ],
+        "match": [],
+        "not-match": [],
+        "outside-root": [
+            {"id": "outside", "name": ".dart_cache", "mimeType": folder},
+        ],
+    }
+    visited = []
+    monkeypatch.setattr(gdrive_delivery, "drive_service", lambda _config: object())
+
+    def folder_children(_service, folder_id):
+        visited.append(folder_id)
+        return children[folder_id]
+
+    monkeypatch.setattr(gdrive_delivery, "drive_folder_children", folder_children)
+
+    results = search_drive_items(
+        SimpleNamespace(google_drive_folder_id="configured-root"),
+        ".dart",
+    )
+
+    assert [item["id"] for item in results] == ["match"]
+    assert "outside-root" not in visited
+    assert set(visited) == {"configured-root", "nested", "match", "not-match"}
 
 
 @pytest.mark.asyncio
