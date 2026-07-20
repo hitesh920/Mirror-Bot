@@ -20,7 +20,7 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 - Archive extraction and ZIP creation, including password-protected archives.
 - Live status with progress, size, speed, ETA, phase, and cancellation.
 - Google Drive upload, download, search, share, deletion, and quota tools.
-- Google Drive uploads routed into public General, Movies, Series, or Games folders.
+- Google Drive uploads sent directly to the configured folder ID.
 - Direct-host resolution and shortener bypass support.
 - Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
@@ -29,10 +29,9 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 1. Send `/add <link>` or reply to a Telegram file with `/add`.
 2. For yt-dlp sources, choose video/audio and quality.
 3. Choose Telegram, Google Drive, or BuzzHeavier.
-4. For Google Drive, choose General, Movies, Series, or Games.
-5. For torrents, review and select files on the temporary selector page.
-6. Monitor progress with `/status`.
-7. Receive one completion message with result links.
+4. For torrents, review and select files on the temporary selector page.
+5. Monitor progress with `/status`.
+6. Receive one completion message with result links.
 
 ### Processing Flags
 
@@ -65,7 +64,7 @@ Extraction failures fall back to delivering the original archive when the source
 | `/search <name>` | Search Google Drive on a temporary results page |
 | `/share <drive-link>` | Create a temporary public Drive share page |
 | `/delete <drive-link-or-id>` | Permanently delete a Google Drive item |
-| `/delete all` | Empty General, Movies, Series, and Games after confirmation |
+| `/delete all` | Empty the configured Google Drive upload folder after confirmation |
 | `/gdstats` | Show Drive authentication and quota |
 | `/speedtest` | Test server network speed |
 | `/logs` | Send the latest sanitized application logs |
@@ -156,10 +155,9 @@ When configured, uploaded files go to the channel and the requesting chat receiv
 
 ## Google Drive
 
-At startup, Mirror-Bot finds or creates `General`, `Movies`, `Series`, and
-`Games` inside `GOOGLE_DRIVE_FOLDER_ID`. These folders are made publicly
-readable, and their IDs are cached until the next restart. Every Telegram
-Drive upload asks which cached category to use without rechecking Drive.
+Mirror-Bot uploads directly into `GOOGLE_DRIVE_FOLDER_ID`. Selecting Google
+Drive as the destination immediately starts the task without another folder
+selection step. Uploaded files and folders receive public reader links.
 
 Place these files beside `docker-compose.yml`:
 

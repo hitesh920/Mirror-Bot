@@ -88,7 +88,7 @@ All commands require `OWNER_ID`.
 | `/stats` / `/speedtest` | Inspect host resources or network performance. |
 | `/search <name>` / `/share <Drive link>` | Open temporary Drive search or share pages. |
 | `/delete <Drive link-or-id>` | Permanently delete one Drive item after confirmation. |
-| `/delete all` | Empty managed Drive categories after confirmation; category roots remain. |
+| `/delete all` | Empty the configured Drive upload folder after confirmation; the root remains. |
 | `/gdstats` | Check Drive authentication and quota. |
 | `/logs` / `/restart` / `/help` | Export sanitized logs, restart gracefully, or show help. |
 
@@ -137,7 +137,7 @@ Optional/runtime settings:
 | Variable | Default | Meaning |
 |---|---:|---|
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or `@username` for Telegram uploads; bot must be able to post. |
-| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Parent for managed `General`, `Movies`, `Series`, and `Games` folders. |
+| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Destination folder for all Google Drive uploads. |
 | `BUZZHEAVIER_ACCOUNT_ID` | Empty | Account identifier; uploads otherwise attempt anonymous mode. |
 | `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
@@ -149,7 +149,7 @@ Optional/runtime settings:
 
 Important built-in defaults include a 2 GB Telegram split size, yt-dlp video up to 1080p, MP3 at 320 kbps, ZIP level 5, qBittorrent at `localhost:8080`, and application logs at `/app/logs/bot.log`.
 
-For Google Drive, place `credentials.json` and `token.pickle` beside `docker-compose.yml`. Compose mounts them at `/app/data/google/credentials.json` and `/app/data/google/token.pickle`. On startup the bot finds or creates the four managed category folders, makes them publicly readable, and caches their IDs for the process lifetime. It does not repeat category discovery for every task. If startup category setup fails, correct the credential, permission, or folder problem and restart Mirror-Bot before selecting a Drive destination. Treat the OAuth files and uploaded Drive contents accordingly.
+For Google Drive, place `credentials.json` and `token.pickle` beside `docker-compose.yml`. Compose mounts them at `/app/data/google/credentials.json` and `/app/data/google/token.pickle`. Every Google Drive destination uploads directly into `GOOGLE_DRIVE_FOLDER_ID`; there is no category-selection step or startup folder creation. Uploaded files and folders receive public reader permissions. Treat the OAuth files and uploaded Drive contents accordingly.
 
 Never commit `.env`, OAuth files, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
 

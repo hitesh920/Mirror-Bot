@@ -32,7 +32,7 @@ HELP_TEXT = "\n".join(
         "<code>/logs</code> - send recent sanitized application logs",
         "<code>/delete</code> - delete a Google Drive item",
         "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
-        "<code>/delete all</code> - empty all managed Drive folders",
+        "<code>/delete all</code> - empty the configured Drive upload folder",
         "",
         "<b>Google Drive</b>",
         "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
@@ -84,13 +84,10 @@ def completion_message(task) -> str:
             warning_list(task.processing_warnings),
         ]
     elif task.destination == Destination.GOOGLE_DRIVE:
-        drive_destination = "Google Drive"
-        if task.drive_folder_name:
-            drive_destination += f" / {task.drive_folder_name}"
         sections = [
             "<b>Task complete</b>",
             f"<b>Name:</b> <code>{name}</code>",
-            f"<b>Uploaded to:</b> <code>{escape(drive_destination)}</code>",
+            "<b>Uploaded to:</b> <code>Google Drive</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
             warning_list(task.processing_warnings),

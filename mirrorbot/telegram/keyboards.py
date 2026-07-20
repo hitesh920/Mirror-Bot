@@ -15,30 +15,6 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def google_drive_folder_buttons(token: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "General", callback_data=f"gdfolder:general:{token}"
-                ),
-                InlineKeyboardButton(
-                    "Movies", callback_data=f"gdfolder:movies:{token}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "Series", callback_data=f"gdfolder:series:{token}"
-                ),
-                InlineKeyboardButton(
-                    "Games", callback_data=f"gdfolder:games:{token}"
-                ),
-            ],
-            [InlineKeyboardButton("Back", callback_data=f"gdfolder:back:{token}")],
-        ]
-    )
-
-
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("Video", callback_data=f"ytkind:video:{token}"), InlineKeyboardButton("Audio", callback_data=f"ytkind:audio:{token}")]]

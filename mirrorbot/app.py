@@ -14,11 +14,7 @@ from .core.logging_config import setup_logging
 from .core.models import Destination, Source, SourceType, TaskPhase
 from .downloaders.gdrive import drive_id_from_url
 from .services.task_manager import TaskManager
-from .services.google_drive_delivery import (
-    DRIVE_CATEGORY_FOLDERS,
-    drive_item_info,
-    ensure_drive_category_folders,
-)
+from .services.google_drive_delivery import drive_item_info
 from .services.drive_search_pages import DriveSearchPages
 from .services.drive_share_pages import DriveSharePages
 from .services.public_url import public_base_url
@@ -170,9 +166,6 @@ async def send_live_status(chat_id: int) -> None:
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
 
-def google_drive_folder_buttons(token: str) -> InlineKeyboardMarkup:
-    return telegram_keyboards.google_drive_folder_buttons(token)
-
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_buttons(token)
 
@@ -192,8 +185,6 @@ async def launch_selected_task(
     query,
     token: str,
     destination: Destination,
-    drive_folder_id: str = "",
-    drive_folder_name: str = "",
 ) -> None:
     pending = take_pending_add(token)
     if pending is None:
@@ -208,13 +199,10 @@ async def launch_selected_task(
         destination,
         options,
     )
-    task.drive_folder_id = drive_folder_id
-    task.drive_folder_name = drive_folder_name
     LOGGER.info(
-        "Task %s: selected destination=%s drive_category=%r",
+        "Task %s: selected destination=%s",
         task.short_id(),
         destination.value,
-        drive_folder_name,
     )
     is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
     if is_torrent:
@@ -390,26 +378,6 @@ async def validate_telegram_dump_channel() -> None:
         )
 
 
-async def prepare_google_drive_categories() -> None:
-    try:
-        folder_ids = await asyncio.to_thread(
-            ensure_drive_category_folders,
-            config,
-        )
-        LOGGER.info(
-            "Google Drive categories ready folders=%s",
-            ",".join(
-                DRIVE_CATEGORY_FOLDERS[slug]
-                for slug in folder_ids
-            ),
-        )
-    except Exception:
-        LOGGER.warning(
-            "Google Drive category setup failed during startup; Drive uploads require a bot restart after the issue is fixed",
-            exc_info=True,
-        )
-
-
 async def main() -> None:
     LOGGER.info("========== BOT STARTED ================")
     await manager.cleanup_orphaned_torrents()
@@ -422,7 +390,6 @@ async def main() -> None:
             await app.start()
             telegram_started = True
             await validate_telegram_dump_channel()
-            await prepare_google_drive_categories()
         except Exception:
             LOGGER.exception("Telegram UI failed to start")
 

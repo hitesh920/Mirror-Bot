@@ -18,7 +18,7 @@ from ..downloaders.gdrive import drive_id_from_url
 from ..core.logging_config import log_event
 from ..services.drive_sharing import DriveShareError, build_drive_share
 from ..services.google_drive_delivery import (
-    clear_drive_category_contents, delete_drive_item, drive_storage_quota, load_credentials,
+    clear_drive_folder_contents, delete_drive_item, drive_storage_quota, load_credentials,
     search_drive_items,
 )
 from ..services.status import human_size
@@ -72,13 +72,13 @@ async def delete_cmd(_, message: Message):
             token = secrets.token_urlsafe(16)
             pending_drive_delete_items[token] = {
                 "bulk": True,
-                "name": "All managed Drive contents",
+                "name": "All configured Drive folder contents",
             }
             prompt = await message.reply(
                 "<b>Confirm Google Drive cleanup</b>\n"
-                "This permanently deletes everything inside:\n"
-                "<code>General</code>, <code>Movies</code>, <code>Series</code>, and <code>Games</code>.\n\n"
-                "The four category folders themselves will be preserved.",
+                "This permanently deletes everything inside the configured "
+                "Google Drive upload folder.\n\n"
+                "The configured upload folder itself will be preserved.",
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(
                     [[
@@ -227,9 +227,9 @@ async def confirm_drive_delete(_, query):
         return
     if action == "dgdall":
         await query.answer("Deleting Drive contents")
-        await query.message.edit("Deleting managed Google Drive contents...")
+        await query.message.edit("Deleting configured Google Drive folder contents...")
         try:
-            result = await asyncio.to_thread(clear_drive_category_contents, config)
+            result = await asyncio.to_thread(clear_drive_folder_contents, config)
         except Exception as exc:
             LOGGER.exception("Google Drive bulk cleanup failed")
             await query.message.edit(
@@ -246,10 +246,6 @@ async def confirm_drive_delete(_, query):
             deleted=result["deleted"],
             failed=len(failed),
         )
-        category_lines = "\n".join(
-            f"<b>{escape(name)}:</b> <code>{count}</code>"
-            for name, count in result["categories"].items()
-        )
         failure_line = (
             f"\n<b>Failed:</b> <code>{len(failed)}</code>"
             if failed
@@ -258,8 +254,8 @@ async def confirm_drive_delete(_, query):
         await query.message.edit(
             "<b>Google Drive cleanup complete</b>\n"
             f"<b>Deleted:</b> <code>{result['deleted']}</code>\n"
-            f"{category_lines}{failure_line}\n\n"
-            "Category folders were preserved.",
+            f"{failure_line}\n\n"
+            "The configured upload folder was preserved.",
             parse_mode=ParseMode.HTML,
         )
         return

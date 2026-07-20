@@ -87,8 +87,6 @@ class Task:
     result_files: list[str] = field(default_factory=list)
     result_folders: list[str] = field(default_factory=list)
     result_links: list[str] = field(default_factory=list)
-    drive_folder_id: str = ""
-    drive_folder_name: str = ""
     telegram_upload_mode: str = ""
     processing_warnings: list[str] = field(default_factory=list)
     torrent_hash: str = ""
