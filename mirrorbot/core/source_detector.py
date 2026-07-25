@@ -3,13 +3,8 @@ from urllib.parse import urlparse
 from yt_dlp import YoutubeDL
 from yt_dlp.extractor import gen_extractors
 
-from .models import Source, SourceType
 from ..resolvers import is_resolvable_url
-
-
-def is_google_drive_url(value: str) -> bool:
-    host = urlparse(value).netloc.lower()
-    return "drive.google.com" in host or "docs.google.com" in host
+from .models import Source, SourceType
 
 
 def is_telegram_url(value: str) -> bool:
@@ -39,8 +34,6 @@ def detect_source(value: str, filename: str = "") -> Source:
         return Source(SourceType.TORRENT_FILE, value, filename)
     if value.startswith("magnet:"):
         return Source(SourceType.MAGNET, value)
-    if is_google_drive_url(value):
-        return Source(SourceType.GOOGLE_DRIVE, value)
     if is_telegram_url(value):
         return Source(SourceType.UNSUPPORTED, value)
     if is_resolvable_url(value):

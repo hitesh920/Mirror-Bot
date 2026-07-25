@@ -1,6 +1,6 @@
 # Mirror-Bot
 
-A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram, Google Drive, Cloudflare R2, or BuzzHeavier.
+A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram or Cloudflare R2.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
@@ -13,15 +13,13 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 
 ## Highlights
 
-- One `/add` flow for direct URLs, magnets, torrent files, Google Drive, BuzzHeavier, yt-dlp links, and replied Telegram files.
-- Telegram, Google Drive, Cloudflare R2, and BuzzHeavier delivery destinations.
+- One `/add` flow for direct URLs, magnets, torrent files, yt-dlp links, and replied Telegram files.
+- Telegram and Cloudflare R2 delivery destinations.
 - Optional Telegram dump channel to keep the bot conversation clean.
 - qBittorrent file selection through a temporary token-protected page.
 - Archive extraction and ZIP creation, including password-protected archives.
 - Live status with progress, size, speed, ETA, phase, and cancellation.
-- Google Drive upload, download, search, share, deletion, and quota tools.
-- Google Drive uploads sent directly to the configured folder ID.
-- Private Cloudflare R2 uploads with 24-hour signed links and automatic deletion.
+- Private Cloudflare R2 uploads with 24-hour signed links and two-day automatic deletion.
 - Direct-host resolution and shortener bypass support.
 - Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
@@ -29,7 +27,7 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 
 1. Send `/add <link>` or reply to a Telegram file with `/add`.
 2. For yt-dlp sources, choose video/audio and quality.
-3. Choose Telegram, Google Drive, Cloudflare R2, or BuzzHeavier.
+3. Choose Telegram or Cloudflare R2.
 4. For torrents, review and select files on the temporary selector page.
 5. Monitor progress with `/status`.
 6. Receive one completion message with result links.
@@ -56,17 +54,12 @@ Extraction failures fall back to delivering the original archive when the source
 
 | Command | Purpose |
 |---|---|
-| `/add <link>` | Add a URL, magnet, Drive link, BuzzHeavier link, or yt-dlp source |
+| `/add <link>` | Add a direct URL, magnet, torrent URL, or yt-dlp source |
 | `/add` as a reply | Download a replied Telegram file, torrent file, or link |
 | `/status` | Show live active-task progress |
 | `/stats` | Show uptime, CPU, RAM, disk, and task count |
 | `/cancel <task-id>` | Cancel one task |
 | `/cancelall` | Cancel every active task and selector |
-| `/search <name>` | Search Google Drive on a temporary results page |
-| `/share <drive-link>` | Create a temporary public Drive share page |
-| `/delete <drive-link-or-id>` | Permanently delete a Google Drive item |
-| `/delete all` | Empty the configured Google Drive upload folder after confirmation |
-| `/gdstats` | Show Drive authentication and quota |
 | `/r2stats` | Show current R2 object count and storage |
 | `/r2search <name>` | Search current R2 uploads and issue fresh signed links |
 | `/r2delete <key-or-link>` | Permanently delete one R2 object after confirmation |
@@ -85,8 +78,6 @@ Mirror-Bot has no persistent web dashboard. It opens only short-lived tokenized 
 | Port | Service |
 |---|---|
 | `8001` | Torrent file selector |
-| `8002` | Google Drive search results |
-| `8003` | Google Drive public share page |
 
 Open these TCP ports in the VPS firewall and cloud ingress rules. Anyone with a valid random URL can access that page until it expires.
 
@@ -96,8 +87,6 @@ Open these TCP ports in the VPS firewall and cloud ingress rules. Anyone with a 
 - Telegram bot token
 - Telegram API ID and API hash
 - Publicly reachable VPS for temporary pages
-- Optional Google OAuth credentials
-- Optional BuzzHeavier account ID
 
 The container includes qBittorrent-nox, FFmpeg, 7-Zip, UnRAR, Deno, and the Python runtime.
 
@@ -140,15 +129,13 @@ Only the `mirror-bot` container should run.
 | Variable | Default | Description |
 |---|---:|---|
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or username for Telegram uploads |
-| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Parent folder containing the four managed upload categories |
-| `BUZZHEAVIER_ACCOUNT_ID` | Empty | BuzzHeavier account identifier |
 | `R2_ENDPOINT_URL` | Empty | Cloudflare R2 S3 endpoint |
 | `R2_BUCKET` | Empty | Private R2 bucket name |
 | `R2_ACCESS_KEY_ID` | Empty | Bucket-scoped R2 S3 access key |
 | `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped R2 S3 secret |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects |
 | `R2_LINK_EXPIRY_SECONDS` | `86400` | Signed download-link lifetime, maximum seven days |
-| `R2_AUTO_DELETE_SECONDS` | `86400` | Object retention checked every 15 minutes; `0` disables |
+| `R2_AUTO_DELETE_SECONDS` | `172800` | Object retention checked every 15 minutes; `0` disables |
 | `TASK_LIMIT` | `10` | Maximum concurrent tasks |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
 | `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port |
@@ -165,28 +152,6 @@ Only the `mirror-bot` container should run.
 
 When configured, uploaded files go to the channel and the requesting chat receives only status and completion messages. If the channel is unavailable, PM fallback remains available when the task originated from Telegram.
 
-## Google Drive
-
-Mirror-Bot uploads directly into `GOOGLE_DRIVE_FOLDER_ID`. Selecting Google
-Drive as the destination immediately starts the task without another folder
-selection step. Uploaded files and folders receive public reader links.
-
-Place these files beside `docker-compose.yml`:
-
-```text
-credentials.json
-token.pickle
-```
-
-The Compose configuration mounts them at:
-
-```text
-/app/data/google/credentials.json
-/app/data/google/token.pickle
-```
-
-Use the repository token-generation helper when a new OAuth token is required. Keep both files private and never commit them.
-
 ## Cloudflare R2
 
 Create a private R2 bucket and an **Object Read & Write** API token scoped only
@@ -197,7 +162,6 @@ presigned download links, and removes objects older than
 
 Every bot-owned object is stored below `R2_PREFIX` and a task-specific UUID.
 `/r2delete all` only removes that configured prefix and preserves the bucket.
-Google Drive remains available as an independent destination.
 
 ## Storage
 
@@ -244,10 +208,9 @@ The project keeps Telegram handlers thin and routes transfer work through shared
 
 ## Security
 
-- Keep `.env`, bot tokens, API credentials, OAuth files, cookies, and dump-channel details private.
+- Keep `.env`, bot tokens, API credentials, cookies, and dump-channel details private.
 - Temporary pages use random tokens but are still public to anyone who has the URL.
 - Application logs redact secrets, magnets, authorization headers, and tokenized URLs.
-- Google Drive sharing never changes permissions automatically.
 - Run the bot only on infrastructure you control.
 - Review source copyright and service terms before transferring content.
 

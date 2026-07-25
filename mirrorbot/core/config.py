@@ -25,13 +25,11 @@ class Config:
     owner_id: int
     telegram_api_id: int
     telegram_api_hash: str
-    google_drive_folder_id: str
     task_limit: int
     status_update_interval: int
     public_base_url: str
     torrent_selection_port: int
     torrent_selection_timeout: int
-    buzzheavier_account_id: str
     telegram_dump_chat_id: str
     r2_endpoint_url: str
     r2_bucket: str
@@ -50,8 +48,6 @@ class Config:
     ytdlp_audio_quality: str = "320"
     zip_compression_level: int = 5
     log_file: str = "logs/bot.log"
-    google_credentials_file: Path = Path("/app/data/google/credentials.json")
-    google_token_file: Path = Path("/app/data/google/token.pickle")
 
     @classmethod
     def load(cls) -> "Config":
@@ -74,13 +70,11 @@ class Config:
             owner_id=_int("OWNER_ID"),
             telegram_api_id=_int("TELEGRAM_API_ID"),
             telegram_api_hash=getenv("TELEGRAM_API_HASH", ""),
-            google_drive_folder_id=getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
             task_limit=max(1, _int("TASK_LIMIT", 10)),
             status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
             public_base_url=getenv("PUBLIC_BASE_URL", ""),
             torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8001),
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
-            buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
             r2_endpoint_url=getenv("R2_ENDPOINT_URL", "").strip().rstrip("/"),
             r2_bucket=getenv("R2_BUCKET", "").strip(),
@@ -93,7 +87,7 @@ class Config:
             ),
             r2_auto_delete_seconds=max(
                 0,
-                _int("R2_AUTO_DELETE_SECONDS", 86400),
+                _int("R2_AUTO_DELETE_SECONDS", 172800),
             ),
             enable_telegram_ui=enable_telegram_ui,
         )

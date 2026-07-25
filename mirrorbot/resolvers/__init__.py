@@ -4,7 +4,6 @@ import aiohttp
 
 from ..core.models import Source, SourceType
 from .base import USER_AGENT, ResolvedCollection, ResolverError, resolved_source
-from .buzzheavier import BuzzHeavierResolver
 from .direct_hosts import (
     KrakenFilesResolver,
     PCloudResolver,
@@ -44,7 +43,6 @@ RESOLVERS = (
     RacatyResolver(),
     DoodstreamResolver(),
     LinkboxResolver(),
-    BuzzHeavierResolver(),
 )
 
 

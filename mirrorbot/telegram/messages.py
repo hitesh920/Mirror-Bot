@@ -14,7 +14,6 @@ HELP_TEXT = "\n".join(
         "<b>Add</b>",
         "<code>/add &lt;link&gt;</code> - add a link",
         "<code>/add</code> - use the replied file/link",
-        "<code>BuzzHeavier</code> links are supported as sources and uploads",
         "<code>-z</code> zip, <code>-zp pass</code> password zip",
         "<code>-e</code> extract, <code>-ep pass</code> password extract",
         "<code>-n name</code> custom task name",
@@ -23,7 +22,6 @@ HELP_TEXT = "\n".join(
         "<code>/status</code> - live task status",
         "<code>/stats</code> - bot/server stats",
         "<code>/speedtest</code> - test server network speed",
-        "<code>/gdstats</code> - Google Drive auth and quota",
         "<code>/r2stats</code> - Cloudflare R2 object usage",
         "",
         "<b>Manage</b>",
@@ -31,15 +29,8 @@ HELP_TEXT = "\n".join(
         "<code>/cancelall</code> - cancel all active tasks",
         "<code>/restart</code> - gracefully restart Mirror-Bot",
         "<code>/logs</code> - send recent sanitized application logs",
-        "<code>/delete</code> - delete a Google Drive item",
-        "<code>/delete &lt;drive-link-or-id&gt;</code> - delete Google Drive item",
-        "<code>/delete all</code> - empty the configured Drive upload folder",
         "<code>/r2delete &lt;key-or-link&gt;</code> - delete one R2 object",
         "<code>/r2delete all</code> - delete all bot uploads from R2",
-        "",
-        "<b>Google Drive</b>",
-        "<code>/search &lt;name&gt;</code> - search Drive on a temporary page",
-        "<code>/share &lt;drive-link&gt;</code> - temporary public Drive share page",
         "",
         "<b>Cloudflare R2</b>",
         "<code>/r2search &lt;name&gt;</code> - search current R2 uploads",
@@ -88,24 +79,6 @@ def completion_message(task) -> str:
             f"<b>Uploaded to:</b> <code>{upload_label}</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
             result_list("Uploaded files", task.result_files, task.result_links),
-            warning_list(task.processing_warnings),
-        ]
-    elif task.destination == Destination.GOOGLE_DRIVE:
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>Google Drive</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            f"<b>Folders:</b> <code>{len(task.result_folders)}</code>",
-            warning_list(task.processing_warnings),
-        ]
-    elif task.destination == Destination.BUZZHEAVIER:
-        sections = [
-            "<b>Task complete</b>",
-            f"<b>Name:</b> <code>{name}</code>",
-            "<b>Uploaded to:</b> <code>BuzzHeavier</code>",
-            f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            result_list("BuzzHeavier links", task.result_files, task.result_links),
             warning_list(task.processing_warnings),
         ]
     elif task.destination == Destination.CLOUDFLARE_R2:

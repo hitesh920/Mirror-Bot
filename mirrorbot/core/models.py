@@ -16,14 +16,11 @@ class SourceType(str, Enum):
     MAGNET = "magnet"
     TORRENT_FILE = "torrent_file"
     YTDLP = "ytdlp"
-    GOOGLE_DRIVE = "google_drive"
     UNSUPPORTED = "unsupported"
 
 
 class Destination(str, Enum):
     TELEGRAM = "telegram"
-    GOOGLE_DRIVE = "google_drive"
-    BUZZHEAVIER = "buzzheavier"
     CLOUDFLARE_R2 = "cloudflare_r2"
 
 

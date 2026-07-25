@@ -7,9 +7,19 @@ from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
 from ..app import (
-    ADD_USAGE, LOGGER, answer_expired_selection, app, config, destination_buttons,
-    launch_selected_task, owner_filter, pending_adds, start_pending_add_expiry,
-    ytdlp_audio_buttons, ytdlp_buttons, ytdlp_video_buttons,
+    ADD_USAGE,
+    LOGGER,
+    answer_expired_selection,
+    app,
+    config,
+    destination_buttons,
+    launch_selected_task,
+    owner_filter,
+    pending_adds,
+    start_pending_add_expiry,
+    ytdlp_audio_buttons,
+    ytdlp_buttons,
+    ytdlp_video_buttons,
 )
 from ..core.models import Destination, Source, SourceType
 from ..core.parser import parse_add_text, replied_link
@@ -58,7 +68,7 @@ async def add(_, message: Message):
 
     if source.type == SourceType.UNSUPPORTED:
         await message.reply(
-            "Unsupported source. Send a supported URL, magnet, Google Drive link, "
+            "Unsupported source. Send a supported URL, magnet, "
             "or reply to a Telegram file/link."
         )
         return
@@ -133,12 +143,6 @@ async def destination_choice(_, query):
         return
     if dest == "telegram":
         await launch_selected_task(query, token, Destination.TELEGRAM)
-        return
-    if dest == "gdrive":
-        await launch_selected_task(query, token, Destination.GOOGLE_DRIVE)
-        return
-    if dest == "buzzheavier":
-        await launch_selected_task(query, token, Destination.BUZZHEAVIER)
         return
     if dest == "r2":
         if not config.r2_configured:

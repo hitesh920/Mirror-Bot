@@ -1,8 +1,6 @@
 import asyncio
 import logging
-import secrets
 import signal
-from html import escape
 from time import time
 
 from pyrogram import Client, filters, idle
@@ -12,17 +10,12 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from .core.config import Config
 from .core.logging_config import setup_logging
 from .core.models import Destination, Source, SourceType, TaskPhase
-from .downloaders.gdrive import drive_id_from_url
-from .services.task_manager import TaskManager
-from .services.google_drive_delivery import drive_item_info
-from .services.drive_search_pages import DriveSearchPages
-from .services.drive_share_pages import DriveSharePages
-from .services.public_url import public_base_url
 from .services.background import BackgroundTasks
-from .services.runtime import RuntimeCoordinator
-from .services.restart_state import take_restart_state
 from .services.r2_delivery import expiry_sweeper
+from .services.restart_state import take_restart_state
+from .services.runtime import RuntimeCoordinator
 from .services.startup import cleanup_abandoned_downloads
+from .services.task_manager import TaskManager
 from .services.telegram_delivery import telegram_chat_id
 from .telegram import keyboards as telegram_keyboards
 from .telegram import messages as telegram_messages
@@ -38,19 +31,6 @@ shutting_down = False
 pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
-pending_drive_delete_chats: set[int] = set()
-pending_drive_delete_items: dict[str, dict] = {}
-pending_drive_delete_expiry_jobs: dict[str, asyncio.Task] = {}
-drive_search_pages = DriveSearchPages(
-    public_base_url(config.torrent_selection_port + 1, config.public_base_url),
-    config.torrent_selection_port + 1,
-    300,
-)
-drive_share_pages = DriveSharePages(
-    public_base_url(8003, config.public_base_url),
-    8003,
-    300,
-)
 PENDING_ADD_TIMEOUT = 120
 ADD_USAGE = telegram_messages.ADD_USAGE
 HELP_TEXT = telegram_messages.HELP_TEXT
@@ -121,36 +101,6 @@ async def answer_expired_selection(query) -> None:
         await query.message.edit("Selection expired. Send /add again.")
     except Exception:
         pass
-
-async def expire_drive_delete(token: str, message: Message) -> None:
-    try:
-        await asyncio.sleep(PENDING_ADD_TIMEOUT)
-        item = pending_drive_delete_items.pop(token, None)
-        if item is None:
-            return
-        LOGGER.info("Expired Google Drive delete confirmation id=%s", item.get("id"))
-        try:
-            await message.edit("Google Drive delete request expired.")
-        except Exception:
-            LOGGER.debug(
-                "Could not edit expired Google Drive delete confirmation",
-                exc_info=True,
-            )
-    finally:
-        pending_drive_delete_expiry_jobs.pop(token, None)
-
-def start_drive_delete_expiry(token: str, message: Message) -> None:
-    old_job = pending_drive_delete_expiry_jobs.pop(token, None)
-    if old_job:
-        old_job.cancel()
-    pending_drive_delete_expiry_jobs[token] = background.create(expire_drive_delete(token, message), name="expire-drive-delete")
-
-def take_pending_drive_delete(token: str) -> dict | None:
-    item = pending_drive_delete_items.pop(token, None)
-    job = pending_drive_delete_expiry_jobs.pop(token, None)
-    if job:
-        job.cancel()
-    return item
 
 async def update_status_message(chat_id: int) -> None:
     await telegram_status.update(chat_id)
@@ -294,47 +244,12 @@ async def launch_selected_task(
         await asyncio.sleep(0)
         await replace_status_message(task.chat_id)
 
-async def delete_google_drive_link(message: Message, link: str) -> None:
-    try:
-        file_id = drive_id_from_url(link)
-    except ValueError as exc:
-        await message.reply(str(exc))
-        return
-    try:
-        item = await asyncio.to_thread(drive_item_info, config, file_id)
-    except Exception as exc:
-        LOGGER.exception("Google Drive item lookup failed")
-        await message.reply(
-            f"Google Drive item lookup failed:\n{exc}",
-            parse_mode=ParseMode.DISABLED,
-        )
-        return
-    token = secrets.token_urlsafe(16)
-    pending_drive_delete_items[token] = item
-    item_type = "folder" if item.get("mimeType") == "application/vnd.google-apps.folder" else "file"
-    prompt = await message.reply(
-        "<b>Confirm Google Drive delete</b>\n"
-        f"<b>Name:</b> <code>{escape(item.get('name', 'Untitled'))}</code>\n"
-        f"<b>Type:</b> <code>{item_type}</code>\n"
-        f"<b>ID:</b> <code>{escape(file_id)}</code>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Delete", callback_data=f"dgddel:{token}"),
-                    InlineKeyboardButton("Cancel", callback_data=f"dgdcancel:{token}"),
-                ]
-            ]
-        ),
-    )
-    start_drive_delete_expiry(token, prompt)
-
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
     if app is None:
         LOGGER.info("Telegram UI disabled; command handlers were not registered")
         return
-    from .commands import add, common, drive, r2  # noqa: F401
+    from .commands import add, common, r2  # noqa: F401
 
 register_command_handlers()
 
@@ -345,9 +260,9 @@ async def shutdown_bot() -> None:
     shutting_down = True
     LOGGER.info("Graceful shutdown started")
     telegram_status.cancel_jobs()
-    for job in list(pending_add_expiry_jobs.values()) + list(pending_drive_delete_expiry_jobs.values()):
+    for job in list(pending_add_expiry_jobs.values()):
         job.cancel()
-    await runtime.shutdown((drive_search_pages.close_all, drive_share_pages.close_all))
+    await runtime.shutdown()
     LOGGER.info("Graceful shutdown complete")
 
 async def wait_for_shutdown_signal() -> None:

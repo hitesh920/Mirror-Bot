@@ -9,7 +9,6 @@ from ..core.config import Config
 from ..core.logging_config import log_event
 from ..core.models import SourceType, Task, TaskPhase
 from ..downloaders.direct import download_direct
-from ..downloaders.gdrive import download_gdrive
 from ..downloaders.qbittorrent import QBittorrentClient
 from ..downloaders.telegram import download_telegram_file
 from ..downloaders.torrent import download_torrent
@@ -132,8 +131,6 @@ class TaskManager:
             return await download_direct(task)
         if task.source.type == SourceType.YTDLP:
             return await download_ytdlp(task)
-        if task.source.type == SourceType.GOOGLE_DRIVE:
-            return await download_gdrive(task, self.config)
         raise NotImplementedError(
             f"{task.source.type.value} download is not implemented"
         )

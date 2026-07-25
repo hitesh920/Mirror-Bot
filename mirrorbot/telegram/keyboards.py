@@ -8,11 +8,7 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
-                InlineKeyboardButton("Google Drive", callback_data=f"dest:gdrive:{token}"),
-            ],
-            [
                 InlineKeyboardButton("Cloudflare R2", callback_data=f"dest:r2:{token}"),
-                InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}"),
             ],
         ]
     )
@@ -58,16 +54,6 @@ def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
 
 
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
-    if task.destination == Destination.GOOGLE_DRIVE and task.result_links:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("Open Google Drive", url=task.result_links[0])]])
-    if task.destination == Destination.BUZZHEAVIER and task.result_links:
-        if len(task.result_links) == 1:
-            return InlineKeyboardMarkup([[InlineKeyboardButton("Open BuzzHeavier", url=task.result_links[0])]])
-        buttons = [
-            InlineKeyboardButton(f"Open {index}", url=link)
-            for index, link in enumerate(task.result_links[:10], start=1)
-        ]
-        return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
     if task.destination == Destination.CLOUDFLARE_R2 and task.result_links:
         if len(task.result_links) == 1:
             return InlineKeyboardMarkup(

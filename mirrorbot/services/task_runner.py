@@ -17,8 +17,6 @@ from .archive import (
     extract_path,
     zip_path,
 )
-from .buzzheavier_delivery import upload_to_buzzheavier
-from .google_drive_delivery import upload_to_gdrive
 from .paths import ensure_no_symlinks
 from .r2_delivery import upload_to_r2
 from .telegram_delivery import upload_to_telegram
@@ -164,10 +162,6 @@ class TaskRunner:
                 manager.config.telegram_leech_split_size,
                 manager.config.telegram_dump_chat_id,
             )
-        elif task.destination == Destination.GOOGLE_DRIVE:
-            operation = upload_to_gdrive(task, path, manager.config)
-        elif task.destination == Destination.BUZZHEAVIER:
-            operation = upload_to_buzzheavier(task, path, manager.config)
         elif task.destination == Destination.CLOUDFLARE_R2:
             operation = upload_to_r2(task, path, manager.config)
         else:

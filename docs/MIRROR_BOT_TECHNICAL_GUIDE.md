@@ -19,10 +19,7 @@ Supported sources:
 - Magnet links and `.torrent` files, with temporary browser-based file selection
 - Replied Telegram documents, videos, audio, and photos
 - yt-dlp-compatible video/audio links
-- Google Drive links
-- BuzzHeavier links where supported by source resolution
-
-Supported destinations are Telegram, Google Drive, Cloudflare R2, and BuzzHeavier. Optional processing includes extraction, password-protected extraction, ZIP creation, password-protected ZIP creation, and custom task names.
+Supported destinations are Telegram and Cloudflare R2. Optional processing includes extraction, password-protected extraction, ZIP creation, password-protected ZIP creation, and custom task names.
 
 ```mermaid
 flowchart TD
@@ -32,13 +29,9 @@ flowchart TD
     D --> E["Safety scan and manifest"]
     E --> F{"Destination"}
     F --> G["Telegram"]
-    F --> H["Google Drive"]
     F --> I["Cloudflare R2"]
-    F --> K["BuzzHeavier"]
     G --> J["Completion and cleanup"]
-    H --> J
     I --> J
-    K --> J
 ```
 
 Tasks move through phases such as `queued`, `fetching metadata`, `selecting`, `downloading`, `preparing`, `scanning`, `extracting`, `archiving`, `uploading`, and one terminal phase: `complete`, `cancelled`, or `error`. `TASK_LIMIT` controls concurrent execution; extra accepted tasks wait for a semaphore slot. Task metadata is currently held in memory, while per-task files live under `/app/downloads/<task-id>`. Cleanup is attempted after every terminal outcome, and startup recovery removes abandoned workspaces left by an interrupted or failed cleanup.
@@ -49,9 +42,9 @@ Tasks move through phases such as `queued`, `fetching metadata`, `selecting`, `d
 Mirror-Bot/
 ├── mirrorbot/
 │   ├── app.py                 # startup, Telegram client, shared runtime state
-│   ├── commands/              # thin /add, common, and Drive command handlers
+│   ├── commands/              # thin /add, common, and R2 command handlers
 │   ├── core/                  # config, models, errors, logging/redaction
-│   ├── downloaders/           # direct, Drive, Telegram, torrent, yt-dlp
+│   ├── downloaders/           # direct, Telegram, torrent, yt-dlp
 │   ├── resolvers/             # source recognition and link resolution
 │   ├── services/              # task execution, processing, delivery, guards
 │   └── telegram/              # messages, keyboards, and live status UI
@@ -88,10 +81,6 @@ All commands require `OWNER_ID`.
 | `/status` | Show active tasks with progress, speed, phase, and ETA. |
 | `/cancel <task-id>` / `/cancelall` | Cancel one or all active tasks/selectors. |
 | `/stats` / `/speedtest` | Inspect host resources or network performance. |
-| `/search <name>` / `/share <Drive link>` | Open temporary Drive search or share pages. |
-| `/delete <Drive link-or-id>` | Permanently delete one Drive item after confirmation. |
-| `/delete all` | Empty the configured Drive upload folder after confirmation; the root remains. |
-| `/gdstats` | Check Drive authentication and quota. |
 | `/r2stats` / `/r2search <name>` | Inspect or search current Cloudflare R2 uploads. |
 | `/r2delete <key-or-link>` / `/r2delete all` | Permanently delete R2 objects after confirmation. |
 | `/logs` / `/restart` / `/help` | Export sanitized logs, restart gracefully, or show help. |
@@ -101,8 +90,6 @@ Only temporary, tokenized web pages are exposed:
 | Host port | Page | Default lifetime |
 |---:|---|---:|
 | `8001` | Torrent file selector | `TORRENT_SELECTION_TIMEOUT` (300 seconds) |
-| `8002` | Google Drive search results | 300 seconds |
-| `8003` | Google Drive share page | 300 seconds |
 
 These are not a persistent dashboard. Anyone who obtains a live tokenized URL can use that page until it expires. Never expose qBittorrent's internal port `8080` publicly.
 
@@ -110,7 +97,7 @@ These are not a persistent dashboard. Anyone who obtains a live tokenized URL ca
 
 ### Prerequisites and configuration
 
-Use a Linux VPS with Docker Engine and Docker Compose, enough free disk for the largest active transfers, and inbound TCP access to `8001–8003` when temporary pages are needed. The bot also needs Telegram credentials; Google and BuzzHeavier credentials are optional.
+Use a Linux VPS with Docker Engine and Docker Compose, enough free disk for the largest active transfers, and inbound TCP access to `8001` when torrent selection is needed. The bot also needs Telegram credentials.
 
 ```bash
 git clone https://github.com/hitesh920/Mirror-Bot.git
@@ -119,13 +106,7 @@ cp .env.example .env
 mkdir -p data/downloads data/logs
 ```
 
-For a replacement VPS, restore the encrypted production backups before starting Compose:
-
-- `config/.env` to `.env`
-- `google/credentials.json` to `credentials.json`
-- `google/token.pickle` to `token.pickle`
-
-Then restrict them with `chmod 600 .env credentials.json token.pickle`. Do not copy old repository files over the fresh clone, and keep historical logs optional.
+For a replacement VPS, restore the encrypted production `.env` backup before starting Compose, then restrict it with `chmod 600 .env`. Do not copy old repository files over the fresh clone, and keep historical logs optional.
 
 Required when `ENABLE_TELEGRAM_UI=true`:
 
@@ -141,16 +122,14 @@ Optional/runtime settings:
 | Variable | Default | Meaning |
 |---|---:|---|
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or `@username` for Telegram uploads; bot must be able to post. |
-| `GOOGLE_DRIVE_FOLDER_ID` | Empty | Destination folder for all Google Drive uploads. |
-| `BUZZHEAVIER_ACCOUNT_ID` | Empty | Account identifier; uploads otherwise attempt anonymous mode. |
 | `R2_ENDPOINT_URL` / `R2_BUCKET` | Empty | Cloudflare R2 S3 endpoint and private bucket. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped Object Read & Write credentials. |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects. |
 | `R2_LINK_EXPIRY_SECONDS` | `86400` | Presigned download-link lifetime. |
-| `R2_AUTO_DELETE_SECONDS` | `86400` | Retention period enforced by a 15-minute sweeper. |
+| `R2_AUTO_DELETE_SECONDS` | `172800` | Retention period enforced by a 15-minute sweeper. |
 | `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
-| `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port; Drive search uses the next port. |
+| `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port. |
 | `TORRENT_SELECTION_TIMEOUT` | `300` | Torrent metadata/selection timeout in seconds. |
 | `PUBLIC_BASE_URL` | Auto-detected | Emergency override for URLs generated by temporary pages. |
 | `TZ` | `Asia/Kolkata` | Container timezone. Log timestamps remain UTC. |
@@ -158,9 +137,7 @@ Optional/runtime settings:
 
 Important built-in defaults include a 2 GB Telegram split size, yt-dlp video up to 1080p, MP3 at 320 kbps, ZIP level 5, qBittorrent at `localhost:8080`, and application logs at `/app/logs/bot.log`.
 
-For Google Drive, place `credentials.json` and `token.pickle` beside `docker-compose.yml`. Compose mounts them at `/app/data/google/credentials.json` and `/app/data/google/token.pickle`. Every Google Drive destination uploads directly into `GOOGLE_DRIVE_FOLDER_ID`; there is no category-selection step or startup folder creation. Uploaded files and folders receive public reader permissions. Treat the OAuth files and uploaded Drive contents accordingly.
-
-Never commit `.env`, OAuth files, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
+Never commit `.env`, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
 
 Cloudflare R2 buckets remain private. Large objects use multipart uploads and
 each successful object receives a temporary presigned GET link. The expiry
@@ -187,11 +164,10 @@ Expected state:
 - Logs contain `BOT STARTED` and `Starting Telegram UI` without a missing-config error.
 - The bot responds to `/help` from the configured owner and ignores/denies others.
 - `/stats` returns CPU, RAM, disk, uptime, and task information.
-- If Drive is configured, `/gdstats` succeeds and all four categories exist.
 - A small direct-file test completes and leaves no abandoned task directory.
-- Ports `8001–8003` are open in the VPS firewall and cloud ingress if used.
+- Port `8001` is open in the VPS firewall and cloud ingress if torrent selection is used.
 
-Compose persists temporary downloads and logs on the host, mounts Google OAuth files, restarts unless explicitly stopped, allows 40 seconds for graceful shutdown, and rotates Docker JSON logs at 10 MB with three files.
+Compose persists temporary downloads and logs on the host, restarts unless explicitly stopped, allows 40 seconds for graceful shutdown, and rotates Docker JSON logs at 10 MB with three files.
 
 ### Logging and diagnostics
 
@@ -237,14 +213,13 @@ du -sh data/downloads data/logs
 
 Before an update, let important transfers finish or cancel them intentionally. Graceful shutdown stops accepting tasks, requests cancellation, closes temporary pages, removes qBittorrent leftovers, waits for cleanup, and exits. Do not manually delete `data/downloads` while the service is active. Startup recovery removes abandoned workspaces and orphaned qBittorrent tasks after an unclean stop.
 
-Back up only irreplaceable configuration: `.env`, `credentials.json`, and `token.pickle`, using encrypted storage with restricted access. Downloads are temporary and logs are operational data, not primary backups. After rotating a bot token, API hash, OAuth token, or dump channel, replace the relevant file/value and recreate the container.
+Back up only irreplaceable configuration such as `.env`, using encrypted storage with restricted access. Downloads are temporary and logs are operational data, not primary backups. After rotating a bot token, API hash, R2 credential, or dump channel, replace the relevant value and recreate the container.
 
 | Symptom | Check |
 |---|---|
 | Container exits immediately | `docker compose logs bot`; required Telegram variables; `.env` syntax; file mount types. |
 | Bot does not answer | `OWNER_ID`, token/API credentials, `ENABLE_TELEGRAM_UI=true`, and connectivity. |
-| Temporary URL fails | Ports `8001–8003`, cloud ingress, public IP, and `PUBLIC_BASE_URL`. |
-| Drive operations fail | OAuth files, token expiry, parent folder ID, API quota, and file permissions. |
+| Temporary URL fails | Port `8001`, cloud ingress, public IP, and `PUBLIC_BASE_URL`. |
 | Task fails before download | Resolver support, link expiry, DNS/network access, and `task.failed` fields. |
 | Task stops for disk/stall protection | Free space, permissions, source availability, and guard failure category. |
 | Old data remains after a crash | Restart once for recovery; stop the service before manual cleanup. |
@@ -270,11 +245,11 @@ Use short, focused commits and tag known-good VPS releases. Record configuration
 1. **Continuous delivery and rollback.** Add GitHub Actions for pytest, Ruff, Compose validation, Docker build, dependency/container scanning, versioned image publishing, tagged VPS deployment, and Telegram success/failure notification. Keep the previous image/tag for one-command rollback.
 2. **Persistent task history and recovery.** Store compact task metadata and terminal results in SQLite so `/status`, failure analysis, and restart recovery survive one process lifetime.
 3. **Stronger container isolation.** Run as non-root where possible, pin base images and dependencies, add a healthcheck, drop unnecessary Linux capabilities, and consider an internal-only qBittorrent service.
-4. **Secure temporary pages.** Put `8001–8003` behind an HTTPS reverse proxy, add rate limits and one-time/shorter tokens, and document trusted-proxy/public-URL handling.
+4. **Secure temporary pages.** Put port `8001` behind an HTTPS reverse proxy, add rate limits and one-time/shorter tokens, and document trusted-proxy/public-URL handling.
 5. **Observability.** Add JSON logs or metrics for queue depth, active tasks, durations, bytes, failure categories, disk reserve, and stalls, with low-noise alerts.
 6. **Integration tests.** Add container smoke tests with mocked remote APIs plus fixtures for torrent selection, archive fallback, upload cancellation, token expiry, and startup cleanup.
 7. **Configuration and secrets.** Improve type/range validation, support Docker secrets or a VPS secret store, document rotation, and add automated secret scanning.
-8. **Modularity.** Continue reducing `mirrorbot/app.py` by moving startup wiring, pending selections, and Drive-delete confirmation state into focused services with dependency injection.
+8. **Modularity.** Continue reducing `mirrorbot/app.py` by moving startup wiring and pending selections into focused services with dependency injection.
 
 ### Release definition of done
 

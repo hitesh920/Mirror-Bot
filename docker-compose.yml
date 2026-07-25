@@ -9,15 +9,9 @@ services:
     ports:
       # Torrent selector
       - "8001:8001"
-      # Google Drive search pages
-      - "8002:8002"
-      # Temporary Google Drive share pages
-      - "8003:8003"
     volumes:
       - ./data/downloads:/app/downloads
       - ./data/logs:/app/logs
-      - ./credentials.json:/app/data/google/credentials.json:ro
-      - ./token.pickle:/app/data/google/token.pickle
     logging:
       driver: json-file
       options:

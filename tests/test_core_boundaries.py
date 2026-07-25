@@ -2,7 +2,6 @@ import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -10,6 +9,7 @@ from uuid import uuid4
 import pytest
 from aiohttp.client_exceptions import ClientResponseError
 
+from mirrorbot.core.config import Config
 from mirrorbot.core.errors import (
     NetworkTimeoutError,
     TorrentDuplicateError,
@@ -17,29 +17,22 @@ from mirrorbot.core.errors import (
     TorrentMetadataTimeoutError,
     TorrentRemovedError,
 )
-from mirrorbot.core.config import Config
 from mirrorbot.core.logging_config import sanitize_text
-from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
+from mirrorbot.core.models import (
+    AddOptions,
+    Destination,
+    Source,
+    SourceType,
+    Task,
+    TaskPhase,
+)
 from mirrorbot.core.parser import parse_add_text, replied_link
 from mirrorbot.core.source_detector import detect_source
 from mirrorbot.downloaders.direct import retryable_direct_error
 from mirrorbot.downloaders.torrent import selected_torrent_size
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
-from mirrorbot.services import media_metadata
-from mirrorbot.services import google_drive_delivery as gdrive_delivery
-from mirrorbot.services import telegram_delivery
-from mirrorbot.services import r2_delivery
-from mirrorbot.services.buzzheavier_delivery import (
-    buzzheavier_upload_name,
-    duplicate_basenames,
-)
+from mirrorbot.services import media_metadata, r2_delivery, telegram_delivery
 from mirrorbot.services.page_style import TEMP_PAGE_CSS
-from mirrorbot.services.google_drive_delivery import (
-    GoogleDriveUploader,
-    clear_drive_folder_contents,
-    next_drive_chunk,
-    search_drive_items,
-)
 from mirrorbot.services.r2_delivery import (
     R2Uploader,
     delete_expired_objects,
@@ -54,8 +47,8 @@ from mirrorbot.services.telegram_delivery import (
     upload_files,
     upload_to_telegram,
 )
-from mirrorbot.telegram.messages import completion_message
 from mirrorbot.telegram.keyboards import destination_buttons
+from mirrorbot.telegram.messages import completion_message
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -116,7 +109,6 @@ def test_replied_magnet_preserves_spaces_and_trackers():
 
 def test_detect_source_common_inputs():
     assert detect_source("magnet:?xt=urn:btih:abcd").type == SourceType.MAGNET
-    assert detect_source("https://drive.google.com/file/d/abc/view").type == SourceType.GOOGLE_DRIVE
     assert detect_source("https://example.com/file.bin").type == SourceType.DIRECT_URL
 
 
@@ -156,16 +148,6 @@ def test_telegram_completion_mentions_dump_channel():
     assert "Telegram dump channel" in text
 
 
-def test_google_drive_completion_mentions_destination():
-    task = make_task()
-    task.destination = Destination.GOOGLE_DRIVE
-    task.result_name = "movie.mkv"
-
-    text = completion_message(task)
-
-    assert "Uploaded to:</b> <code>Google Drive" in text
-
-
 def test_r2_completion_mentions_expiring_links():
     task = make_task()
     task.destination = Destination.CLOUDFLARE_R2
@@ -177,19 +159,6 @@ def test_r2_completion_mentions_expiring_links():
 
     assert "Uploaded to:</b> <code>Cloudflare R2" in text
     assert "Links expire:</b> <code>24 hours" in text
-
-
-def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
-    files = [
-        (Path("season1/video.mkv"), "season1/video.mkv"),
-        (Path("season2/video.mkv"), "season2/video.mkv"),
-        (Path("poster.jpg"), "poster.jpg"),
-    ]
-    duplicates = duplicate_basenames(files)
-
-    assert duplicates == {"video.mkv"}
-    assert buzzheavier_upload_name("season1/video.mkv", duplicates) == "season1 - video.mkv"
-    assert buzzheavier_upload_name("poster.jpg", duplicates) == "poster.jpg"
 
 
 def test_upload_tree_rejects_symbolic_links(tmp_path):
@@ -219,8 +188,6 @@ def test_mobile_action_bars_reserve_list_space():
 def test_telegram_only_public_surface():
     assert {destination.value for destination in Destination} == {
         "telegram",
-        "google_drive",
-        "buzzheavier",
         "cloudflare_r2",
     }
     assert "local_path" not in {source.value for source in SourceType}
@@ -231,9 +198,7 @@ def test_telegram_only_public_surface():
     ]
     assert labels == [
         "Telegram",
-        "Google Drive",
         "Cloudflare R2",
-        "BuzzHeavier",
     ]
 
     removed_config = {
@@ -356,8 +321,6 @@ async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypat
 def test_compose_exposes_only_temporary_page_ports():
     compose = Path("docker-compose.yml").read_text(encoding="utf-8")
     assert '"8001:8001"' in compose
-    assert '"8002:8002"' in compose
-    assert '"8003:8003"' in compose
     assert '"8000:8000"' not in compose
     assert '"8004:8004"' not in compose
     assert '"8005:8005"' not in compose
@@ -449,92 +412,6 @@ async def test_probe_media_reads_video_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gdrive_upload_cleans_partial_files_on_failure(tmp_path, monkeypatch):
-    source = tmp_path / "file.bin"
-    source.write_bytes(b"data")
-    task = make_task()
-    task.destination = Destination.GOOGLE_DRIVE
-
-    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
-    uploader.task = task
-    uploader.path = source
-    uploader.config = SimpleNamespace(google_drive_folder_id="root")
-    uploader.service = object()
-    uploader.created_ids = ["created-file"]
-    uploader.total_size = source.stat().st_size
-    uploader.uploaded_base = 0
-    uploader.started = 1
-    uploader.upload_file = AsyncMock(side_effect=RuntimeError("network failed"))
-    uploader.cleanup_created = AsyncMock()
-    monkeypatch.setattr(
-        gdrive_delivery,
-        "unique_drive_name",
-        lambda _service, _parent_id, name: name,
-    )
-
-    with pytest.raises(RuntimeError, match="network failed"):
-        await uploader.upload()
-
-    uploader.cleanup_created.assert_awaited_once_with("failed")
-
-
-@pytest.mark.asyncio
-async def test_gdrive_upload_uses_configured_folder_parent(tmp_path, monkeypatch):
-    source = tmp_path / "movie.mkv"
-    source.write_bytes(b"data")
-    task = make_task()
-    task.destination = Destination.GOOGLE_DRIVE
-
-    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
-    uploader.task = task
-    uploader.path = source
-    uploader.config = SimpleNamespace(google_drive_folder_id="root")
-    uploader.service = object()
-    uploader.created_ids = []
-    uploader.total_size = source.stat().st_size
-    uploader.uploaded_base = 0
-    uploader.started = 1
-    uploader.upload_file = AsyncMock(return_value="uploaded-file")
-    monkeypatch.setattr(
-        gdrive_delivery,
-        "unique_drive_name",
-        lambda _service, _parent_id, name: name,
-    )
-
-    await uploader.upload()
-
-    uploader.upload_file.assert_awaited_once_with(
-        source,
-        "movie.mkv",
-        "root",
-        "movie.mkv",
-    )
-
-
-@pytest.mark.asyncio
-async def test_gdrive_cancel_captures_file_created_by_inflight_chunk():
-    started = Event()
-    release = Event()
-
-    class Request:
-        def next_chunk(self):
-            started.set()
-            release.wait(timeout=5)
-            return None, {"id": "created-after-cancel"}
-
-    created_ids = []
-    operation = asyncio.create_task(next_drive_chunk(Request(), created_ids))
-    await asyncio.to_thread(started.wait, 2)
-    operation.cancel()
-    release.set()
-
-    with pytest.raises(asyncio.CancelledError):
-        await operation
-
-    assert created_ids == ["created-after-cancel"]
-
-
-@pytest.mark.asyncio
 async def test_telegram_timeout_does_not_fallback_and_duplicate(monkeypatch, tmp_path):
     source = tmp_path / "file.bin"
     source.write_bytes(b"data")
@@ -546,117 +423,6 @@ async def test_telegram_timeout_does_not_fallback_and_duplicate(monkeypatch, tmp
         await upload_to_telegram(task, source, object(), 100, "-1001234567890")
 
     upload.assert_awaited_once()
-
-
-def test_gdrive_permission_creation_retries(monkeypatch):
-    class PermissionCreate:
-        def __init__(self):
-            self.calls = 0
-
-        def execute(self):
-            self.calls += 1
-            if self.calls == 1:
-                raise OSError("temporary")
-
-    class Permissions:
-        def __init__(self, create):
-            self.create_call = create
-
-        def create(self, **_kwargs):
-            return self.create_call
-
-    class Service:
-        def __init__(self, create):
-            self.create_call = create
-
-        def permissions(self):
-            return Permissions(self.create_call)
-
-    create_call = PermissionCreate()
-    task = make_task()
-    uploader = GoogleDriveUploader.__new__(GoogleDriveUploader)
-    uploader.task = task
-    uploader.service = Service(create_call)
-    monkeypatch.setattr(gdrive_delivery, "sleep", lambda _seconds: None)
-
-    uploader.set_public_permission("file-id")
-
-    assert create_call.calls == 2
-
-
-def test_clear_drive_folder_contents_preserves_configured_root(monkeypatch):
-    deleted_ids = []
-
-    class DeleteRequest:
-        def __init__(self, file_id):
-            self.file_id = file_id
-
-        def execute(self):
-            deleted_ids.append(self.file_id)
-
-    class Files:
-        def delete(self, *, fileId, supportsAllDrives):
-            assert supportsAllDrives is True
-            return DeleteRequest(fileId)
-
-    service = SimpleNamespace(files=lambda: Files())
-    children = [
-        {"id": "file-id", "name": "file.bin"},
-        {"id": "folder-id", "name": "Folder"},
-    ]
-    monkeypatch.setattr(gdrive_delivery, "drive_service", lambda _config: service)
-    monkeypatch.setattr(
-        gdrive_delivery,
-        "drive_folder_children",
-        lambda _service, folder_id: children if folder_id == "root" else [],
-    )
-
-    result = clear_drive_folder_contents(
-        SimpleNamespace(google_drive_folder_id="root")
-    )
-
-    assert deleted_ids == ["file-id", "folder-id"]
-    assert "root" not in deleted_ids
-    assert result == {
-        "deleted": 2,
-        "failed": [],
-    }
-
-
-def test_drive_search_is_recursive_and_scoped_to_configured_root(monkeypatch):
-    folder = "application/vnd.google-apps.folder"
-    children = {
-        "configured-root": [
-            {"id": "nested", "name": "Projects", "mimeType": folder},
-            {"id": "root-file", "name": "notes.txt", "mimeType": "text/plain"},
-        ],
-        "nested": [
-            {"id": "match", "name": ".dart_tool", "mimeType": folder},
-            {"id": "not-match", "name": "dart_style", "mimeType": folder},
-        ],
-        "match": [],
-        "not-match": [],
-        "outside-root": [
-            {"id": "outside", "name": ".dart_cache", "mimeType": folder},
-        ],
-    }
-    visited = []
-    monkeypatch.setattr(gdrive_delivery, "drive_service", lambda _config: object())
-
-    def folder_children(_service, folder_id):
-        visited.append(folder_id)
-        return children[folder_id]
-
-    monkeypatch.setattr(gdrive_delivery, "drive_folder_children", folder_children)
-
-    results = search_drive_items(
-        SimpleNamespace(google_drive_folder_id="configured-root"),
-        ".dart",
-    )
-
-    assert [item["id"] for item in results] == ["match"]
-    assert "outside-root" not in visited
-    assert set(visited) == {"configured-root", "nested", "match", "not-match"}
 
 
 @pytest.mark.asyncio
