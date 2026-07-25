@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from mirrorbot.core.errors import (
     TorrentRemovedError,
 )
 from mirrorbot.core.config import Config
+from mirrorbot.core.logging_config import sanitize_text
 from mirrorbot.core.models import AddOptions, Destination, Source, SourceType, Task, TaskPhase
 from mirrorbot.core.parser import parse_add_text, replied_link
 from mirrorbot.core.source_detector import detect_source
@@ -26,6 +28,7 @@ from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.services import media_metadata
 from mirrorbot.services import google_drive_delivery as gdrive_delivery
 from mirrorbot.services import telegram_delivery
+from mirrorbot.services import r2_delivery
 from mirrorbot.services.buzzheavier_delivery import (
     buzzheavier_upload_name,
     duplicate_basenames,
@@ -36,6 +39,13 @@ from mirrorbot.services.google_drive_delivery import (
     clear_drive_folder_contents,
     next_drive_chunk,
     search_drive_items,
+)
+from mirrorbot.services.r2_delivery import (
+    R2Uploader,
+    delete_expired_objects,
+    key_from_input,
+    normalize_prefix,
+    object_key,
 )
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
@@ -156,6 +166,19 @@ def test_google_drive_completion_mentions_destination():
     assert "Uploaded to:</b> <code>Google Drive" in text
 
 
+def test_r2_completion_mentions_expiring_links():
+    task = make_task()
+    task.destination = Destination.CLOUDFLARE_R2
+    task.result_name = "movie.mkv"
+    task.result_files = ["movie.mkv"]
+    task.result_links = ["https://example.r2/link"]
+
+    text = completion_message(task)
+
+    assert "Uploaded to:</b> <code>Cloudflare R2" in text
+    assert "Links expire:</b> <code>24 hours" in text
+
+
 def test_buzzheavier_duplicate_upload_names_preserve_relative_context():
     files = [
         (Path("season1/video.mkv"), "season1/video.mkv"),
@@ -198,6 +221,7 @@ def test_telegram_only_public_surface():
         "telegram",
         "google_drive",
         "buzzheavier",
+        "cloudflare_r2",
     }
     assert "local_path" not in {source.value for source in SourceType}
     labels = [
@@ -205,7 +229,12 @@ def test_telegram_only_public_surface():
         for row in destination_buttons("token").inline_keyboard
         for button in row
     ]
-    assert labels == ["Telegram", "Google Drive", "BuzzHeavier"]
+    assert labels == [
+        "Telegram",
+        "Google Drive",
+        "Cloudflare R2",
+        "BuzzHeavier",
+    ]
 
     removed_config = {
         "local_download_root",
@@ -217,6 +246,111 @@ def test_telegram_only_public_surface():
         "web_password",
     }
     assert removed_config.isdisjoint(Config.__dataclass_fields__)
+
+
+def test_presigned_r2_query_credentials_are_redacted():
+    text = sanitize_text(
+        "https://account.r2.cloudflarestorage.com/bucket/file?"
+        "X-Amz-Credential=visible&X-Amz-Signature=secret"
+    )
+
+    assert "visible" not in text
+    assert "secret" not in text
+    assert text.count("REDACTED") == 2
+
+
+def test_r2_prefix_and_task_key_are_scoped():
+    task = make_task()
+    config = SimpleNamespace(r2_prefix="/uploads/")
+
+    assert normalize_prefix(config.r2_prefix) == "uploads/"
+    assert (
+        object_key(config, task, "../folder/movie.mkv")
+        == f"uploads/{task.id}/folder/movie.mkv"
+    )
+
+
+def test_r2_key_input_accepts_signed_url_and_rejects_outside_prefix():
+    config = SimpleNamespace(r2_bucket="mirror-bot", r2_prefix="uploads/")
+    url = (
+        "https://account.r2.cloudflarestorage.com/"
+        "mirror-bot/uploads/task/movie%20name.mkv?X-Amz-Signature=secret"
+    )
+
+    assert key_from_input(config, url) == "uploads/task/movie name.mkv"
+    with pytest.raises(ValueError, match="inside"):
+        key_from_input(config, "other/file.bin")
+
+
+def test_r2_expiry_only_deletes_old_objects(monkeypatch):
+    now = datetime.now(timezone.utc)
+    config = SimpleNamespace(r2_configured=True, r2_auto_delete_seconds=86400)
+    objects = [
+        {"Key": "uploads/old", "LastModified": now - timedelta(days=2)},
+        {"Key": "uploads/new", "LastModified": now - timedelta(hours=2)},
+    ]
+    deleted = []
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+
+    def fake_delete(_config, keys):
+        deleted.extend(keys)
+        return len(keys)
+
+    monkeypatch.setattr(r2_delivery, "delete_keys", fake_delete)
+
+    assert delete_expired_objects(config) == 1
+    assert deleted == ["uploads/old"]
+
+
+@pytest.mark.asyncio
+async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypatch):
+    source = tmp_path / "movie.bin"
+    source.write_bytes(b"abcde")
+    task = make_task()
+    task.destination = Destination.CLOUDFLARE_R2
+
+    class Client:
+        def __init__(self):
+            self.parts = []
+            self.completed = None
+
+        def create_multipart_upload(self, **_kwargs):
+            return {"UploadId": "upload-id"}
+
+        def upload_part(self, **kwargs):
+            self.parts.append(bytes(kwargs["Body"]))
+            return {"ETag": f"etag-{kwargs['PartNumber']}"}
+
+        def complete_multipart_upload(self, **kwargs):
+            self.completed = kwargs["MultipartUpload"]["Parts"]
+            return {}
+
+        def abort_multipart_upload(self, **_kwargs):
+            raise AssertionError("successful upload must not abort")
+
+    client = Client()
+    uploader = R2Uploader.__new__(R2Uploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(
+        r2_bucket="mirror-bot",
+        r2_auto_delete_seconds=86400,
+    )
+    uploader.client = client
+    uploader.created_keys = ["uploads/task/movie.bin"]
+    uploader.active_upload = None
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded = 0
+    uploader.started = 1
+    monkeypatch.setattr(r2_delivery, "MULTIPART_THRESHOLD", 1)
+    monkeypatch.setattr(r2_delivery, "PART_SIZE", 2)
+
+    await uploader.upload_file(source, "uploads/task/movie.bin")
+
+    assert client.parts == [b"ab", b"cd", b"e"]
+    assert [part["PartNumber"] for part in client.completed] == [1, 2, 3]
+    assert task.downloaded == 5
+    assert task.progress == 1
 
 
 def test_compose_exposes_only_temporary_page_ports():

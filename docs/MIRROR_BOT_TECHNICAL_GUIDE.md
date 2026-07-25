@@ -22,7 +22,7 @@ Supported sources:
 - Google Drive links
 - BuzzHeavier links where supported by source resolution
 
-Supported destinations are Telegram, Google Drive, and BuzzHeavier. Optional processing includes extraction, password-protected extraction, ZIP creation, password-protected ZIP creation, and custom task names.
+Supported destinations are Telegram, Google Drive, Cloudflare R2, and BuzzHeavier. Optional processing includes extraction, password-protected extraction, ZIP creation, password-protected ZIP creation, and custom task names.
 
 ```mermaid
 flowchart TD
@@ -33,10 +33,12 @@ flowchart TD
     E --> F{"Destination"}
     F --> G["Telegram"]
     F --> H["Google Drive"]
-    F --> I["BuzzHeavier"]
+    F --> I["Cloudflare R2"]
+    F --> K["BuzzHeavier"]
     G --> J["Completion and cleanup"]
     H --> J
     I --> J
+    K --> J
 ```
 
 Tasks move through phases such as `queued`, `fetching metadata`, `selecting`, `downloading`, `preparing`, `scanning`, `extracting`, `archiving`, `uploading`, and one terminal phase: `complete`, `cancelled`, or `error`. `TASK_LIMIT` controls concurrent execution; extra accepted tasks wait for a semaphore slot. Task metadata is currently held in memory, while per-task files live under `/app/downloads/<task-id>`. Cleanup is attempted after every terminal outcome, and startup recovery removes abandoned workspaces left by an interrupted or failed cleanup.
@@ -90,6 +92,8 @@ All commands require `OWNER_ID`.
 | `/delete <Drive link-or-id>` | Permanently delete one Drive item after confirmation. |
 | `/delete all` | Empty the configured Drive upload folder after confirmation; the root remains. |
 | `/gdstats` | Check Drive authentication and quota. |
+| `/r2stats` / `/r2search <name>` | Inspect or search current Cloudflare R2 uploads. |
+| `/r2delete <key-or-link>` / `/r2delete all` | Permanently delete R2 objects after confirmation. |
 | `/logs` / `/restart` / `/help` | Export sanitized logs, restart gracefully, or show help. |
 
 Only temporary, tokenized web pages are exposed:
@@ -139,6 +143,11 @@ Optional/runtime settings:
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or `@username` for Telegram uploads; bot must be able to post. |
 | `GOOGLE_DRIVE_FOLDER_ID` | Empty | Destination folder for all Google Drive uploads. |
 | `BUZZHEAVIER_ACCOUNT_ID` | Empty | Account identifier; uploads otherwise attempt anonymous mode. |
+| `R2_ENDPOINT_URL` / `R2_BUCKET` | Empty | Cloudflare R2 S3 endpoint and private bucket. |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped Object Read & Write credentials. |
+| `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects. |
+| `R2_LINK_EXPIRY_SECONDS` | `86400` | Presigned download-link lifetime. |
+| `R2_AUTO_DELETE_SECONDS` | `86400` | Retention period enforced by a 15-minute sweeper. |
 | `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
 | `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port; Drive search uses the next port. |
@@ -152,6 +161,11 @@ Important built-in defaults include a 2 GB Telegram split size, yt-dlp video up 
 For Google Drive, place `credentials.json` and `token.pickle` beside `docker-compose.yml`. Compose mounts them at `/app/data/google/credentials.json` and `/app/data/google/token.pickle`. Every Google Drive destination uploads directly into `GOOGLE_DRIVE_FOLDER_ID`; there is no category-selection step or startup folder creation. Uploaded files and folders receive public reader permissions. Treat the OAuth files and uploaded Drive contents accordingly.
 
 Never commit `.env`, OAuth files, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
+
+Cloudflare R2 buckets remain private. Large objects use multipart uploads and
+each successful object receives a temporary presigned GET link. The expiry
+sweeper lists only `R2_PREFIX`, permanently deletes objects older than the
+configured retention, and resumes this policy after container restarts.
 
 ### First deployment and verification
 

@@ -44,6 +44,9 @@ SENSITIVE_KEYS = {
     "secret",
     "signature",
     "token",
+    "x-amz-credential",
+    "x-amz-security-token",
+    "x-amz-signature",
 }
 SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(" + "|".join(re.escape(key) for key in sorted(SENSITIVE_KEYS)) + r")"

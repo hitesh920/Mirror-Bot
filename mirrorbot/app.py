@@ -21,6 +21,7 @@ from .services.public_url import public_base_url
 from .services.background import BackgroundTasks
 from .services.runtime import RuntimeCoordinator
 from .services.restart_state import take_restart_state
+from .services.r2_delivery import expiry_sweeper
 from .services.startup import cleanup_abandoned_downloads
 from .services.telegram_delivery import telegram_chat_id
 from .telegram import keyboards as telegram_keyboards
@@ -333,7 +334,7 @@ def register_command_handlers() -> None:
     if app is None:
         LOGGER.info("Telegram UI disabled; command handlers were not registered")
         return
-    from .commands import add, common, drive  # noqa: F401
+    from .commands import add, common, drive, r2  # noqa: F401
 
 register_command_handlers()
 
@@ -382,6 +383,8 @@ async def main() -> None:
     LOGGER.info("========== BOT STARTED ================")
     await manager.cleanup_orphaned_torrents()
     cleanup_abandoned_downloads(config.download_dir)
+    if config.r2_configured and config.r2_auto_delete_seconds > 0:
+        background.create(expiry_sweeper(config), name="r2-expiry-sweeper")
 
     telegram_started = False
     if app is not None:

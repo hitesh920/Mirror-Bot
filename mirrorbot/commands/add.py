@@ -140,4 +140,10 @@ async def destination_choice(_, query):
     if dest == "buzzheavier":
         await launch_selected_task(query, token, Destination.BUZZHEAVIER)
         return
+    if dest == "r2":
+        if not config.r2_configured:
+            await query.answer("Cloudflare R2 is not configured", show_alert=True)
+            return
+        await launch_selected_task(query, token, Destination.CLOUDFLARE_R2)
+        return
     await query.answer("Unknown destination", show_alert=True)

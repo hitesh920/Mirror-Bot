@@ -1,6 +1,6 @@
 # Mirror-Bot
 
-A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram, Google Drive, or BuzzHeavier.
+A private, owner-only Telegram transfer bot for downloading, processing, and delivering files to Telegram, Google Drive, Cloudflare R2, or BuzzHeavier.
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
@@ -14,13 +14,14 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 ## Highlights
 
 - One `/add` flow for direct URLs, magnets, torrent files, Google Drive, BuzzHeavier, yt-dlp links, and replied Telegram files.
-- Telegram, Google Drive, and BuzzHeavier delivery destinations.
+- Telegram, Google Drive, Cloudflare R2, and BuzzHeavier delivery destinations.
 - Optional Telegram dump channel to keep the bot conversation clean.
 - qBittorrent file selection through a temporary token-protected page.
 - Archive extraction and ZIP creation, including password-protected archives.
 - Live status with progress, size, speed, ETA, phase, and cancellation.
 - Google Drive upload, download, search, share, deletion, and quota tools.
 - Google Drive uploads sent directly to the configured folder ID.
+- Private Cloudflare R2 uploads with 24-hour signed links and automatic deletion.
 - Direct-host resolution and shortener bypass support.
 - Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
@@ -28,7 +29,7 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 
 1. Send `/add <link>` or reply to a Telegram file with `/add`.
 2. For yt-dlp sources, choose video/audio and quality.
-3. Choose Telegram, Google Drive, or BuzzHeavier.
+3. Choose Telegram, Google Drive, Cloudflare R2, or BuzzHeavier.
 4. For torrents, review and select files on the temporary selector page.
 5. Monitor progress with `/status`.
 6. Receive one completion message with result links.
@@ -66,6 +67,10 @@ Extraction failures fall back to delivering the original archive when the source
 | `/delete <drive-link-or-id>` | Permanently delete a Google Drive item |
 | `/delete all` | Empty the configured Google Drive upload folder after confirmation |
 | `/gdstats` | Show Drive authentication and quota |
+| `/r2stats` | Show current R2 object count and storage |
+| `/r2search <name>` | Search current R2 uploads and issue fresh signed links |
+| `/r2delete <key-or-link>` | Permanently delete one R2 object after confirmation |
+| `/r2delete all` | Permanently delete all objects under `R2_PREFIX` |
 | `/speedtest` | Test server network speed |
 | `/logs` | Send the latest sanitized application logs |
 | `/restart` | Gracefully restart Mirror-Bot |
@@ -137,6 +142,13 @@ Only the `mirror-bot` container should run.
 | `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or username for Telegram uploads |
 | `GOOGLE_DRIVE_FOLDER_ID` | Empty | Parent folder containing the four managed upload categories |
 | `BUZZHEAVIER_ACCOUNT_ID` | Empty | BuzzHeavier account identifier |
+| `R2_ENDPOINT_URL` | Empty | Cloudflare R2 S3 endpoint |
+| `R2_BUCKET` | Empty | Private R2 bucket name |
+| `R2_ACCESS_KEY_ID` | Empty | Bucket-scoped R2 S3 access key |
+| `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped R2 S3 secret |
+| `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects |
+| `R2_LINK_EXPIRY_SECONDS` | `86400` | Signed download-link lifetime, maximum seven days |
+| `R2_AUTO_DELETE_SECONDS` | `86400` | Object retention checked every 15 minutes; `0` disables |
 | `TASK_LIMIT` | `10` | Maximum concurrent tasks |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
 | `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port |
@@ -174,6 +186,18 @@ The Compose configuration mounts them at:
 ```
 
 Use the repository token-generation helper when a new OAuth token is required. Keep both files private and never commit them.
+
+## Cloudflare R2
+
+Create a private R2 bucket and an **Object Read & Write** API token scoped only
+to that bucket. Set the seven `R2_*` variables in `.env`; never commit the
+credentials. Mirror-Bot uses multipart uploads for large files, produces
+presigned download links, and removes objects older than
+`R2_AUTO_DELETE_SECONDS` during a persistent 15-minute sweep.
+
+Every bot-owned object is stored below `R2_PREFIX` and a task-specific UUID.
+`/r2delete all` only removes that configured prefix and preserves the bucket.
+Google Drive remains available as an independent destination.
 
 ## Storage
 

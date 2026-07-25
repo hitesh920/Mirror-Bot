@@ -10,7 +10,10 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
                 InlineKeyboardButton("Google Drive", callback_data=f"dest:gdrive:{token}"),
             ],
-            [InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}")],
+            [
+                InlineKeyboardButton("Cloudflare R2", callback_data=f"dest:r2:{token}"),
+                InlineKeyboardButton("BuzzHeavier", callback_data=f"dest:buzzheavier:{token}"),
+            ],
         ]
     )
 
@@ -65,4 +68,16 @@ def completion_buttons(task) -> InlineKeyboardMarkup | None:
             for index, link in enumerate(task.result_links[:10], start=1)
         ]
         return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
+    if task.destination == Destination.CLOUDFLARE_R2 and task.result_links:
+        if len(task.result_links) == 1:
+            return InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Download (24 hours)", url=task.result_links[0])]]
+            )
+        buttons = [
+            InlineKeyboardButton(f"Download {index}", url=link)
+            for index, link in enumerate(task.result_links[:10], start=1)
+        ]
+        return InlineKeyboardMarkup(
+            [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+        )
     return None

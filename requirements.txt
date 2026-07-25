@@ -1,5 +1,6 @@
 aiofiles
 aiohttp
+boto3
 curl_cffi
 google-api-python-client
 google-auth-httplib2

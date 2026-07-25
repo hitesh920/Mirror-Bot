@@ -24,6 +24,7 @@ class Destination(str, Enum):
     TELEGRAM = "telegram"
     GOOGLE_DRIVE = "google_drive"
     BUZZHEAVIER = "buzzheavier"
+    CLOUDFLARE_R2 = "cloudflare_r2"
 
 
 class TaskPhase(str, Enum):

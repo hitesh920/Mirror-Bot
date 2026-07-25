@@ -20,6 +20,7 @@ from .archive import (
 from .buzzheavier_delivery import upload_to_buzzheavier
 from .google_drive_delivery import upload_to_gdrive
 from .paths import ensure_no_symlinks
+from .r2_delivery import upload_to_r2
 from .telegram_delivery import upload_to_telegram
 from .transfer_guard import TransferGuard, ensure_disk_space
 
@@ -167,6 +168,8 @@ class TaskRunner:
             operation = upload_to_gdrive(task, path, manager.config)
         elif task.destination == Destination.BUZZHEAVIER:
             operation = upload_to_buzzheavier(task, path, manager.config)
+        elif task.destination == Destination.CLOUDFLARE_R2:
+            operation = upload_to_r2(task, path, manager.config)
         else:
             raise NotImplementedError(
                 f"{task.destination.value} upload is not implemented"

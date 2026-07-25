@@ -33,6 +33,13 @@ class Config:
     torrent_selection_timeout: int
     buzzheavier_account_id: str
     telegram_dump_chat_id: str
+    r2_endpoint_url: str
+    r2_bucket: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_prefix: str
+    r2_link_expiry_seconds: int
+    r2_auto_delete_seconds: int
     enable_telegram_ui: bool
 
     download_dir: Path = Path("/app/downloads")
@@ -75,5 +82,29 @@ class Config:
             torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
             buzzheavier_account_id=getenv("BUZZHEAVIER_ACCOUNT_ID", ""),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
+            r2_endpoint_url=getenv("R2_ENDPOINT_URL", "").strip().rstrip("/"),
+            r2_bucket=getenv("R2_BUCKET", "").strip(),
+            r2_access_key_id=getenv("R2_ACCESS_KEY_ID", "").strip(),
+            r2_secret_access_key=getenv("R2_SECRET_ACCESS_KEY", "").strip(),
+            r2_prefix=getenv("R2_PREFIX", "uploads/").strip(),
+            r2_link_expiry_seconds=max(
+                1,
+                min(604800, _int("R2_LINK_EXPIRY_SECONDS", 86400)),
+            ),
+            r2_auto_delete_seconds=max(
+                0,
+                _int("R2_AUTO_DELETE_SECONDS", 86400),
+            ),
             enable_telegram_ui=enable_telegram_ui,
+        )
+
+    @property
+    def r2_configured(self) -> bool:
+        return all(
+            (
+                self.r2_endpoint_url,
+                self.r2_bucket,
+                self.r2_access_key_id,
+                self.r2_secret_access_key,
+            )
         )
