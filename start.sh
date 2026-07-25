@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p /app/downloads /app/data/qbittorrent /app/data/google /app/logs
+mkdir -p /app/downloads /app/data/qbittorrent /app/logs
 
 python /app/scripts/run_qbittorrent.py &
 qbit_pid=$!
