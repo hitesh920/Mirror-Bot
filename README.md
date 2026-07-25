@@ -19,7 +19,7 @@ For architecture, recovery, deployment, and maintenance details, see the [techni
 - qBittorrent file selection through a temporary token-protected page.
 - Archive extraction and ZIP creation, including password-protected archives.
 - Live status with progress, size, speed, ETA, phase, and cancellation.
-- Private Cloudflare R2 uploads with 24-hour signed links and two-day automatic deletion.
+- Private Cloudflare R2 uploads with stable links and two-day automatic deletion.
 - Direct-host resolution and shortener bypass support.
 - Disk reserve protection, stalled-transfer detection, structured logs, and graceful shutdown.
 
@@ -61,9 +61,9 @@ Extraction failures fall back to delivering the original archive when the source
 | `/cancel <task-id>` | Cancel one task |
 | `/cancelall` | Cancel every active task and selector |
 | `/r2stats` | Show current R2 object count and storage |
-| `/r2search <name>` | Search current R2 uploads and issue fresh signed links |
-| `/r2delete <key-or-link>` | Permanently delete one R2 object after confirmation |
-| `/r2delete all` | Permanently delete all objects under `R2_PREFIX` |
+| `/search <name>` | Search R2 and return the original upload link |
+| `/delete <key-or-link>` | Permanently delete one R2 file or folder after confirmation |
+| `/delete all` | Permanently delete all objects under `R2_PREFIX` |
 | `/speedtest` | Test server network speed |
 | `/logs` | Send the latest sanitized application logs |
 | `/restart` | Gracefully restart Mirror-Bot |
@@ -134,7 +134,6 @@ Only the `mirror-bot` container should run.
 | `R2_ACCESS_KEY_ID` | Empty | Bucket-scoped R2 S3 access key |
 | `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped R2 S3 secret |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects |
-| `R2_LINK_EXPIRY_SECONDS` | `86400` | Signed download-link lifetime, maximum seven days |
 | `R2_AUTO_DELETE_SECONDS` | `172800` | Object retention checked every 15 minutes; `0` disables |
 | `TASK_LIMIT` | `10` | Maximum concurrent tasks |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
@@ -155,13 +154,17 @@ When configured, uploaded files go to the channel and the requesting chat receiv
 ## Cloudflare R2
 
 Create a private R2 bucket and an **Object Read & Write** API token scoped only
-to that bucket. Set the seven `R2_*` variables in `.env`; never commit the
+to that bucket. Set the `R2_*` variables in `.env`; never commit the
 credentials. Mirror-Bot uses multipart uploads for large files, produces
-presigned download links, and removes objects older than
+stable private download links, and removes objects older than
 `R2_AUTO_DELETE_SECONDS` during a persistent 15-minute sweep.
 
 Every bot-owned object is stored below `R2_PREFIX` and a task-specific UUID.
-`/r2delete all` only removes that configured prefix and preserves the bucket.
+Single-file uploads return one direct `Download` button. Folder uploads create
+one private folder page containing every original file link, so Telegram still
+shows only one `Download` button. `/search` returns the stored original link and
+never refreshes its lifetime. `/delete all` only removes the configured prefix
+and preserves the bucket.
 
 ## Storage
 

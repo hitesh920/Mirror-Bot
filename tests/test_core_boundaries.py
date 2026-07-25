@@ -1,6 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta, timezone
+from email.header import Header
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -35,10 +36,15 @@ from mirrorbot.services import media_metadata, r2_delivery, telegram_delivery
 from mirrorbot.services.page_style import TEMP_PAGE_CSS
 from mirrorbot.services.r2_delivery import (
     R2Uploader,
+    build_folder_page,
+    decode_metadata_value,
     delete_expired_objects,
+    delete_scope,
+    folder_page_key,
     key_from_input,
     normalize_prefix,
     object_key,
+    search_objects,
 )
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
@@ -47,8 +53,8 @@ from mirrorbot.services.telegram_delivery import (
     upload_files,
     upload_to_telegram,
 )
-from mirrorbot.telegram.keyboards import destination_buttons
-from mirrorbot.telegram.messages import completion_message
+from mirrorbot.telegram.keyboards import completion_buttons, destination_buttons
+from mirrorbot.telegram.messages import HELP_TEXT, completion_message
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -148,17 +154,34 @@ def test_telegram_completion_mentions_dump_channel():
     assert "Telegram dump channel" in text
 
 
-def test_r2_completion_mentions_expiring_links():
+def test_r2_completion_uses_task_retention_without_link_expiry():
     task = make_task()
     task.destination = Destination.CLOUDFLARE_R2
     task.result_name = "movie.mkv"
     task.result_files = ["movie.mkv"]
     task.result_links = ["https://example.r2/link"]
+    task.result_auto_delete_seconds = 172800
 
     text = completion_message(task)
 
     assert "Uploaded to:</b> <code>Cloudflare R2" in text
-    assert "Links expire:</b> <code>24 hours" in text
+    assert "Automatically deleted after:</b> <code>2 days" in text
+    assert "expire" not in text.casefold()
+    buttons = completion_buttons(task).inline_keyboard
+    assert [[button.text for button in row] for row in buttons] == [["Download"]]
+
+
+def test_r2_uses_unprefixed_search_and_delete_commands():
+    source = Path("mirrorbot/commands/r2.py").read_text(encoding="utf-8")
+
+    assert 'filters.command("search")' in source
+    assert 'filters.command("delete")' in source
+    assert 'filters.command("r2search")' not in source
+    assert 'filters.command("r2delete")' not in source
+    assert "/search" in HELP_TEXT
+    assert "/delete" in HELP_TEXT
+    assert "/r2search" not in HELP_TEXT
+    assert "/r2delete" not in HELP_TEXT
 
 
 def test_upload_tree_rejects_symbolic_links(tmp_path):
@@ -247,6 +270,87 @@ def test_r2_key_input_accepts_signed_url_and_rejects_outside_prefix():
         key_from_input(config, "other/file.bin")
 
 
+def test_folder_page_contains_every_original_file_link():
+    page = build_folder_page(
+        "Season 1",
+        [
+            ("Season 1/one.mkv", "https://r2.example/one", 10),
+            ("Season 1/two.mkv", "https://r2.example/two", 20),
+        ],
+        172800,
+    ).decode()
+
+    assert "Season 1/one.mkv" in page
+    assert "Season 1/two.mkv" in page
+    assert "https://r2.example/one" in page
+    assert "https://r2.example/two" in page
+    assert "Automatically deleted after 2 days" in page
+
+
+def test_r2_search_returns_stored_original_link_without_presigning(monkeypatch):
+    config = SimpleNamespace(r2_bucket="mirror-bot")
+    objects = [
+        {
+            "Key": "uploads/task/movie.mkv",
+            "Size": 100,
+        }
+    ]
+
+    class Client:
+        def head_object(self, **_kwargs):
+            return {
+                "Metadata": {
+                    "mirror-link": "https://original.example/link",
+                    "mirror-kind": "file",
+                }
+            }
+
+        def generate_presigned_url(self, *_args, **_kwargs):
+            raise AssertionError("/search must not create a new link")
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+
+    results = search_objects(config, "movie")
+
+    assert results[0]["url"] == "https://original.example/link"
+
+
+def test_r2_metadata_link_decoding_does_not_insert_fold_spaces():
+    url = (
+        "https://account.r2.cloudflarestorage.com/bucket/file?"
+        + "X-Amz-Signature="
+        + ("a" * 300)
+    )
+    encoded = Header(url, "utf-8", maxlinelen=76).encode()
+
+    assert decode_metadata_value(encoded) == url
+
+
+def test_folder_delete_scope_includes_every_task_object(monkeypatch):
+    config = SimpleNamespace(r2_prefix="uploads/")
+    key = "uploads/task/Season 1.mirrorbot-folder.html"
+    objects = [
+        {"Key": key, "Size": 200},
+        {"Key": "uploads/task/Season 1/one.mkv", "Size": 10},
+        {"Key": "uploads/task/Season 1/two.mkv", "Size": 20},
+    ]
+    monkeypatch.setattr(
+        r2_delivery,
+        "list_objects",
+        lambda _config, prefix=None: objects
+        if prefix == "uploads/task/"
+        else [],
+    )
+
+    result = delete_scope(config, key)
+
+    assert result["kind"] == "folder"
+    assert result["objects"] == 3
+    assert result["bytes"] == 230
+    assert result["keys"] == [item["Key"] for item in objects]
+
+
 def test_r2_expiry_only_deletes_old_objects(monkeypatch):
     now = datetime.now(timezone.utc)
     config = SimpleNamespace(r2_configured=True, r2_auto_delete_seconds=86400)
@@ -310,12 +414,63 @@ async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypat
     monkeypatch.setattr(r2_delivery, "MULTIPART_THRESHOLD", 1)
     monkeypatch.setattr(r2_delivery, "PART_SIZE", 2)
 
-    await uploader.upload_file(source, "uploads/task/movie.bin")
+    await uploader.upload_file(
+        source,
+        "uploads/task/movie.bin",
+        "https://original.example/movie",
+    )
 
     assert client.parts == [b"ab", b"cd", b"e"]
     assert [part["PartNumber"] for part in client.completed] == [1, 2, 3]
     assert task.downloaded == 5
     assert task.progress == 1
+
+
+@pytest.mark.asyncio
+async def test_r2_folder_upload_returns_one_folder_page_link(tmp_path, monkeypatch):
+    source = tmp_path / "Season 1"
+    source.mkdir()
+    (source / "one.mkv").write_bytes(b"one")
+    (source / "two.mkv").write_bytes(b"two")
+    task = make_task()
+    task.destination = Destination.CLOUDFLARE_R2
+
+    class Client:
+        def __init__(self):
+            self.uploads = []
+
+        def generate_presigned_url(self, _operation, Params, ExpiresIn):
+            assert ExpiresIn == 604800
+            return f"https://r2.example/{Params['Key']}"
+
+        def put_object(self, **kwargs):
+            self.uploads.append(kwargs)
+            return {}
+
+    client = Client()
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_bucket="mirror-bot",
+        r2_prefix="uploads/",
+        r2_auto_delete_seconds=172800,
+    )
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: client)
+
+    uploader = R2Uploader(task, source, config)
+    await uploader.upload()
+
+    expected_page_key = folder_page_key(config, task, "Season 1")
+    assert task.result_is_folder is True
+    assert task.result_auto_delete_seconds == 172800
+    assert task.result_links == [f"https://r2.example/{expected_page_key}"]
+    assert len(task.result_files) == 2
+    page_upload = client.uploads[-1]
+    assert page_upload["Key"] == expected_page_key
+    assert page_upload["ContentDisposition"] == "inline"
+    assert page_upload["Metadata"]["mirror-kind"] == "folder"
+    page = page_upload["Body"].decode()
+    assert "one.mkv" in page
+    assert "two.mkv" in page
 
 
 def test_compose_exposes_only_temporary_page_ports():

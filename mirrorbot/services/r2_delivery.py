@@ -4,6 +4,8 @@ import asyncio
 import logging
 import mimetypes
 from datetime import datetime, timezone
+from email.header import decode_header
+from html import escape
 from pathlib import Path, PurePosixPath
 from time import monotonic, time
 from urllib.parse import unquote, urlsplit
@@ -20,6 +22,8 @@ LOGGER = logging.getLogger(__name__)
 MULTIPART_THRESHOLD = 64 * 1024 * 1024
 PART_SIZE = 32 * 1024 * 1024
 EXPIRY_SWEEP_INTERVAL = 15 * 60
+PRESIGNED_URL_LIFETIME = 7 * 24 * 60 * 60
+FOLDER_PAGE_SUFFIX = ".mirrorbot-folder.html"
 
 
 def normalize_prefix(value: str) -> str:
@@ -93,8 +97,103 @@ def generate_download_url(client, config: Config, key: str) -> str:
     return client.generate_presigned_url(
         "get_object",
         Params={"Bucket": config.r2_bucket, "Key": key},
-        ExpiresIn=config.r2_link_expiry_seconds,
+        ExpiresIn=PRESIGNED_URL_LIFETIME,
     )
+
+
+def folder_page_key(config: Config, task: Task, name: str) -> str:
+    safe_name = PurePosixPath(name.replace("\\", "/")).name or "folder"
+    return (
+        f"{normalize_prefix(config.r2_prefix)}{task.id}/"
+        f"{safe_name}{FOLDER_PAGE_SUFFIX}"
+    )
+
+
+def is_folder_page_key(key: str) -> bool:
+    return key.endswith(FOLDER_PAGE_SUFFIX)
+
+
+def display_name_for_key(key: str) -> str:
+    name = PurePosixPath(key).name
+    if is_folder_page_key(key):
+        return name.removesuffix(FOLDER_PAGE_SUFFIX)
+    return name
+
+
+def decode_metadata_value(value: str) -> str:
+    parts = []
+    for chunk, charset in decode_header(value):
+        if isinstance(chunk, bytes):
+            parts.append(chunk.decode(charset or "utf-8"))
+        else:
+            parts.append(chunk)
+    return "".join(parts)
+
+
+def upload_metadata(
+    config: Config,
+    task: Task,
+    download_url: str,
+    kind: str,
+) -> dict[str, str]:
+    metadata = {
+        "mirror-task": task.id,
+        "mirror-kind": kind,
+        "mirror-link": download_url,
+    }
+    if config.r2_auto_delete_seconds > 0:
+        metadata["expires-at"] = str(
+            int(time()) + config.r2_auto_delete_seconds
+        )
+    return metadata
+
+
+def build_folder_page(
+    folder_name: str,
+    files: list[tuple[str, str, int]],
+    retention_seconds: int,
+) -> bytes:
+    rows = []
+    for display_name, url, size in files:
+        rows.append(
+            "<li>"
+            f'<a href="{escape(url, quote=True)}">Download</a>'
+            f"<span>{escape(display_name)}</span>"
+            f"<small>{size:,} bytes</small>"
+            "</li>"
+        )
+    retention = (
+        f"{retention_seconds // 86400} day"
+        f"{'s' if retention_seconds // 86400 != 1 else ''}"
+        if retention_seconds > 0 and retention_seconds % 86400 == 0
+        else "the configured retention period"
+    )
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{escape(folder_name)}</title>
+<style>
+body{{margin:0;background:#0f172a;color:#e2e8f0;font:16px system-ui,sans-serif}}
+main{{max-width:900px;margin:auto;padding:32px 18px}}
+h1{{margin:0 0 8px;font-size:1.7rem}}p{{color:#94a3b8;margin:0 0 24px}}
+ul{{list-style:none;padding:0;margin:0;display:grid;gap:10px}}
+li{{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;
+background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px}}
+a{{color:#fff;background:#2563eb;padding:8px 12px;border-radius:8px;text-decoration:none}}
+span{{overflow-wrap:anywhere}}small{{color:#94a3b8}}
+@media(max-width:600px){{li{{grid-template-columns:1fr}}}}
+</style>
+</head>
+<body><main>
+<h1>{escape(folder_name)}</h1>
+<p>{len(files)} file(s) · Automatically deleted after {escape(retention)}</p>
+<ul>{''.join(rows)}</ul>
+</main></body>
+</html>"""
+    return document.encode("utf-8")
 
 
 class R2Uploader:
@@ -122,19 +221,63 @@ class R2Uploader:
         self.task.result_files = []
         self.task.result_folders = folders
         self.task.result_links = []
+        self.task.result_auto_delete_seconds = self.config.r2_auto_delete_seconds
+        self.task.result_is_folder = self.path.is_dir()
 
         try:
+            uploaded_files: list[tuple[str, str, int]] = []
             for file_path, display_name in files:
                 if self.task.cancelled:
                     raise asyncio.CancelledError()
                 key = object_key(self.config, self.task, display_name)
+                download_url = generate_download_url(
+                    self.client,
+                    self.config,
+                    key,
+                )
                 self.task.current_file = display_name
                 self.created_keys.append(key)
-                await self.upload_file(file_path, key)
+                await self.upload_file(file_path, key, download_url)
                 self.task.result_files.append(display_name)
-                self.task.result_links.append(
-                    generate_download_url(self.client, self.config, key)
+                uploaded_files.append(
+                    (display_name, download_url, file_path.stat().st_size)
                 )
+            if self.path.is_dir():
+                page_key = folder_page_key(
+                    self.config,
+                    self.task,
+                    self.path.name,
+                )
+                page_url = generate_download_url(
+                    self.client,
+                    self.config,
+                    page_key,
+                )
+                self.created_keys.append(page_key)
+                page = build_folder_page(
+                    self.path.name,
+                    uploaded_files,
+                    self.config.r2_auto_delete_seconds,
+                )
+                await cancellable_thread(
+                    self.client.put_object,
+                    Bucket=self.config.r2_bucket,
+                    Key=page_key,
+                    Body=page,
+                    ContentType="text/html; charset=utf-8",
+                    ContentDisposition="inline",
+                    Metadata=upload_metadata(
+                        self.config,
+                        self.task,
+                        page_url,
+                        "folder",
+                    ),
+                )
+                self.task.result_links = [page_url]
+            else:
+                self.task.result_links = [
+                    uploaded_files[0][1]
+                ] if uploaded_files else []
             self.task.downloaded = self.total_size
             self.task.progress = 1
             self.task.eta = 0
@@ -151,15 +294,22 @@ class R2Uploader:
             await self.cleanup_created("failed")
             raise
 
-    async def upload_file(self, file_path: Path, key: str) -> None:
+    async def upload_file(
+        self,
+        file_path: Path,
+        key: str,
+        download_url: str,
+    ) -> None:
         size = file_path.stat().st_size
         content_type = (
             mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         )
-        metadata = {
-            "mirror-task": self.task.id,
-            "expires-at": str(int(time()) + self.config.r2_auto_delete_seconds),
-        }
+        metadata = upload_metadata(
+            self.config,
+            self.task,
+            download_url,
+            "file",
+        )
         if size < MULTIPART_THRESHOLD:
             with file_path.open("rb") as body:
                 await cancellable_thread(
@@ -276,12 +426,19 @@ class R2Uploader:
         )
 
 
-def list_objects(config: Config) -> list[dict]:
+def list_objects(config: Config, prefix: str | None = None) -> list[dict]:
     client = r2_client(config)
-    prefix = normalize_prefix(config.r2_prefix)
+    search_prefix = (
+        normalize_prefix(config.r2_prefix)
+        if prefix is None
+        else prefix
+    )
     objects: list[dict] = []
     paginator = client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=config.r2_bucket, Prefix=prefix):
+    for page in paginator.paginate(
+        Bucket=config.r2_bucket,
+        Prefix=search_prefix,
+    ):
         objects.extend(page.get("Contents", []))
     return objects
 
@@ -311,12 +468,50 @@ def search_objects(config: Config, query: str, limit: int = 100) -> list[dict]:
     results = [
         item
         for item in list_objects(config)
-        if needle in PurePosixPath(item["Key"]).name.casefold()
+        if needle in item["Key"].casefold()
     ]
-    results.sort(key=lambda item: item["Key"].casefold())
+    results.sort(
+        key=lambda item: (
+            not is_folder_page_key(item["Key"]),
+            item["Key"].casefold(),
+        )
+    )
     for item in results[:limit]:
-        item["url"] = generate_download_url(client, config, item["Key"])
+        response = client.head_object(
+            Bucket=config.r2_bucket,
+            Key=item["Key"],
+        )
+        metadata = response.get("Metadata", {})
+        item["url"] = decode_metadata_value(
+            metadata.get("mirror-link", "")
+        )
+        item["kind"] = metadata.get("mirror-kind", "file")
+        item["name"] = display_name_for_key(item["Key"])
     return results[:limit]
+
+
+def delete_scope(config: Config, key: str) -> dict:
+    if not is_folder_page_key(key):
+        item = object_info(config, key)
+        return {
+            "keys": [key],
+            "objects": 1,
+            "bytes": item["size"],
+            "name": display_name_for_key(key),
+            "kind": "file",
+        }
+    prefix = normalize_prefix(config.r2_prefix)
+    relative = key.removeprefix(prefix)
+    task_id = relative.split("/", 1)[0]
+    task_prefix = f"{prefix}{task_id}/"
+    objects = list_objects(config, task_prefix)
+    return {
+        "keys": [item["Key"] for item in objects],
+        "objects": len(objects),
+        "bytes": sum(int(item.get("Size") or 0) for item in objects),
+        "name": display_name_for_key(key),
+        "kind": "folder",
+    }
 
 
 def delete_keys(config: Config, keys: list[str], client=None) -> int:

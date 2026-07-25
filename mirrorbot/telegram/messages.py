@@ -29,12 +29,12 @@ HELP_TEXT = "\n".join(
         "<code>/cancelall</code> - cancel all active tasks",
         "<code>/restart</code> - gracefully restart Mirror-Bot",
         "<code>/logs</code> - send recent sanitized application logs",
-        "<code>/r2delete &lt;key-or-link&gt;</code> - delete one R2 object",
-        "<code>/r2delete all</code> - delete all bot uploads from R2",
+        "<code>/delete &lt;key-or-link&gt;</code> - delete one R2 upload",
+        "<code>/delete all</code> - delete all bot uploads from R2",
         "",
         "<b>Cloudflare R2</b>",
-        "<code>/r2search &lt;name&gt;</code> - search current R2 uploads",
-        "R2 download links expire after <code>24 hours</code>.",
+        "<code>/search &lt;name&gt;</code> - search current R2 uploads",
+        "Uploads are automatically deleted after their configured retention.",
     ]
 )
 
@@ -65,6 +65,19 @@ def warning_list(items: list[str]) -> str:
     return "\n".join(lines)
 
 
+def retention_text(seconds: int) -> str:
+    if seconds <= 0:
+        return "Disabled"
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"{days} day{'s' if days != 1 else ''}"
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    minutes = max(1, seconds // 60)
+    return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+
 def completion_message(task) -> str:
     name = escape(task.result_name or task.name or task.source.type.value)
     if task.destination == Destination.TELEGRAM:
@@ -82,18 +95,14 @@ def completion_message(task) -> str:
             warning_list(task.processing_warnings),
         ]
     elif task.destination == Destination.CLOUDFLARE_R2:
-        button_count = min(10, len(task.result_links))
         sections = [
             "<b>Task complete</b>",
             f"<b>Name:</b> <code>{name}</code>",
             "<b>Uploaded to:</b> <code>Cloudflare R2</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
-            "<b>Links expire:</b> <code>24 hours</code>",
-            f"<b>Download buttons:</b> <code>{button_count}</code>",
             (
-                "Use <code>/r2search &lt;name&gt;</code> for additional files."
-                if len(task.result_links) > button_count
-                else ""
+                "<b>Automatically deleted after:</b> "
+                f"<code>{retention_text(task.result_auto_delete_seconds)}</code>"
             ),
             warning_list(task.processing_warnings),
         ]

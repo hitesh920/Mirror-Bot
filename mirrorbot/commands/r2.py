@@ -4,7 +4,6 @@ import asyncio
 import logging
 import secrets
 from html import escape
-from pathlib import PurePosixPath
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
@@ -15,8 +14,8 @@ from ..core.logging_config import log_event
 from ..services.r2_delivery import (
     delete_keys,
     delete_prefix,
+    delete_scope,
     key_from_input,
-    object_info,
     search_objects,
     storage_stats,
 )
@@ -56,18 +55,17 @@ async def r2stats(_, message: Message):
         f"<b>Prefix:</b> <code>{escape(config.r2_prefix)}</code>\n"
         f"<b>Objects:</b> <code>{result['objects']}</code>\n"
         f"<b>Stored:</b> <code>{human_size(result['bytes'])}</code>\n"
-        f"<b>Link lifetime:</b> <code>{human_time(config.r2_link_expiry_seconds)}</code>\n"
         f"<b>Automatic deletion:</b> <code>{human_time(config.r2_auto_delete_seconds)}</code>",
         parse_mode=ParseMode.HTML,
     )
 
 
-@app.on_message(filters.command("r2search") & owner_filter)
-async def r2search(_, message: Message):
+@app.on_message(filters.command("search") & owner_filter)
+async def search(_, message: Message):
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.reply(
-            "Usage: <code>/r2search &lt;name&gt;</code>",
+            "Usage: <code>/search &lt;name&gt;</code>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -91,11 +89,20 @@ async def r2search(_, message: Message):
         return
     lines = [f"<b>Cloudflare R2 results:</b> <code>{len(results)}</code>"]
     for index, item in enumerate(results, 1):
-        name = PurePosixPath(item["Key"]).name
-        lines.append(
-            f'{index}. <a href="{escape(item["url"], quote=True)}">'
-            f'{escape(name[:100])}</a> — <code>{human_size(int(item.get("Size") or 0))}</code>'
-        )
+        name = item["name"]
+        kind = "Folder" if item.get("kind") == "folder" else "File"
+        size = human_size(int(item.get("Size") or 0))
+        if item["url"]:
+            lines.append(
+                f'{index}. <a href="{escape(item["url"], quote=True)}">'
+                f'{escape(name[:100])}</a> — <code>{kind} · {size}</code>'
+            )
+        else:
+            lines.append(
+                f"{index}. <code>{escape(name[:100])}</code> — "
+                f"<code>{kind} · {size}</code>\n"
+                "<i>Original link unavailable for this older upload.</i>"
+            )
     await progress.edit_text(
         "\n".join(lines),
         parse_mode=ParseMode.HTML,
@@ -103,12 +110,12 @@ async def r2search(_, message: Message):
     )
 
 
-@app.on_message(filters.command("r2delete") & owner_filter)
-async def r2delete(_, message: Message):
+@app.on_message(filters.command("delete") & owner_filter)
+async def delete(_, message: Message):
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.reply(
-            "Usage: <code>/r2delete &lt;key-or-link|all&gt;</code>",
+            "Usage: <code>/delete &lt;key-or-link|all&gt;</code>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -136,18 +143,20 @@ async def r2delete(_, message: Message):
         return
     try:
         key = key_from_input(config, target)
-        item = await asyncio.to_thread(object_info, config, key)
+        item = await asyncio.to_thread(delete_scope, config, key)
     except Exception as exc:
         await message.reply(
             f"Cloudflare R2 object lookup failed:\n{exc}",
             parse_mode=ParseMode.DISABLED,
         )
         return
-    pending_deletes.put(token, {"key": key})
+    pending_deletes.put(token, {"keys": item["keys"]})
     await message.reply(
         "<b>Confirm Cloudflare R2 delete</b>\n"
-        f"<b>Name:</b> <code>{escape(PurePosixPath(key).name)}</code>\n"
-        f"<b>Size:</b> <code>{human_size(item['size'])}</code>\n"
+        f"<b>Name:</b> <code>{escape(item['name'])}</code>\n"
+        f"<b>Type:</b> <code>{escape(item['kind'])}</code>\n"
+        f"<b>Objects:</b> <code>{item['objects']}</code>\n"
+        f"<b>Size:</b> <code>{human_size(item['bytes'])}</code>\n"
         f"<b>Key:</b> <code>{escape(key)}</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=delete_buttons(token),
@@ -178,7 +187,7 @@ async def confirm_r2_delete(_, query):
             deleted = await asyncio.to_thread(
                 delete_keys,
                 config,
-                [pending["key"]],
+                pending["keys"],
             )
     except Exception as exc:
         LOGGER.exception("Cloudflare R2 deletion failed")

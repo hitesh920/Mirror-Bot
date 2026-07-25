@@ -36,7 +36,6 @@ class Config:
     r2_access_key_id: str
     r2_secret_access_key: str
     r2_prefix: str
-    r2_link_expiry_seconds: int
     r2_auto_delete_seconds: int
     enable_telegram_ui: bool
 
@@ -81,10 +80,6 @@ class Config:
             r2_access_key_id=getenv("R2_ACCESS_KEY_ID", "").strip(),
             r2_secret_access_key=getenv("R2_SECRET_ACCESS_KEY", "").strip(),
             r2_prefix=getenv("R2_PREFIX", "uploads/").strip(),
-            r2_link_expiry_seconds=max(
-                1,
-                min(604800, _int("R2_LINK_EXPIRY_SECONDS", 86400)),
-            ),
             r2_auto_delete_seconds=max(
                 0,
                 _int("R2_AUTO_DELETE_SECONDS", 172800),

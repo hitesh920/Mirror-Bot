@@ -81,8 +81,8 @@ All commands require `OWNER_ID`.
 | `/status` | Show active tasks with progress, speed, phase, and ETA. |
 | `/cancel <task-id>` / `/cancelall` | Cancel one or all active tasks/selectors. |
 | `/stats` / `/speedtest` | Inspect host resources or network performance. |
-| `/r2stats` / `/r2search <name>` | Inspect or search current Cloudflare R2 uploads. |
-| `/r2delete <key-or-link>` / `/r2delete all` | Permanently delete R2 objects after confirmation. |
+| `/r2stats` / `/search <name>` | Inspect R2 or return stored original upload links. |
+| `/delete <key-or-link>` / `/delete all` | Permanently delete R2 uploads after confirmation. |
 | `/logs` / `/restart` / `/help` | Export sanitized logs, restart gracefully, or show help. |
 
 Only temporary, tokenized web pages are exposed:
@@ -125,7 +125,6 @@ Optional/runtime settings:
 | `R2_ENDPOINT_URL` / `R2_BUCKET` | Empty | Cloudflare R2 S3 endpoint and private bucket. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped Object Read & Write credentials. |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects. |
-| `R2_LINK_EXPIRY_SECONDS` | `86400` | Presigned download-link lifetime. |
 | `R2_AUTO_DELETE_SECONDS` | `172800` | Retention period enforced by a 15-minute sweeper. |
 | `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
@@ -140,9 +139,13 @@ Important built-in defaults include a 2 GB Telegram split size, yt-dlp video up 
 Never commit `.env`, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
 
 Cloudflare R2 buckets remain private. Large objects use multipart uploads and
-each successful object receives a temporary presigned GET link. The expiry
-sweeper lists only `R2_PREFIX`, permanently deletes objects older than the
-configured retention, and resumes this policy after container restarts.
+each successful object stores its original private GET link in object metadata.
+Search returns that stored link and never creates a replacement. Folder uploads
+also create one private HTML folder page containing every original file link.
+Links are signed beyond the configured two-day retention, so users encounter
+object deletion rather than a separate link-expiry window. The sweeper lists
+only `R2_PREFIX`, permanently deletes objects older than the configured
+retention, and resumes this policy after container restarts.
 
 ### First deployment and verification
 

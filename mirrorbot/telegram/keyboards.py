@@ -55,15 +55,7 @@ def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
 
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
     if task.destination == Destination.CLOUDFLARE_R2 and task.result_links:
-        if len(task.result_links) == 1:
-            return InlineKeyboardMarkup(
-                [[InlineKeyboardButton("Download (24 hours)", url=task.result_links[0])]]
-            )
-        buttons = [
-            InlineKeyboardButton(f"Download {index}", url=link)
-            for index, link in enumerate(task.result_links[:10], start=1)
-        ]
         return InlineKeyboardMarkup(
-            [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+            [[InlineKeyboardButton("Download", url=task.result_links[0])]]
         )
     return None
