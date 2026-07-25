@@ -135,6 +135,8 @@ Only the `mirror-bot` container should run.
 | `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped R2 S3 secret |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects |
 | `R2_AUTO_DELETE_SECONDS` | `172800` | Object retention checked every 15 minutes; `0` disables |
+| `CLOUDFLARE_ACCOUNT_ID` | Empty | Account ID for `/r2stats` billing-period analytics |
+| `CLOUDFLARE_API_TOKEN` | Empty | Read-only Billing and Account Analytics token |
 | `TASK_LIMIT` | `10` | Maximum concurrent tasks |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram live-status interval in seconds |
 | `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port |
@@ -165,6 +167,10 @@ one private folder page containing every original file link, so Telegram still
 shows only one `Download` button. `/search` returns the stored original link and
 never refreshes its lifetime. `/delete all` only removes the configured prefix
 and preserves the bucket.
+
+To include current-period Class A/Class B operations, total bucket storage, and
+billable usage in `/r2stats`, set `CLOUDFLARE_ACCOUNT_ID` and a read-only
+`CLOUDFLARE_API_TOKEN` with **Billing: Read** and **Account Analytics: Read**.
 
 ## Storage
 

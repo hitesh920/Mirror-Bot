@@ -33,6 +33,10 @@ from mirrorbot.downloaders.direct import retryable_direct_error
 from mirrorbot.downloaders.torrent import selected_torrent_size
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.services import media_metadata, r2_delivery, telegram_delivery
+from mirrorbot.services.cloudflare_analytics import (
+    billing_period,
+    classify_operations,
+)
 from mirrorbot.services.page_style import TEMP_PAGE_CSS
 from mirrorbot.services.r2_delivery import (
     R2Uploader,
@@ -169,6 +173,42 @@ def test_r2_completion_uses_task_retention_without_link_expiry():
     assert "expire" not in text.casefold()
     buttons = completion_buttons(task).inline_keyboard
     assert [[button.text for button in row] for row in buttons] == [["Download"]]
+
+
+def test_cloudflare_operation_classes_follow_r2_pricing():
+    groups = [
+        {
+            "dimensions": {"actionType": "UploadPart"},
+            "sum": {"requests": 20},
+        },
+        {
+            "dimensions": {"actionType": "ListObjects"},
+            "sum": {"requests": 3},
+        },
+        {
+            "dimensions": {"actionType": "GetObject"},
+            "sum": {"requests": 7},
+        },
+        {
+            "dimensions": {"actionType": "DeleteObjects"},
+            "sum": {"requests": 99},
+        },
+    ]
+
+    assert classify_operations(groups) == (23, 7)
+
+
+def test_cloudflare_billing_period_uses_monthly_anchor():
+    from datetime import datetime, timezone
+
+    anchor = datetime(2026, 8, 25, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    start = datetime(2026, 7, 25, tzinfo=timezone.utc)
+
+    assert billing_period(anchor, now, start) == (
+        start,
+        datetime(2026, 8, 25, tzinfo=timezone.utc),
+    )
 
 
 def test_r2_uses_unprefixed_search_and_delete_commands():

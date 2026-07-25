@@ -126,6 +126,8 @@ Optional/runtime settings:
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped Object Read & Write credentials. |
 | `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects. |
 | `R2_AUTO_DELETE_SECONDS` | `172800` | Retention period enforced by a 15-minute sweeper. |
+| `CLOUDFLARE_ACCOUNT_ID` | Empty | Account ID used for `/r2stats` analytics. |
+| `CLOUDFLARE_API_TOKEN` | Empty | Read-only Billing and Account Analytics API token. |
 | `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
 | `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
 | `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port. |

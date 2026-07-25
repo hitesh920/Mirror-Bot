@@ -11,6 +11,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ..app import LOGGER, app, config, owner_filter
 from ..core.logging_config import log_event
+from ..services.cloudflare_analytics import r2_account_usage
 from ..services.r2_delivery import (
     delete_keys,
     delete_prefix,
@@ -23,6 +24,19 @@ from ..services.status import human_size, human_time
 from ..telegram.state import ExpiringStore
 
 pending_deletes = ExpiringStore[dict](ttl_seconds=120)
+
+
+def decimal_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1000 or unit == "TB":
+            return f"{value:.1f} {unit}"
+        value /= 1000
+    return f"{value:.1f} TB"
+
+
+def period_date(value) -> str:
+    return f"{value.strftime('%b')} {value.day}, {value.year}"
 
 
 def delete_buttons(token: str) -> InlineKeyboardMarkup:
@@ -49,13 +63,54 @@ async def r2stats(_, message: Message):
             parse_mode=ParseMode.DISABLED,
         )
         return
+    analytics = None
+    if config.cloudflare_analytics_configured:
+        try:
+            analytics = await asyncio.to_thread(r2_account_usage, config)
+        except RuntimeError:
+            LOGGER.exception("Cloudflare R2 account analytics failed")
+    lines = [
+        "<b>Cloudflare R2</b>",
+        f"<b>Bucket:</b> <code>{escape(config.r2_bucket)}</code>",
+        f"<b>Prefix:</b> <code>{escape(config.r2_prefix)}</code>",
+        f"<b>Objects:</b> <code>{result['objects']}</code>",
+        f"<b>Stored:</b> <code>{human_size(result['bytes'])}</code>",
+    ]
+    if analytics is not None:
+        currency = analytics["currency"]
+        symbol = "$" if currency == "USD" else f"{currency} "
+        lines.extend([
+            "",
+            "<b>Current billing period</b>",
+            (
+                f"<b>Period:</b> <code>{period_date(analytics['period_start'])}"
+                f" – {period_date(analytics['period_end'])}</code>"
+            ),
+            (
+                f"<b>Class A operations:</b> "
+                f"<code>{analytics['class_a']:,} / 1,000,000</code>"
+            ),
+            (
+                f"<b>Class B operations:</b> "
+                f"<code>{analytics['class_b']:,} / 10,000,000</code>"
+            ),
+            (
+                f"<b>Total bucket storage:</b> "
+                f"<code>{decimal_size(analytics['bytes'])}</code>"
+            ),
+            (
+                f"<b>Billable usage:</b> "
+                f"<code>{symbol}{analytics['billable_cost']:.2f}</code>"
+            ),
+        ])
+    elif config.cloudflare_analytics_configured:
+        lines.extend(["", "<i>Account usage analytics is temporarily unavailable.</i>"])
+    lines.append(
+        f"<b>Automatic deletion:</b> "
+        f"<code>{human_time(config.r2_auto_delete_seconds)}</code>"
+    )
     await progress.edit_text(
-        "<b>Cloudflare R2</b>\n"
-        f"<b>Bucket:</b> <code>{escape(config.r2_bucket)}</code>\n"
-        f"<b>Prefix:</b> <code>{escape(config.r2_prefix)}</code>\n"
-        f"<b>Objects:</b> <code>{result['objects']}</code>\n"
-        f"<b>Stored:</b> <code>{human_size(result['bytes'])}</code>\n"
-        f"<b>Automatic deletion:</b> <code>{human_time(config.r2_auto_delete_seconds)}</code>",
+        "\n".join(lines),
         parse_mode=ParseMode.HTML,
     )
 

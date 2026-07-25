@@ -37,6 +37,8 @@ class Config:
     r2_secret_access_key: str
     r2_prefix: str
     r2_auto_delete_seconds: int
+    cloudflare_account_id: str
+    cloudflare_api_token: str
     enable_telegram_ui: bool
 
     download_dir: Path = Path("/app/downloads")
@@ -84,6 +86,14 @@ class Config:
                 0,
                 _int("R2_AUTO_DELETE_SECONDS", 172800),
             ),
+            cloudflare_account_id=getenv(
+                "CLOUDFLARE_ACCOUNT_ID",
+                "",
+            ).strip(),
+            cloudflare_api_token=getenv(
+                "CLOUDFLARE_API_TOKEN",
+                "",
+            ).strip(),
             enable_telegram_ui=enable_telegram_ui,
         )
 
@@ -96,4 +106,12 @@ class Config:
                 self.r2_access_key_id,
                 self.r2_secret_access_key,
             )
+        )
+
+    @property
+    def cloudflare_analytics_configured(self) -> bool:
+        return bool(
+            self.cloudflare_account_id
+            and self.cloudflare_api_token
+            and self.r2_bucket
         )
