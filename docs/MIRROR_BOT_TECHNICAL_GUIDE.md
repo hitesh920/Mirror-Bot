@@ -1,264 +1,747 @@
 # Mirror-Bot Technical Guide
 
-Long-term operations and maintenance reference for [`hitesh920/Mirror-Bot`](https://github.com/hitesh920/Mirror-Bot).
+This is the operational and engineering reference for
+[`hitesh920/Mirror-Bot`](https://github.com/hitesh920/Mirror-Bot).
 
-This guide tracks the current `master` branch. The Telegram bot is private and
-owner-only; the source repository itself is public.
+It documents the current `master` branch: how the service is structured, how
+production is configured, how releases are deployed, and what must be verified
+before a change is considered safe.
 
-## 1. Architecture and repository
+Mirror-Bot is a private, owner-controlled Telegram service. The repository is
+public, so production credentials and operational data must never be committed.
 
-### Purpose and operating model
+## 1. System overview
 
-Mirror-Bot is an asynchronous Python 3.12 service built with Kurigram/Pyrogram. A single trusted Telegram owner submits a source through `/add`, chooses a destination, watches live progress, and receives links or uploaded files. Docker Compose runs one `mirror-bot` container containing both the Python application and `qbittorrent-nox`.
+Mirror-Bot accepts a transfer request through Telegram, downloads the source
+into an isolated workspace, optionally processes it, delivers the result, and
+then removes local temporary data.
 
-Supported sources:
+The application supports:
 
-- Direct HTTP/HTTPS URLs and supported direct-host/shortener links
-- Magnet links and `.torrent` files, with temporary browser-based file selection
-- Replied Telegram documents, videos, audio, and photos
-- yt-dlp-compatible video/audio links
-Supported destinations are Telegram and Cloudflare R2. Optional processing includes extraction, password-protected extraction, ZIP creation, password-protected ZIP creation, and custom task names.
+- Direct HTTP and HTTPS downloads.
+- Magnet links and `.torrent` files.
+- Selective torrent downloads through a temporary browser page.
+- Replied Telegram documents, videos, audio, photos, and animations.
+- yt-dlp-compatible video and audio sources.
+- File-host and redirect resolvers.
+- ZIP creation and archive extraction.
+- Password-protected ZIP creation and extraction.
+- Telegram and Cloudflare R2 delivery.
 
-```mermaid
-flowchart TD
-    A["Telegram /add"] --> B["Resolve source"]
-    B --> C["Download engine"]
-    C --> D["Optional extract or ZIP"]
-    D --> E["Safety scan and manifest"]
-    E --> F{"Destination"}
-    F --> G["Telegram"]
-    F --> I["Cloudflare R2"]
-    G --> J["Completion and cleanup"]
-    I --> J
-```
+The production service runs in one Docker container named `mirror-bot`.
 
-Tasks move through phases such as `queued`, `fetching metadata`, `selecting`, `downloading`, `preparing`, `scanning`, `extracting`, `archiving`, `uploading`, and one terminal phase: `complete`, `cancelled`, or `error`. `TASK_LIMIT` controls concurrent execution; extra accepted tasks wait for a semaphore slot. Task metadata is currently held in memory, while per-task files live under `/app/downloads/<task-id>`. Cleanup is attempted after every terminal outcome, and startup recovery removes abandoned workspaces left by an interrupted or failed cleanup.
+That container includes:
 
-### Repository map
+- Python 3.12.
+- The asynchronous Mirror-Bot application.
+- `qbittorrent-nox`.
+- FFmpeg and ffprobe.
+- 7-Zip and UnRAR.
+- Deno for yt-dlp-compatible extractors that require it.
+
+`start.sh` supervises both the Python application and qBittorrent. If either
+process exits unexpectedly, the container exits and Docker applies the
+configured restart policy.
+
+## 2. Design priorities
+
+The codebase is built around a few operational rules.
+
+### Owner-only control
+
+Telegram commands are restricted to `OWNER_ID`. Callback actions also verify
+the requesting user before changing task state.
+
+### Temporary local storage
+
+Each task receives a UUID and a dedicated directory:
 
 ```text
-Mirror-Bot/
-├── mirrorbot/
-│   ├── app.py                 # startup, Telegram client, shared runtime state
-│   ├── commands/              # thin /add, common, and R2 command handlers
-│   ├── core/                  # config, models, errors, logging/redaction
-│   ├── downloaders/           # direct, Telegram, torrent, yt-dlp
-│   ├── resolvers/             # source recognition and link resolution
-│   ├── services/              # task execution, processing, delivery, guards
-│   └── telegram/              # messages, keyboards, and live status UI
-├── scripts/                   # qBittorrent startup and support utilities
-├── tests/                     # pytest unit and boundary tests
-├── data/
-│   ├── downloads/             # temporary task workspaces; not committed
-│   └── logs/                  # persistent application logs; not committed
-├── .env.example               # configuration template
-├── docker-compose.yml         # local/VPS service definition
-├── Dockerfile                 # Python, Deno, FFmpeg, 7-Zip, UnRAR, qBittorrent
-├── start.sh                   # starts qBittorrent and bot; forwards signals
-├── pyproject.toml             # pytest and Ruff configuration
-├── requirements.txt
-└── requirements-dev.txt
+/app/downloads/<task-id>/
 ```
 
-| Area | Responsibility |
-|---|---|
-| `mirrorbot/app.py` | Loads config, creates the Telegram client and task manager, starts temporary pages, and coordinates graceful shutdown. |
-| `commands/` and `telegram/` | Validate owner-only interactions and translate them into application actions. Keep business logic out of handlers. |
-| `resolvers/` and `downloaders/` | Identify the source, resolve indirect links, and download into the task workspace. |
-| `services/task_manager.py` | Owns tasks, concurrency, qBittorrent, selectors, cancellation, and cleanup helpers. |
-| `services/task_runner.py` | Executes resolve → download → process → scan → deliver, records terminal state, and always cleans the workspace. |
-| `core/logging_config.py` | Provides queued, rotating, sanitized logs and safe `/logs` exports. |
+The directory is deleted after completion, cancellation, or failure. Startup
+recovery removes abandoned workspaces left by an unclean container stop.
 
-### Commands and exposed ports
+### Explicit task state
 
-All commands require `OWNER_ID`.
+A task moves through named phases such as:
 
-| Command | Purpose |
-|---|---|
-| `/add <link>` or replied `/add` | Start a transfer and select options/destination. |
-| `/status` | Show active tasks with progress, speed, phase, and ETA. |
-| `/cancel <task-id>` / `/cancelall` | Cancel one or all active tasks/selectors. |
-| `/stats` / `/speedtest` | Inspect host resources or network performance. |
-| `/r2stats` / `/search <name>` | Inspect R2 or return stored original upload links. |
-| `/delete <key-or-link>` / `/delete all` | Permanently delete R2 uploads after confirmation. |
-| `/logs` / `/restart` / `/help` | Export sanitized logs, restart gracefully, or show help. |
+- `queued`
+- `fetching metadata`
+- `selecting`
+- `downloading`
+- `processing`
+- `scanning`
+- `extracting`
+- `archiving`
+- `splitting`
+- `uploading`
+- `complete`
+- `cancelled`
+- `error`
 
-Only temporary, tokenized web pages are exposed:
+Terminal tasks cannot be moved back into a non-terminal phase. The in-memory
+registry retains at most 200 completed, cancelled, or failed task records.
 
-| Host port | Page | Default lifetime |
-|---:|---|---:|
-| `8001` | Torrent file selector | `TORRENT_SELECTION_TIMEOUT` (300 seconds) |
+### Bounded concurrency
 
-These are not a persistent dashboard. Anyone who obtains a live tokenized URL can use that page until it expires. Never expose qBittorrent's internal port `8080` publicly.
+`TASK_LIMIT` controls how many tasks may execute concurrently. Accepted tasks
+wait for a semaphore slot when the limit is reached.
 
-## 2. Deployment and operations
+### Defensive cleanup
 
-### Prerequisites and configuration
+The shutdown path:
 
-Use a Linux VPS with Docker Engine and Docker Compose, enough free disk for the largest active transfers, and inbound TCP access to `8001` when torrent selection is needed. The bot also needs Telegram credentials.
+- Stops accepting new work.
+- Requests cancellation for active tasks.
+- Closes torrent selection pages.
+- Waits for task cleanup.
+- Removes qBittorrent state where necessary.
+- Closes background services.
+- Stops qBittorrent only after the bot has finished cleanup.
+
+Cleanup failures are logged without preventing the remaining shutdown steps.
+
+## 3. Code organization
+
+The source tree is divided by responsibility.
+
+### `mirrorbot/app.py`
+
+Creates shared runtime objects, starts the Telegram client, registers command
+handlers, validates the dump channel, and coordinates graceful shutdown.
+
+### `mirrorbot/commands/`
+
+Contains thin Telegram handlers:
+
+- `add.py` parses `/add` requests and destination choices.
+- `common.py` handles health, status, cancellation, logs, speed tests, and
+  restart.
+- `r2.py` handles R2 statistics, search, and confirmed deletion.
+
+Business logic should remain outside command handlers.
+
+### `mirrorbot/core/`
+
+Contains:
+
+- Environment configuration and validation.
+- Task, source, destination, and phase models.
+- `/add` option parsing.
+- Source detection.
+- Shared errors.
+- Decimal size formatting.
+- Structured, redacted logging.
+
+### `mirrorbot/downloaders/`
+
+Implements:
+
+- Direct and collection downloads.
+- Telegram file downloads.
+- qBittorrent integration.
+- Torrent metadata and file selection.
+- yt-dlp video and audio downloads.
+- Child-process monitoring and termination.
+
+### `mirrorbot/resolvers/`
+
+Resolves supported file hosts and redirect services before the download engine
+starts. Resolver logging records the resolver and destination host without
+writing full signed URLs into logs.
+
+### `mirrorbot/services/`
+
+Owns the reusable application logic:
+
+- Task execution and lifecycle management.
+- ZIP creation and extraction.
+- File and path safety checks.
+- Disk and stall protection.
+- Telegram and R2 delivery.
+- R2 usage analytics and retention.
+- Media probing and thumbnail creation.
+- Temporary public URL discovery.
+- Startup recovery and restart state.
+- Background task and runtime coordination.
+
+### `mirrorbot/telegram/`
+
+Contains user-facing messages, inline keyboards, expiring callback state, and
+live status rendering.
+
+### `scripts/`
+
+`run_qbittorrent.py` starts qBittorrent with an isolated profile, captures its
+temporary Web UI password, and keeps qBittorrent logs bounded.
+
+## 4. Source handling
+
+### Direct links
+
+Direct downloads use `aiohttp`, bounded retry behavior, redirect support,
+source-specific headers and cookies, filename sanitization, and streamed writes
+to disk.
+
+Resolved collections download up to three files concurrently while preserving
+their relative folder structure. Duplicate target names are made unique.
+
+### File-host resolvers
+
+The resolver layer currently includes support for services such as:
+
+- MediaFire
+- GoFile
+- PixelDrain
+- WeTransfer
+- OneDrive
+- 1fichier
+- DoodStream
+- Linkbox
+- KrakenFiles
+- Send.cm
+- StreamTape
+- pCloud
+- Solidfiles
+- Upload.ee
+- Racaty
+- Compatible redirect and shortener services
+
+Resolvers are external-service integrations and can break when a provider
+changes its website or API. Failures should be reported as resolver errors
+rather than leaking low-level response details to users.
+
+### Torrents
+
+qBittorrent runs on `localhost:8080` inside the container. Its Web UI/API port
+must never be published publicly.
+
+Torrent handling:
+
+- Adds the magnet or `.torrent`.
+- Waits for metadata.
+- Stops the torrent before selection.
+- Opens a temporary tokenized selector on port `8001`.
+- Applies file priorities.
+- Downloads only selected files.
+- Validates the final qBittorrent path against the task workspace.
+- Removes skipped files and qBittorrent state.
+
+Selection pages expire after `TORRENT_SELECTION_TIMEOUT`. The listener exists
+only while at least one selection is active, so connection refusal while idle
+is expected.
+
+### Telegram files
+
+The bot can download supported media from the message being replied to with
+`/add`. A replied `.torrent` file is routed through the torrent engine.
+
+### yt-dlp
+
+yt-dlp sources offer:
+
+- Video at 360p, 480p, 720p, or 1080p.
+- MP3 audio at 64, 128, 192, 256, or 320 kbps.
+- Playlist and multi-output handling.
+- Safe custom output names constrained to the task workspace.
+
+## 5. Processing and safety
+
+### Archive handling
+
+The bot supports archive extraction and ZIP creation. Passwords may be supplied
+with `/add` options.
+
+Extraction validates produced paths and rejects unsafe output. When extraction
+fails, the original downloaded file is delivered and the completion message
+contains a warning.
+
+### Path validation
+
+Inputs and engine results are constrained to the task workspace. Symlinked
+upload trees are rejected.
+
+Custom names are sanitized before becoming filesystem paths. qBittorrent
+content paths are validated again before cleanup or delivery.
+
+### Disk reserve
+
+Before and during a transfer, the service preserves the larger of:
+
+- Approximately 5.37 GB free disk space.
+- 5 percent of the filesystem capacity.
+
+A task is stopped with a clear disk-space error when continuing would violate
+the reserve.
+
+### Stall detection
+
+Downloading and uploading tasks are monitored every five seconds. A task that
+makes no byte or progress movement for ten minutes is cancelled as stalled.
+
+## 6. Delivery behavior
+
+### Telegram
+
+Telegram delivery is media-aware.
+
+The service:
+
+- Detects video, audio, image, animation, or document delivery.
+- Uses ffprobe metadata when available.
+- Generates video thumbnails.
+- Enables video streaming metadata.
+- Splits files larger than 2,000,000,000 bytes.
+- Tracks combined progress across every file and part.
+- Handles Telegram FloodWait responses.
+- Uploads to `TELEGRAM_DUMP_CHAT_ID` when configured.
+- Falls back to the requesting private chat when the dump destination fails
+  before any file is posted.
+
+The completion message lists up to 20 uploaded files and their Telegram links.
+
+### Cloudflare R2
+
+The R2 bucket remains private.
+
+Objects use this structure:
+
+```text
+<R2_PREFIX>/<task-id>/<relative-path>
+```
+
+Files of roughly 67 MB or larger use multipart upload with roughly 34 MB
+parts. Active multipart uploads are aborted when a task is cancelled or fails.
+
+Each uploaded object stores metadata describing:
+
+- The Mirror-Bot task ID.
+- Whether the object is a file or folder page.
+- The original generated download link.
+- The intended deletion timestamp when retention is enabled.
+
+Single-file uploads return one download button.
+
+Folder uploads create one private HTML landing page. That page:
+
+- Lists every uploaded file.
+- Uses each file's original stored link.
+- Shows decimal KB, MB, and GB sizes.
+- Includes a Copy all action using basenames rather than folder paths.
+
+Generated links are signed for seven days. The default object retention is two
+days, so object deletion is normally the effective access limit.
+
+`/search` returns links stored during upload and does not generate replacements.
+
+The in-process expiry sweeper:
+
+- Runs every 15 minutes.
+- Lists only objects under `R2_PREFIX`.
+- Deletes objects older than `R2_AUTO_DELETE_SECONDS`.
+- Does nothing when retention is set to `0`.
+
+A matching two-day R2 lifecycle rule is recommended as a server-side fallback.
+It should apply only to the bot-managed prefix.
+
+`/delete` always requests confirmation. `/delete all` removes every object
+under `R2_PREFIX` but preserves the bucket.
+
+## 7. Configuration
+
+Copy the example file before deployment:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+### Required Telegram settings
+
+- `BOT_TOKEN` is the BotFather token.
+- `OWNER_ID` is the only Telegram user permitted to control the bot.
+- `TELEGRAM_API_ID` is the Telegram application ID.
+- `TELEGRAM_API_HASH` is the Telegram application hash.
+
+These variables are required when `ENABLE_TELEGRAM_UI=true`.
+
+### Optional Telegram settings
+
+- `TELEGRAM_DUMP_CHAT_ID` selects a channel or chat for Telegram uploads. Use a
+  numeric ID such as `-1001234567890` or a resolvable `@username`.
+- `ENABLE_TELEGRAM_UI` defaults to `true`.
+
+The bot must be allowed to post in the configured dump destination.
+
+### Cloudflare R2 settings
+
+R2 is enabled only when all of these are present:
+
+- `R2_ENDPOINT_URL`
+- `R2_BUCKET`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+
+Additional R2 settings:
+
+- `R2_PREFIX` defaults to `uploads/`.
+- `R2_AUTO_DELETE_SECONDS` defaults to `172800`.
+- `CLOUDFLARE_ACCOUNT_ID` enables account usage data in `/r2stats`.
+- `CLOUDFLARE_API_TOKEN` supplies read-only Billing and Account Analytics
+  access for `/r2stats`.
+
+The S3 credentials should be limited to Object Read & Write access on the
+intended bucket. The analytics token should remain read-only.
+
+### Runtime settings
+
+- `TASK_LIMIT` defaults to `10` and must be at least `1`.
+- `STATUS_UPDATE_INTERVAL` defaults to `10` seconds and must be at least `1`.
+- `TORRENT_SELECTION_PORT` defaults to `8001` and must be a valid TCP port.
+- `TORRENT_SELECTION_TIMEOUT` defaults to `300` seconds.
+- `PUBLIC_BASE_URL` overrides automatic public-host detection.
+- `TZ` defaults to `Asia/Kolkata`.
+
+Invalid numeric settings stop startup with an explicit configuration error.
+
+## 8. Networking
+
+The Compose file publishes only:
+
+```text
+8001/tcp  Temporary torrent selector
+```
+
+qBittorrent uses `8080/tcp` internally and must not be exposed.
+
+When `PUBLIC_BASE_URL` is empty, the service attempts to determine the public
+host through several external IP services. If those fail, it uses the local
+network address and finally `localhost`.
+
+Public torrent selection requires:
+
+- TCP `8001` allowed by the cloud network or security list.
+- TCP `8001` allowed by the host firewall.
+- TCP `8001` allowed by any `Docker-USER` firewall rules.
+- The Compose port mapping active.
+- A currently active selection listener.
+
+Do not add a reverse proxy, placeholder server, or additional public port
+without confirming the application's actual listener and threat model.
+
+## 9. Deployment
+
+### First deployment
 
 ```bash
 git clone https://github.com/hitesh920/Mirror-Bot.git
 cd Mirror-Bot
+
 cp .env.example .env
 mkdir -p data/downloads data/logs
+chmod 600 .env
+
+docker compose config
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 bot
 ```
 
-For a replacement VPS, restore the encrypted production `.env` backup before starting Compose, then restrict it with `chmod 600 .env`. Do not copy old repository files over the fresh clone, and keep historical logs optional.
+Expected startup evidence includes:
 
-Required when `ENABLE_TELEGRAM_UI=true`:
+- Container `mirror-bot` is running.
+- Logs contain `BOT STARTED`.
+- Logs contain `Starting Telegram UI`.
+- The dump channel is confirmed reachable when configured.
+- The configured owner receives a response to `/help`.
+- Other Telegram users cannot control the bot.
 
-| Variable | Meaning |
-|---|---|
-| `BOT_TOKEN` | BotFather token. |
-| `OWNER_ID` | Only Telegram user ID allowed to control the bot. |
-| `TELEGRAM_API_ID` | Telegram application API ID. |
-| `TELEGRAM_API_HASH` | Telegram application API hash. |
+### Routine update
 
-Optional/runtime settings:
-
-| Variable | Default | Meaning |
-|---|---:|---|
-| `TELEGRAM_DUMP_CHAT_ID` | Empty | Channel ID or `@username` for Telegram uploads; bot must be able to post. |
-| `R2_ENDPOINT_URL` / `R2_BUCKET` | Empty | Cloudflare R2 S3 endpoint and private bucket. |
-| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Empty | Bucket-scoped Object Read & Write credentials. |
-| `R2_PREFIX` | `uploads/` | Prefix containing all bot-managed R2 objects. |
-| `R2_AUTO_DELETE_SECONDS` | `172800` | Retention period enforced by a 15-minute sweeper. |
-| `CLOUDFLARE_ACCOUNT_ID` | Empty | Account ID used for `/r2stats` analytics. |
-| `CLOUDFLARE_API_TOKEN` | Empty | Read-only Billing and Account Analytics API token. |
-| `TASK_LIMIT` | `10` | Maximum concurrently executing tasks. |
-| `STATUS_UPDATE_INTERVAL` | `10` | Telegram status refresh interval in seconds. |
-| `TORRENT_SELECTION_PORT` | `8001` | Torrent selector port. |
-| `TORRENT_SELECTION_TIMEOUT` | `300` | Torrent metadata/selection timeout in seconds. |
-| `PUBLIC_BASE_URL` | Auto-detected | Emergency override for URLs generated by temporary pages. |
-| `TZ` | `Asia/Kolkata` | Container timezone. Log timestamps remain UTC. |
-| `ENABLE_TELEGRAM_UI` | `true` | Enable Telegram client and command handlers. |
-
-Important built-in defaults include a 2 GB Telegram split size, yt-dlp video up to 1080p, MP3 at 320 kbps, ZIP level 5, qBittorrent at `localhost:8080`, and application logs at `/app/logs/bot.log`.
-
-Never commit `.env`, sessions, `data/`, downloads, logs, tokens, cookies, or authorization material. The repository is public, so review every staged file before pushing.
-
-Cloudflare R2 buckets remain private. Large objects use multipart uploads and
-each successful object stores its original private GET link in object metadata.
-Search returns that stored link and never creates a replacement. Folder uploads
-also create one private HTML folder page containing every original file link.
-Its `Copy all` control copies basename/link pairs without including folder paths.
-Links are signed beyond the configured two-day retention, so users encounter
-object deletion rather than a separate link-expiry window. The sweeper lists
-only `R2_PREFIX`, permanently deletes objects older than the configured
-retention, and resumes this policy after container restarts.
-
-### First deployment and verification
+Do not recreate the container during an important transfer.
 
 ```bash
-# Validate interpolation and mounts before starting.
-docker compose config
-
-# Build and start the single service.
-docker compose up -d --build
-
-# Confirm state and watch startup.
+git status --short
+git pull --ff-only origin master
+docker compose build --pull bot
+docker compose up -d --no-deps --force-recreate bot
 docker compose ps
-docker compose logs -f bot
+docker compose logs --tail=100 bot
 ```
 
-Expected state:
+After deployment, verify:
 
-- Compose shows service `bot` and container `mirror-bot` running.
-- Logs contain `BOT STARTED` and `Starting Telegram UI` without a missing-config error.
-- The bot responds to `/help` from the configured owner and ignores/denies others.
-- `/stats` returns CPU, RAM, disk, uptime, and task information.
-- A small direct-file test completes and leaves no abandoned task directory.
-- Port `8001` is open in the VPS firewall and cloud ingress if torrent selection is used.
+- The VPS commit matches `origin/master`.
+- The container restart count is stable.
+- Both `python -m mirrorbot` and `qbittorrent-nox` are running.
+- Telegram startup succeeds.
+- Port `8001` remains the only published application port.
 
-Compose persists temporary downloads and logs on the host, restarts unless explicitly stopped, allows 40 seconds for graceful shutdown, and rotates Docker JSON logs at 10 MB with three files.
+### Restart without rebuilding
 
-### Logging and diagnostics
+```bash
+docker compose restart bot
+docker compose logs --tail=100 bot
+```
 
-There are two log streams: `docker compose logs` for container output and `data/logs/bot.log` for persistent application logs. Application entries use UTC ISO timestamps and structured fields:
+### Stop
+
+```bash
+docker compose down
+```
+
+Compose allows 40 seconds for graceful shutdown and uses
+`restart: unless-stopped`.
+
+### Rollback
+
+Before a production update, record the current commit:
+
+```bash
+git rev-parse HEAD
+```
+
+To roll back:
+
+```bash
+git switch --detach <known-good-commit>
+docker compose up -d --build --force-recreate bot
+docker compose logs --tail=100 bot
+```
+
+Return to normal tracking after the problem is resolved:
+
+```bash
+git switch master
+git pull --ff-only origin master
+```
+
+## 10. Logging and diagnostics
+
+Persistent application logs are written to:
 
 ```text
-2026-07-17T04:20:00Z INFO event=task.phase_changed task=abc12345 phase=uploading previous_phase=scanning engine=direct_url destination=telegram
+data/logs/bot.log
 ```
 
-The logging layer keeps Mirror-Bot at `INFO`, reduces noisy dependencies, rotates each application log at 5 MB, keeps at most 50 MB/20 backups, and removes rotations older than seven days. It redacts bot tokens, auth headers, magnets, sensitive query parameters, credentials, and temporary-page tokens. `/logs` exports only the latest 2,000 sanitized lines.
+Application log behavior:
+
+- UTC ISO timestamps.
+- Structured task and failure fields.
+- Approximately 5.24 MB per log file.
+- Approximately 52.4 MB total retained application logs.
+- Up to 20 rotated files.
+- Seven-day retention.
+- Reduced noise from dependencies.
+- Redaction of common tokens, credentials, authorization headers, magnets,
+  signed query parameters, and temporary-page tokens.
+
+`/logs` exports the latest 2,000 sanitized lines.
+
+Useful commands:
 
 ```bash
 docker compose logs --tail=200 bot
 docker compose logs -f bot
 tail -n 200 data/logs/bot.log
 grep 'event=task.failed' data/logs/bot.log
-grep 'task=abc12345' data/logs/bot.log
+grep 'task=<short-id>' data/logs/bot.log
 ```
 
-Do not paste full logs publicly without reviewing them. Automatic redaction is a safety net, not a guarantee for every future custom message.
+Redaction is a safety layer, not permission to publish logs without review.
 
-### Routine maintenance runbook
+### Common failures
+
+If the container exits immediately:
+
+- Inspect `docker compose logs bot`.
+- Check required Telegram variables.
+- Validate `.env` syntax with `docker compose config`.
+- Confirm mounted paths are directories.
+
+If the bot does not answer:
+
+- Verify `OWNER_ID`.
+- Verify Telegram token and API credentials.
+- Confirm `ENABLE_TELEGRAM_UI=true`.
+- Check outbound network access.
+
+If a temporary selector URL fails:
+
+- Confirm there is an active torrent selection.
+- Check public TCP `8001`.
+- Check `PUBLIC_BASE_URL`.
+- Check cloud, host, and Docker firewall layers separately.
+
+If a transfer fails:
+
+- Search the log for its short task ID.
+- Check `failure_category`.
+- Check free disk space and filesystem permissions.
+- Confirm the source URL has not expired.
+- Check whether the external resolver has changed.
+
+If abandoned data remains after a crash:
+
+- Restart once to allow startup recovery.
+- Stop the container before any manual cleanup.
+- Never delete `data/downloads` while the bot is active.
+
+## 11. Security model
+
+The following rules are mandatory:
+
+- Never commit `.env`.
+- Never commit Telegram session files.
+- Never commit logs, cookies, magnets, signed URLs, or temporary-page links.
+- Keep `.env` readable only by the deployment user.
+- Keep the R2 bucket private.
+- Use bucket-scoped S3 credentials.
+- Use a separate read-only Cloudflare analytics token.
+- Never expose qBittorrent port `8080`.
+- Treat download and selector links as bearer secrets.
+- Review staged files before every push.
+- Rotate exposed credentials immediately.
+
+Back up only irreplaceable configuration and use encrypted storage. Downloads
+are temporary data and application logs are operational data, not backups.
+
+## 12. Development and validation
+
+Mirror-Bot targets Python 3.12.
 
 ```bash
-# Update and recreate
-git status --short
-git pull --ff-only
-docker compose build --pull bot
-docker compose up -d --no-deps --force-recreate bot
-docker compose ps
-docker compose logs --tail=100 bot
-
-# Normal restart without rebuilding
-docker compose restart bot
-
-# Graceful stop and container/network removal
-docker compose down
-
-# Disk use
-df -h
-du -sh data/downloads data/logs
-```
-
-Before an update, let important transfers finish or cancel them intentionally. Graceful shutdown stops accepting tasks, requests cancellation, closes temporary pages, removes qBittorrent leftovers, waits for cleanup, and exits. Do not manually delete `data/downloads` while the service is active. Startup recovery removes abandoned workspaces and orphaned qBittorrent tasks after an unclean stop.
-
-Back up only irreplaceable configuration such as `.env`, using encrypted storage with restricted access. Downloads are temporary and logs are operational data, not primary backups. After rotating a bot token, API hash, R2 credential, or dump channel, replace the relevant value and recreate the container.
-
-| Symptom | Check |
-|---|---|
-| Container exits immediately | `docker compose logs bot`; required Telegram variables; `.env` syntax; file mount types. |
-| Bot does not answer | `OWNER_ID`, token/API credentials, `ENABLE_TELEGRAM_UI=true`, and connectivity. |
-| Temporary URL fails | Port `8001`, cloud ingress, public IP, and `PUBLIC_BASE_URL`. |
-| Task fails before download | Resolver support, link expiry, DNS/network access, and `task.failed` fields. |
-| Task stops for disk/stall protection | Free space, permissions, source availability, and guard failure category. |
-| Old data remains after a crash | Restart once for recovery; stop the service before manual cleanup. |
-
-## 3. Maintenance standards and future improvements
-
-### Development workflow
-
-```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
+
 python -m pytest -q
 python -m ruff check .
 python -m ruff format --check .
+python -m compileall -q mirrorbot scripts
+bash -n start.sh
 docker compose config
 docker compose build bot
 ```
 
-For transfer changes, test one small item through each affected source, processor, and destination. Verify cancellation, cleanup, a deliberate failure, log redaction, and graceful shutdown. Keep command handlers owner-only and thin; reusable logic belongs in `services/`, `downloaders/`, or `resolvers/`. Every terminal path must clean local files and partial remote artifacts where possible.
+When local dependencies are undesirable, run validation in an isolated Python
+3.12 Docker container or on a non-production VPS workspace.
 
-Use short, focused commits and tag known-good VPS releases. Record configuration additions in both `.env.example` and this guide, with a safe default and secret classification. Never make a temporary page persistent or expose a new port without authentication/threat review.
+Transfer-related changes should test:
 
-### Prioritized roadmap
+- One small source for each affected download engine.
+- The affected delivery destination.
+- Cancellation while downloading.
+- Cancellation while uploading.
+- A deliberate failure.
+- Cleanup after every terminal outcome.
+- Restart and shutdown behavior.
+- Absence of secrets in staged files and logs.
 
-1. **Continuous delivery and rollback.** Add GitHub Actions for pytest, Ruff, Compose validation, Docker build, dependency/container scanning, versioned image publishing, tagged VPS deployment, and Telegram success/failure notification. Keep the previous image/tag for one-command rollback.
-2. **Persistent task history and recovery.** Store compact task metadata and terminal results in SQLite so `/status`, failure analysis, and restart recovery survive one process lifetime.
-3. **Stronger container isolation.** Run as non-root where possible, pin base images and dependencies, add a healthcheck, drop unnecessary Linux capabilities, and consider an internal-only qBittorrent service.
-4. **Secure temporary pages.** Put port `8001` behind an HTTPS reverse proxy, add rate limits and one-time/shorter tokens, and document trusted-proxy/public-URL handling.
-5. **Observability.** Add JSON logs or metrics for queue depth, active tasks, durations, bytes, failure categories, disk reserve, and stalls, with low-noise alerts.
-6. **Integration tests.** Add container smoke tests with mocked remote APIs plus fixtures for torrent selection, archive fallback, upload cancellation, token expiry, and startup cleanup.
-7. **Configuration and secrets.** Improve type/range validation, support Docker secrets or a VPS secret store, document rotation, and add automated secret scanning.
-8. **Modularity.** Continue reducing `mirrorbot/app.py` by moving startup wiring and pending selections into focused services with dependency injection.
+### Coding standards
 
-### Release definition of done
+- Keep command handlers owner-only and thin.
+- Put reusable behavior in `services`, `downloaders`, or `resolvers`.
+- Keep all task files inside the task workspace.
+- Stream large files rather than loading them into memory.
+- Preserve cancellation at every long-running boundary.
+- Make cleanup idempotent.
+- Add regression tests for every bug fix.
+- Add new environment variables to `.env.example` and this guide.
+- Do not expose a new port without documenting and reviewing it.
 
-A release is ready when tests and lint pass; Compose validates and builds; owner-only access is unchanged; secrets are absent from the Git diff and logs; a small end-to-end transfer succeeds; cancellation and failure clean up correctly; restart/shutdown complete within the grace period; and the deployment has a documented rollback target.
+## 13. Release checklist
 
-Update this guide whenever architecture, commands, configuration, ports,
-persistence, or deployment behavior changes.
+A release is ready when:
+
+- The intended diff has been reviewed.
+- No unrelated user files are staged.
+- No credentials or signed links appear in the diff.
+- pytest passes.
+- Ruff lint and formatting pass.
+- Python compilation passes.
+- `start.sh` syntax passes.
+- Compose configuration validates.
+- The Docker image builds.
+- A small affected transfer succeeds.
+- Cancellation and failure clean up correctly.
+- Active production transfers are finished before recreation.
+- The deployment commit matches GitHub.
+- The live container is stable after deployment.
+- Startup logs contain no unexpected errors.
+- A known-good rollback commit is recorded.
+
+## 14. Recommended next improvements
+
+### Reliability automation
+
+Add GitHub Actions for:
+
+- pytest
+- Ruff lint and formatting
+- Python compilation
+- Compose validation
+- Docker image build
+- Secret scanning
+- Dependency vulnerability checks
+
+Pin production dependencies or generate a reproducible lock file. Add a
+container health check that verifies both the bot process and qBittorrent.
+
+### Upload management
+
+Add `/uploads` or `/recent` with:
+
+- The latest uploads grouped by task.
+- File or folder type.
+- Total size.
+- Remaining retention time.
+- Stored Download links.
+- Confirmed Delete actions.
+
+The command should reuse stored links and never generate new ones.
+
+### Resumable R2 multipart uploads
+
+Persist multipart upload IDs and completed part ETags so a large upload can
+continue after a temporary failure or controlled restart.
+
+### Clean private download URLs
+
+An optional Cloudflare Worker on `workers.dev` could replace long S3-presigned
+URLs with signed, opaque links while keeping the R2 bucket private.
+
+Any implementation should:
+
+- Stream the R2 body.
+- Support HTTP Range requests.
+- Use an HMAC signature.
+- Avoid buffering large files.
+- Disable caching.
+- Return `404` after object deletion.
+- Preserve stored-link behavior for `/search`.
+
+### Persistent operational history
+
+SQLite could preserve compact task outcomes and failure history across restarts.
+This is useful for diagnostics, but a full web dashboard is unnecessary for the
+current low-volume, temporary-sharing workload.
+
+## 15. Documentation maintenance
+
+Update this guide whenever a change affects:
+
+- Commands.
+- Environment variables.
+- Public ports.
+- Persistent data.
+- Task lifecycle.
+- Source or destination support.
+- Cleanup and retention.
+- Deployment or rollback.
+- Security assumptions.
+
+Keep the root [README](../README.md) concise and user-facing. Keep operational
+details, engineering constraints, and release procedures here.
