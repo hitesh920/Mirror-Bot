@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import re
 from contextlib import suppress
 from datetime import UTC, datetime
 from email.header import decode_header
@@ -26,6 +27,12 @@ PART_SIZE = 32 * 1024 * 1024
 EXPIRY_SWEEP_INTERVAL = 15 * 60
 PRESIGNED_URL_LIFETIME = 7 * 24 * 60 * 60
 FOLDER_PAGE_SUFFIX = ".mirrorbot-folder.html"
+FOLDER_LABEL_PATTERN = re.compile(
+    r'(?P<prefix><li data-file-name="(?P<name>[^"]+)" '
+    r'data-file-url="[^"]+"><a href="[^"]+">Download</a><span>)'
+    r"(?P<label>.*?)"
+    r"(?P<suffix></span><small>)"
+)
 
 
 def normalize_prefix(value: str) -> str:
@@ -243,6 +250,73 @@ copyButton.addEventListener("click", async () => {{
 </body>
 </html>"""
     return document.encode("utf-8")
+
+
+def normalize_folder_page_labels(document: bytes) -> tuple[bytes, int]:
+    text = document.decode("utf-8")
+    changes = 0
+
+    def basename_label(match: re.Match) -> str:
+        nonlocal changes
+        if match.group("label") == match.group("name"):
+            return match.group(0)
+        changes += 1
+        return f"{match.group('prefix')}{match.group('name')}{match.group('suffix')}"
+
+    normalized = FOLDER_LABEL_PATTERN.sub(basename_label, text)
+    return normalized.encode("utf-8"), changes
+
+
+def update_existing_folder_pages(config: Config) -> dict[str, int]:
+    require_r2(config)
+    client = r2_client(config)
+    pages = [item for item in list_objects(config) if is_folder_page_key(item["Key"])]
+    updated_pages = 0
+    updated_labels = 0
+    for item in pages:
+        response = client.get_object(Bucket=config.r2_bucket, Key=item["Key"])
+        body = response["Body"]
+        try:
+            document = body.read()
+        finally:
+            with suppress(Exception):
+                body.close()
+        normalized, changes = normalize_folder_page_labels(document)
+        if not changes:
+            continue
+
+        metadata = dict(response.get("Metadata", {}))
+        if config.r2_auto_delete_seconds > 0 and not metadata.get("expires-at"):
+            metadata["expires-at"] = str(
+                int(item["LastModified"].timestamp()) + config.r2_auto_delete_seconds
+            )
+        put_options = {
+            "Bucket": config.r2_bucket,
+            "Key": item["Key"],
+            "Body": normalized,
+            "ContentType": response.get(
+                "ContentType",
+                "text/html; charset=utf-8",
+            ),
+            "ContentDisposition": response.get("ContentDisposition", "inline"),
+            "Metadata": metadata,
+        }
+        for field in (
+            "CacheControl",
+            "ContentEncoding",
+            "ContentLanguage",
+        ):
+            if response.get(field):
+                put_options[field] = response[field]
+        client.put_object(**put_options)
+        updated_pages += 1
+        updated_labels += changes
+
+    return {
+        "scanned": len(pages),
+        "updated": updated_pages,
+        "labels": updated_labels,
+    }
 
 
 class R2Uploader:
@@ -664,12 +738,35 @@ def key_from_input(config: Config, value: str) -> str:
 def delete_expired_objects(config: Config) -> int:
     if not config.r2_configured or config.r2_auto_delete_seconds <= 0:
         return 0
-    cutoff = datetime.now(UTC).timestamp() - config.r2_auto_delete_seconds
-    keys = [
-        item["Key"]
-        for item in list_objects(config)
-        if item["LastModified"].timestamp() <= cutoff
-    ]
+    now = datetime.now(UTC).timestamp()
+    cutoff = now - config.r2_auto_delete_seconds
+    client = None
+    keys = []
+    for item in list_objects(config):
+        expired = item["LastModified"].timestamp() <= cutoff
+        if is_folder_page_key(item["Key"]):
+            try:
+                client = client or r2_client(config)
+                response = client.head_object(
+                    Bucket=config.r2_bucket,
+                    Key=item["Key"],
+                )
+                expires_at = response.get("Metadata", {}).get("expires-at", "")
+                if expires_at:
+                    expired = int(expires_at) <= now
+            except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Invalid R2 folder page expiry metadata key=%s",
+                    item["Key"],
+                )
+            except Exception:
+                LOGGER.warning(
+                    "Could not inspect R2 folder page expiry key=%s",
+                    item["Key"],
+                    exc_info=True,
+                )
+        if expired:
+            keys.append(item["Key"])
     return delete_keys(config, keys)
 
 

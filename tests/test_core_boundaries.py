@@ -2,6 +2,7 @@ import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from email.header import Header
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -51,9 +52,11 @@ from mirrorbot.services.r2_delivery import (
     delete_scope,
     folder_page_key,
     key_from_input,
+    normalize_folder_page_labels,
     normalize_prefix,
     object_key,
     search_objects,
+    update_existing_folder_pages,
 )
 from mirrorbot.services.runtime import RuntimeCoordinator
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
@@ -417,6 +420,82 @@ def test_folder_page_copy_all_uses_basenames_and_original_links():
     assert 'data-file-url="https://r2.example/one?signature=1&amp;download=yes"' in page
 
 
+def test_folder_page_label_migration_is_idempotent():
+    current = build_folder_page(
+        "Season 1",
+        [("Season 1/Episodes/one.mkv", "https://r2.example/one", 10)],
+        172800,
+    )
+    legacy = current.replace(
+        b"<span>one.mkv</span>",
+        b"<span>Season 1/Episodes/one.mkv</span>",
+    )
+
+    normalized, changes = normalize_folder_page_labels(legacy)
+    unchanged, repeated_changes = normalize_folder_page_labels(normalized)
+
+    assert changes == 1
+    assert b"<span>one.mkv</span>" in normalized
+    assert b"<span>Season 1/Episodes/one.mkv</span>" not in normalized
+    assert repeated_changes == 0
+    assert unchanged == normalized
+
+
+def test_existing_folder_page_migration_preserves_metadata(monkeypatch):
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_bucket="mirror-bot",
+        r2_prefix="uploads/",
+        r2_auto_delete_seconds=172800,
+    )
+    key = "uploads/task/Season 1.mirrorbot-folder.html"
+    current = build_folder_page(
+        "Season 1",
+        [("Season 1/Episodes/one.mkv", "https://r2.example/one", 10)],
+        172800,
+    )
+    legacy = current.replace(
+        b"<span>one.mkv</span>",
+        b"<span>Season 1/Episodes/one.mkv</span>",
+    )
+    stored = {}
+
+    class Client:
+        def get_object(self, **_kwargs):
+            return {
+                "Body": BytesIO(legacy),
+                "ContentType": "text/html; charset=utf-8",
+                "ContentDisposition": "inline",
+                "CacheControl": "private, no-store",
+                "Metadata": {
+                    "mirror-link": "https://r2.example/folder",
+                    "mirror-kind": "folder",
+                    "expires-at": "2000000000",
+                },
+            }
+
+        def put_object(self, **kwargs):
+            stored.update(kwargs)
+
+    objects = [
+        {
+            "Key": key,
+            "LastModified": datetime(2026, 7, 26, tzinfo=UTC),
+        }
+    ]
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+
+    result = update_existing_folder_pages(config)
+
+    assert result == {"scanned": 1, "updated": 1, "labels": 1}
+    assert b"<span>one.mkv</span>" in stored["Body"]
+    assert stored["Metadata"]["mirror-link"] == "https://r2.example/folder"
+    assert stored["Metadata"]["expires-at"] == "2000000000"
+    assert stored["ContentDisposition"] == "inline"
+    assert stored["CacheControl"] == "private, no-store"
+
+
 def test_r2_search_returns_stored_original_link_without_presigning(monkeypatch):
     config = SimpleNamespace(r2_bucket="mirror-bot")
     objects = [
@@ -554,6 +633,42 @@ def test_r2_expiry_only_deletes_old_objects(monkeypatch):
 
     assert delete_expired_objects(config) == 1
     assert deleted == ["uploads/old"]
+
+
+def test_r2_folder_expiry_uses_original_metadata_after_rewrite(monkeypatch):
+    now = datetime.now(UTC)
+    expired_page = "uploads/expired/task.mirrorbot-folder.html"
+    future_page = "uploads/future/task.mirrorbot-folder.html"
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_auto_delete_seconds=86400,
+        r2_bucket="mirror-bot",
+    )
+    objects = [
+        {"Key": expired_page, "LastModified": now},
+        {"Key": future_page, "LastModified": now - timedelta(days=2)},
+    ]
+    expiry = {
+        expired_page: "1",
+        future_page: str(int((now + timedelta(days=1)).timestamp())),
+    }
+    deleted = []
+
+    class Client:
+        def head_object(self, **kwargs):
+            return {"Metadata": {"expires-at": expiry[kwargs["Key"]]}}
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+
+    def fake_delete(_config, keys):
+        deleted.extend(keys)
+        return len(keys)
+
+    monkeypatch.setattr(r2_delivery, "delete_keys", fake_delete)
+
+    assert delete_expired_objects(config) == 1
+    assert deleted == [expired_page]
 
 
 @pytest.mark.asyncio

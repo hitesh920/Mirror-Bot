@@ -332,6 +332,15 @@ Folder uploads create one private HTML landing page. That page:
 - Shows decimal KB, MB, and GB sizes.
 - Includes a Copy all action using basenames rather than folder paths.
 
+To normalize basename labels on folder pages created by an older release:
+
+```bash
+docker compose exec bot python scripts/update_r2_folder_pages.py
+```
+
+The migration preserves link and expiry metadata. It is idempotent and reports
+only aggregate counts.
+
 Generated links are signed for seven days. The default object retention is two
 days, so object deletion is normally the effective access limit.
 
