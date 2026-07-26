@@ -38,6 +38,7 @@ from mirrorbot.downloaders.torrent import (
 )
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
 from mirrorbot.downloaders.ytdlp import output_template, select_download_result
+from mirrorbot.resolvers import resolve_source
 from mirrorbot.services import media_metadata, r2_delivery, telegram_delivery
 from mirrorbot.services.cloudflare_analytics import (
     billing_period,
@@ -154,6 +155,27 @@ def test_replied_magnet_preserves_spaces_and_trackers():
 def test_detect_source_common_inputs():
     assert detect_source("magnet:?xt=urn:btih:abcd").type == SourceType.MAGNET
     assert detect_source("https://example.com/file.bin").type == SourceType.DIRECT_URL
+    assert (
+        detect_source("https://href.li/?https://example.com/file.bin").type
+        == SourceType.DIRECT_URL
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        "https://href.li/?https://example.com/releases/file.exe",
+        "https://href.li/?https%3A%2F%2Fexample.com%2Freleases%2Ffile.exe",
+    ],
+)
+async def test_href_li_wrapper_resolves_to_direct_download(wrapped):
+    resolved = await resolve_source(Source(SourceType.DIRECT_URL, wrapped))
+
+    assert resolved.type == SourceType.DIRECT_URL
+    assert resolved.value == "https://example.com/releases/file.exe"
+    assert resolved.metadata["original_url"] == wrapped
+    assert resolved.metadata["resolver"] == "redirect"
 
 
 def test_task_cancel_is_idempotent():
