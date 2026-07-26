@@ -28,7 +28,9 @@ async def download_telegram_file(
         raise ValueError("Reply does not contain a downloadable Telegram file")
 
     filename = safe_name(
-        task.options.name or getattr(media, "file_name", "") or f"telegram-{message.id}",
+        task.options.name
+        or getattr(media, "file_name", "")
+        or f"telegram-{message.id}",
         f"telegram-{message.id}",
     )
     target = task.work_dir / filename

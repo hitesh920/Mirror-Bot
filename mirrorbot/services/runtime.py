@@ -9,7 +9,9 @@ Cleanup = Callable[[], Awaitable[None]]
 
 
 class RuntimeCoordinator:
-    def __init__(self, manager: TaskManager, background: BackgroundTasks, timeout: int = 30):
+    def __init__(
+        self, manager: TaskManager, background: BackgroundTasks, timeout: int = 30
+    ):
         self.manager = manager
         self.background = background
         self.timeout = timeout
@@ -20,11 +22,17 @@ class RuntimeCoordinator:
             return
         self.closing = True
         LOGGER.info("Runtime shutdown started")
-        await self.manager.shutdown(self.timeout)
+        try:
+            await self.manager.shutdown(self.timeout)
+        except Exception:
+            LOGGER.exception("Task manager shutdown failed")
         for cleanup in cleanups:
             try:
                 await cleanup()
             except Exception:
                 LOGGER.exception("Runtime service cleanup failed")
-        await self.background.close(self.timeout)
+        try:
+            await self.background.close(self.timeout)
+        except Exception:
+            LOGGER.exception("Background task shutdown failed")
         LOGGER.info("Runtime shutdown complete")

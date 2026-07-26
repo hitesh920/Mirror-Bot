@@ -6,8 +6,8 @@ from shutil import rmtree
 from time import monotonic
 from urllib.parse import unquote, urlparse
 
-import aiohttp
 import aiofiles
+import aiohttp
 
 from ..core.errors import NetworkTimeoutError
 from ..core.models import Task
@@ -16,7 +16,9 @@ from ..services.transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 
-DIRECT_DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=60, sock_read=600)
+DIRECT_DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(
+    total=None, sock_connect=60, sock_read=600
+)
 DIRECT_DOWNLOAD_RETRIES = 2
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
@@ -93,52 +95,58 @@ async def download_single_direct(task: Task) -> Path:
     )
     headers = {"User-Agent": USER_AGENT, **(task.source.metadata.get("headers") or {})}
     cookies = task.source.metadata.get("cookies") or {}
-    async with aiohttp.ClientSession(headers=headers, cookies=cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT) as session:
-        async with session.get(task.source.value, allow_redirects=True) as response:
-            response.raise_for_status()
-            total = int(response.headers.get("content-length", "0") or 0)
-            filename = (
-                requested_name
-                or task.source.filename
-                or filename_from_headers(response)
-                or original_filename
-                or filename_from_url(str(response.url))
-            )
-            filename = safe_name(filename, "download.bin")
-            target = task.work_dir / filename
-            task.name = filename
-            task.size = total
-            ensure_disk_space(target, total)
-            started = monotonic()
-            async with aiofiles.open(target, "wb") as file:
-                try:
-                    async for chunk in response.content.iter_chunked(1024 * 512):
-                        if task.cancelled:
-                            raise asyncio.CancelledError()
-                        await file.write(chunk)
-                        task.downloaded += len(chunk)
-                        elapsed = monotonic() - started
-                        task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                        if total:
-                            task.progress = task.downloaded / total
-                            task.eta = (
-                                int((total - task.downloaded) / task.speed)
-                                if task.speed
-                                else 0
-                            )
-                except TimeoutError as exc:
-                    raise _network_timeout_error() from exc
-            LOGGER.info(
-                "Task %s: direct download complete name=%r bytes=%s",
-                task.short_id(),
-                filename,
-                task.downloaded,
-            )
-            if not task.size:
-                task.size = task.downloaded
-            task.progress = 1
-            task.eta = 0
-            return target
+    async with (
+        aiohttp.ClientSession(
+            headers=headers,
+            cookies=cookies,
+            timeout=DIRECT_DOWNLOAD_TIMEOUT,
+        ) as session,
+        session.get(task.source.value, allow_redirects=True) as response,
+    ):
+        response.raise_for_status()
+        total = int(response.headers.get("content-length", "0") or 0)
+        filename = (
+            requested_name
+            or task.source.filename
+            or filename_from_headers(response)
+            or original_filename
+            or filename_from_url(str(response.url))
+        )
+        filename = safe_name(filename, "download.bin")
+        target = task.work_dir / filename
+        task.name = filename
+        task.size = total
+        ensure_disk_space(target, total)
+        started = monotonic()
+        async with aiofiles.open(target, "wb") as file:
+            try:
+                async for chunk in response.content.iter_chunked(1024 * 512):
+                    if task.cancelled:
+                        raise asyncio.CancelledError()
+                    await file.write(chunk)
+                    task.downloaded += len(chunk)
+                    elapsed = monotonic() - started
+                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
+                    if total:
+                        task.progress = task.downloaded / total
+                        task.eta = (
+                            int((total - task.downloaded) / task.speed)
+                            if task.speed
+                            else 0
+                        )
+            except TimeoutError as exc:
+                raise _network_timeout_error() from exc
+        LOGGER.info(
+            "Task %s: direct download complete name=%r bytes=%s",
+            task.short_id(),
+            filename,
+            task.downloaded,
+        )
+        if not task.size:
+            task.size = task.downloaded
+        task.progress = 1
+        task.eta = 0
+        return target
 
 
 async def download_collection(task: Task, collection: ResolvedCollection) -> Path:
@@ -151,7 +159,10 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     started = monotonic()
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(3)
-    base_headers = {"User-Agent": USER_AGENT, **(task.source.metadata.get("headers") or {})}
+    base_headers = {
+        "User-Agent": USER_AGENT,
+        **(task.source.metadata.get("headers") or {}),
+    }
     base_cookies = task.source.metadata.get("cookies") or {}
     targets = []
     used_targets = set()
@@ -188,7 +199,9 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
                             async with lock:
                                 task.downloaded += len(chunk)
                                 elapsed = monotonic() - started
-                                task.speed = int(task.downloaded / elapsed) if elapsed else 0
+                                task.speed = (
+                                    int(task.downloaded / elapsed) if elapsed else 0
+                                )
                                 if task.size:
                                     task.progress = min(task.downloaded / task.size, 1)
                                     task.eta = (
@@ -205,10 +218,12 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
         task.name,
         len(collection.files),
     )
-    async with aiohttp.ClientSession(headers=base_headers, cookies=base_cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT) as session:
+    async with aiohttp.ClientSession(
+        headers=base_headers, cookies=base_cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT
+    ) as session:
         downloads = [
             asyncio.create_task(download_item(item, target, session))
-            for item, target in zip(collection.files, targets)
+            for item, target in zip(collection.files, targets, strict=True)
         ]
         try:
             await asyncio.gather(*downloads)

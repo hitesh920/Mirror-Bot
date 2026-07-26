@@ -5,3 +5,7 @@ __pycache__
 data
 downloads
 logs
+docs
+tests
+requirements-dev.txt
+*.md

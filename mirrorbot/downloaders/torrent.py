@@ -2,6 +2,7 @@ import asyncio
 import base64
 import binascii
 import logging
+from contextlib import suppress
 from pathlib import Path
 from shutil import rmtree
 from urllib.parse import parse_qs, urlparse
@@ -51,6 +52,12 @@ def magnet_info_hash(magnet: str) -> str:
     return ""
 
 
+def torrent_content_path(task: Task, torrent: dict) -> Path:
+    content_path = Path(torrent["content_path"])
+    ensure_inside(task.work_dir, content_path)
+    return content_path
+
+
 def _clean_skipped_files(task: Task, torrent: dict, files: list[dict]) -> None:
     save_path = Path(torrent["save_path"])
     ensure_inside(task.work_dir, save_path)
@@ -91,7 +98,9 @@ async def _wait_for_torrent(
     raise TorrentEngineError("qBittorrent did not add the torrent")
 
 
-async def _wait_for_metadata(qb: QBittorrentClient, task: Task) -> tuple[dict, list[dict]]:
+async def _wait_for_metadata(
+    qb: QBittorrentClient, task: Task
+) -> tuple[dict, list[dict]]:
     for _ in range(TORRENT_METADATA_TIMEOUT):
         if task.cancelled:
             raise asyncio.CancelledError()
@@ -134,7 +143,9 @@ async def download_torrent(
     task.torrent_hash = torrent["hash"]
     task.name = ""
     task.transition(TaskPhase.METADATA)
-    LOGGER.info("Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8])
+    LOGGER.info(
+        "Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8]
+    )
 
     torrent, files = await _wait_for_metadata(qb, task)
     task.name = str(torrent.get("name") or task.name or "torrent")
@@ -149,10 +160,8 @@ async def download_torrent(
             await selection_job
         if task.cancelled:
             selection_job.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await selection_job
-            except asyncio.CancelledError:
-                pass
             await qb.delete(task.torrent_hash, True)
             raise asyncio.CancelledError()
         await asyncio.sleep(0.2)
@@ -199,7 +208,7 @@ async def download_torrent(
         task.eta = int(torrent.get("eta", 0))
         state = torrent.get("state", "")
         if state in FINISHED_STATES or task.progress >= 1:
-            content_path = Path(torrent["content_path"])
+            content_path = torrent_content_path(task, torrent)
             final_files = await qb.files(task.torrent_hash)
             await qb.delete(task.torrent_hash, False)
             _clean_skipped_files(task, torrent, final_files)

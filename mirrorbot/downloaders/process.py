@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+from contextlib import suppress
 from pathlib import Path
 
 from ..core.models import Task
@@ -23,11 +24,9 @@ async def terminate_process(process: asyncio.subprocess.Process) -> None:
         return
     try:
         await asyncio.wait_for(process.wait(), timeout=5)
-    except asyncio.TimeoutError:
-        try:
+    except TimeoutError:
+        with suppress(ProcessLookupError):
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         await process.wait()
 
 

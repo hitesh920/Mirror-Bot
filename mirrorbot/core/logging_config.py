@@ -4,12 +4,11 @@ import logging
 import logging.handlers
 import queue
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
 
 APP_LOG_MAX_BYTES = 5 * 1024 * 1024
 APP_LOG_TOTAL_BYTES = 50 * 1024 * 1024
@@ -128,9 +127,11 @@ class RedactingFormatter(logging.Formatter):
         return sanitize_text(super().format(clone))
 
     def formatTime(self, record, datefmt=None):
-        return datetime.fromtimestamp(record.created, timezone.utc).isoformat(
-            timespec="seconds"
-        ).replace("+00:00", "Z")
+        return (
+            datetime.fromtimestamp(record.created, UTC)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
 
 
 class RetentionRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -160,11 +161,7 @@ class RetentionRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def prune(self) -> None:
         base = Path(self.baseFilename)
         files = sorted(
-            (
-                path
-                for path in base.parent.glob(f"{base.name}*")
-                if path.is_file()
-            ),
+            (path for path in base.parent.glob(f"{base.name}*") if path.is_file()),
             key=lambda path: path.stat().st_mtime,
         )
         cutoff = time() - self.retention_seconds
@@ -245,7 +242,9 @@ def log_files(log_file: str | Path) -> list[Path]:
     return rotations + ([base] if base.is_file() else [])
 
 
-def create_log_export(log_file: str | Path, line_limit: int = EXPORT_LINE_LIMIT) -> Path | None:
+def create_log_export(
+    log_file: str | Path, line_limit: int = EXPORT_LINE_LIMIT
+) -> Path | None:
     lines: list[str] = []
     for path in log_files(log_file):
         lines.extend(path.read_text(encoding="utf-8", errors="replace").splitlines())

@@ -143,9 +143,7 @@ class TaskRunner:
             manager._raise_if_cancelled(task)
         return downloaded
 
-    async def _deliver(
-        self, task: Task, downloaded: Path, telegram_client
-    ) -> None:
+    async def _deliver(self, task: Task, downloaded: Path, telegram_client) -> None:
         task.transition(TaskPhase.UPLOADING)
         task.current_file = downloaded.name
         await self._upload(task, downloaded, telegram_client)
@@ -170,9 +168,7 @@ class TaskRunner:
             )
         await manager._run_or_cancel(task, operation)
 
-    async def _finalize(
-        self, task: Task, guard_job: asyncio.Task | None
-    ) -> None:
+    async def _finalize(self, task: Task, guard_job: asyncio.Task | None) -> None:
         manager = self.manager
         if guard_job:
             guard_job.cancel()

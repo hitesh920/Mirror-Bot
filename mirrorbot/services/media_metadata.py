@@ -55,7 +55,9 @@ async def probe_media(path: Path) -> MediaMetadata:
         LOGGER.debug("Media probe failed path=%s", path, exc_info=True)
         return MediaMetadata()
     if code != 0 or not stdout:
-        LOGGER.debug("Media probe returned code=%s path=%s stderr=%s", code, path, stderr[:300])
+        LOGGER.debug(
+            "Media probe returned code=%s path=%s stderr=%s", code, path, stderr[:300]
+        )
         return MediaMetadata()
     try:
         payload = json.loads(stdout)
@@ -85,12 +87,16 @@ async def probe_media(path: Path) -> MediaMetadata:
         duration=duration,
         width=int((video_stream or {}).get("width") or 0),
         height=int((video_stream or {}).get("height") or 0),
-        artist=str(tags.get("artist") or tags.get("ARTIST") or tags.get("Artist") or ""),
+        artist=str(
+            tags.get("artist") or tags.get("ARTIST") or tags.get("Artist") or ""
+        ),
         title=str(tags.get("title") or tags.get("TITLE") or tags.get("Title") or ""),
     )
 
 
-async def create_video_thumbnail(video: Path, output_dir: Path, duration: int) -> Path | None:
+async def create_video_thumbnail(
+    video: Path, output_dir: Path, duration: int
+) -> Path | None:
     output_dir.mkdir(parents=True, exist_ok=True)
     seek = max(1, (duration or 6) // 2)
     for quality in (4, 7, 10):
@@ -116,10 +122,14 @@ async def create_video_thumbnail(video: Path, output_dir: Path, duration: int) -
                 timeout=90,
             )
         except Exception:
-            LOGGER.debug("Video thumbnail generation failed path=%s", video, exc_info=True)
+            LOGGER.debug(
+                "Video thumbnail generation failed path=%s", video, exc_info=True
+            )
             return None
         if code != 0 or not output.exists():
-            LOGGER.debug("Video thumbnail command failed path=%s stderr=%s", video, stderr[:300])
+            LOGGER.debug(
+                "Video thumbnail command failed path=%s stderr=%s", video, stderr[:300]
+            )
             return None
         if output.stat().st_size <= THUMBNAIL_MAX_BYTES or quality == 10:
             return output

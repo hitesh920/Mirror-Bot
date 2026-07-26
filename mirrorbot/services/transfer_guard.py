@@ -7,7 +7,7 @@ from ..core.errors import DiskSpaceError, StalledTransferError
 from ..core.formatting import human_size
 from ..core.models import Task, TaskPhase
 
-GIB = 1024 ** 3
+GIB = 1024**3
 MIN_RESERVE = 5 * GIB
 RESERVE_RATIO = 0.05
 STALL_TIMEOUT = 600
@@ -59,7 +59,10 @@ class TransferGuard:
                 self.last_phase = self.task.phase
                 self.last_activity = monotonic()
                 self.task.last_progress_at = self.last_activity
-            if self.task.downloaded > self.last_bytes or self.task.progress > self.last_progress:
+            if (
+                self.task.downloaded > self.last_bytes
+                or self.task.progress > self.last_progress
+            ):
                 self.last_bytes = self.task.downloaded
                 self.last_progress = self.task.progress
                 self.last_activity = monotonic()
@@ -70,6 +73,8 @@ class TransferGuard:
                 and monotonic() - self.last_activity >= STALL_TIMEOUT
             ):
                 self.task.fail_guard(
-                    StalledTransferError("Transfer stalled for 10 minutes without progress")
+                    StalledTransferError(
+                        "Transfer stalled for 10 minutes without progress"
+                    )
                 )
                 return

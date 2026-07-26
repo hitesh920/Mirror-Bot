@@ -42,8 +42,8 @@ def render_tree(node: dict, depth: int = 0) -> str:
             f"<ul id='{folder_id}' hidden>{children}</ul>"
             "</li>"
         )
-    for file in sorted(node["files"], key=lambda item: item["label"].lower()):
-        rows.append(
+    rows.extend(
+        (
             "<li class='file'>"
             f"<label class='row' style='--depth:{depth}'>"
             f"<span class='spacer'></span><input class='file-check' type='checkbox' name='file' value='{file['index']}'>"
@@ -51,6 +51,8 @@ def render_tree(node: dict, depth: int = 0) -> str:
             f"<small>{human_size(file.get('size', 0))}</small>"
             "</label></li>"
         )
+        for file in sorted(node["files"], key=lambda item: item["label"].lower())
+    )
     return "".join(rows)
 
 
@@ -237,9 +239,7 @@ document.getElementById('search').addEventListener('input',e=>{{const q=e.target
             )
         skipped = [file_id for file_id in all_ids if file_id not in selected]
         await self.qb.set_file_priority(selection.torrent_hash, skipped, 0)
-        await self.qb.set_file_priority(
-            selection.torrent_hash, sorted(selected), 1
-        )
+        await self.qb.set_file_priority(selection.torrent_hash, sorted(selected), 1)
         await self.qb.start(selection.torrent_hash)
         selection.submitted.set()
         return web.Response(

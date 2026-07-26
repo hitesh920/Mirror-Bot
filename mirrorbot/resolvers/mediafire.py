@@ -3,11 +3,19 @@ import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .base import ResolvedCollection, ResolvedDownload, ResolvedFile, ResolverError, host_matches
+from .base import (
+    ResolvedCollection,
+    ResolvedDownload,
+    ResolvedFile,
+    ResolverError,
+    host_matches,
+)
 
 DOWNLOAD_PATTERNS = (
     re.compile(r'<a[^>]+aria-label=["\']Download file["\'][^>]+href=["\']([^"\']+)'),
-    re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]+aria-label=["\']Download file["\']'),
+    re.compile(
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]+aria-label=["\']Download file["\']'
+    ),
     re.compile(r'<a[^>]+id=["\']downloadButton["\'][^>]+href=["\']([^"\']+)'),
 )
 
@@ -74,7 +82,9 @@ class MediaFireResolver:
         content = folders.get("folder_content") or {}
         for folder in content.get("folders") or []:
             child_path = f"{path}/{folder['name']}".strip("/")
-            await self._collect_folder(folder["folderkey"], child_path, collection, session)
+            await self._collect_folder(
+                folder["folderkey"], child_path, collection, session
+            )
 
         files = await self._api(
             session,

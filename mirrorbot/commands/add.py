@@ -48,7 +48,13 @@ async def add(_, message: Message):
     )
 
     if reply and not link:
-        media = reply.document or reply.video or reply.audio or reply.photo or reply.animation
+        media = (
+            reply.document
+            or reply.video
+            or reply.audio
+            or reply.photo
+            or reply.animation
+        )
         if media:
             filename = getattr(media, "file_name", "") or ""
             source_type = (
@@ -129,7 +135,9 @@ async def ytdlp_choice(_, query):
     options.ytdlp_kind = kind
     options.ytdlp_quality = quality
     pending_adds[token] = (source, options, reply)
-    await query.message.edit("Choose destination:", reply_markup=destination_buttons(token))
+    await query.message.edit(
+        "Choose destination:", reply_markup=destination_buttons(token)
+    )
 
 
 @app.on_callback_query(filters.regex(r"^dest:"))

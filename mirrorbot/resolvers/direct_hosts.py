@@ -64,11 +64,15 @@ class StreamTapeResolver:
             response.raise_for_status()
             page = await response.text()
         parts = [part for part in urlparse(url).path.split("/") if part]
-        file_id = parts[-2] if len(parts) > 1 and parts[-2] not in {"v", "e"} else parts[-1]
+        file_id = (
+            parts[-2] if len(parts) > 1 and parts[-2] not in {"v", "e"} else parts[-1]
+        )
         matches = re.findall(r"(&expires[^'\"]+)", page)
         if not matches:
             raise ResolverError("StreamTape download link was not found")
-        return ResolvedDownload(f"https://streamtape.com/get_video?id={file_id}{matches[-1]}")
+        return ResolvedDownload(
+            f"https://streamtape.com/get_video?id={file_id}{matches[-1]}"
+        )
 
 
 class PCloudResolver:
@@ -101,9 +105,13 @@ class SendCmResolver:
             async with session.get(url) as response:
                 response.raise_for_status()
                 page = await response.text()
-            match = re.search(r'<input[^>]+name=["\']id["\'][^>]+value=["\']([^"\']+)', page)
+            match = re.search(
+                r'<input[^>]+name=["\']id["\'][^>]+value=["\']([^"\']+)', page
+            )
             if not match:
-                match = re.search(r'<input[^>]+value=["\']([^"\']+)["\'][^>]+name=["\']id["\']', page)
+                match = re.search(
+                    r'<input[^>]+value=["\']([^"\']+)["\'][^>]+name=["\']id["\']', page
+                )
             if not match:
                 raise ResolverError("Send.cm file ID was not found")
             file_id = match.group(1)
@@ -129,8 +137,12 @@ class KrakenFilesResolver:
         async with session.get(url) as response:
             response.raise_for_status()
             page = await response.text()
-        action = re.search(r'<form[^>]+id=["\']dl-form["\'][^>]+action=["\']([^"\']+)', page)
-        token = re.search(r'<input[^>]+id=["\']dl-token["\'][^>]+value=["\']([^"\']+)', page)
+        action = re.search(
+            r'<form[^>]+id=["\']dl-form["\'][^>]+action=["\']([^"\']+)', page
+        )
+        token = re.search(
+            r'<input[^>]+id=["\']dl-token["\'][^>]+value=["\']([^"\']+)', page
+        )
         if not action or not token:
             raise ResolverError("KrakenFiles download form was not found")
         post_url = action.group(1)

@@ -22,7 +22,10 @@ def yt_dlp_can_handle(value: str) -> bool:
         return False
     try:
         with YoutubeDL({"quiet": True, "simulate": True, "skip_download": True}):
-            return any(ie.suitable(value) and ie.IE_NAME != "generic" for ie in gen_extractors())
+            return any(
+                ie.suitable(value) and ie.IE_NAME != "generic"
+                for ie in gen_extractors()
+            )
     except Exception:
         return False
 

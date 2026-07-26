@@ -2,10 +2,8 @@
 
 Long-term operations and maintenance reference for [`hitesh920/Mirror-Bot`](https://github.com/hitesh920/Mirror-Bot).
 
-**Baseline:** `master` at [`ce8814c`](https://github.com/hitesh920/Mirror-Bot/commit/ce8814c34b6d59ca8f60cb9d0b09859e59b31c36), verified 17 July 2026. The Telegram bot is private and owner-only; the source repository itself is currently public.
-
-> [!IMPORTANT]
-> **Operational status as of 17 July 2026:** intentionally offline. The previous VPS instances and Mirror-Bot service are disabled. Do not run the deployment, start, or restart commands in this guide until a replacement server is ready and reactivation is explicitly intended.
+This guide tracks the current `master` branch. The Telegram bot is private and
+owner-only; the source repository itself is public.
 
 ## 1. Architecture and repository
 
@@ -57,9 +55,9 @@ Mirror-Bot/
 ├── docker-compose.yml         # local/VPS service definition
 ├── Dockerfile                 # Python, Deno, FFmpeg, 7-Zip, UnRAR, qBittorrent
 ├── start.sh                   # starts qBittorrent and bot; forwards signals
+├── pyproject.toml             # pytest and Ruff configuration
 ├── requirements.txt
-├── requirements-dev.txt
-└── README.md
+└── requirements-dev.txt
 ```
 
 | Area | Responsibility |
@@ -236,8 +234,9 @@ Back up only irreplaceable configuration such as `.env`, using encrypted storage
 
 ```bash
 python -m pip install -r requirements-dev.txt
-pytest -q
-ruff check mirrorbot tests
+python -m pytest -q
+python -m ruff check .
+python -m ruff format --check .
 docker compose config
 docker compose build bot
 ```
@@ -261,4 +260,5 @@ Use short, focused commits and tag known-good VPS releases. Record configuration
 
 A release is ready when tests and lint pass; Compose validates and builds; owner-only access is unchanged; secrets are absent from the Git diff and logs; a small end-to-end transfer succeeds; cancellation and failure clean up correctly; restart/shutdown complete within the grace period; and the deployment has a documented rollback target.
 
-Update the baseline commit at the top whenever architecture, commands, configuration, ports, persistence, or deployment behavior changes.
+Update this guide whenever architecture, commands, configuration, ports,
+persistence, or deployment behavior changes.

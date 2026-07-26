@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+from contextlib import suppress
 from time import time
 
 from pyrogram import Client, filters, idle
@@ -53,9 +54,11 @@ telegram_status = TelegramStatus(
     config.status_update_interval,
 )
 
+
 def owner_only(_, __, message: Message) -> bool:
     user = message.from_user or message.sender_chat
     return bool(not shutting_down and user and user.id == config.owner_id)
+
 
 owner_filter = filters.create(owner_only)
 
@@ -80,12 +83,16 @@ async def expire_pending_add(token: str) -> None:
     finally:
         pending_add_expiry_jobs.pop(token, None)
 
+
 def start_pending_add_expiry(token: str, message: Message) -> None:
     pending_add_messages[token] = message
     old_job = pending_add_expiry_jobs.pop(token, None)
     if old_job:
         old_job.cancel()
-    pending_add_expiry_jobs[token] = background.create(expire_pending_add(token), name="expire-add")
+    pending_add_expiry_jobs[token] = background.create(
+        expire_pending_add(token), name="expire-add"
+    )
+
 
 def take_pending_add(token: str):
     pending = pending_adds.pop(token, None)
@@ -95,42 +102,52 @@ def take_pending_add(token: str):
         job.cancel()
     return pending
 
+
 async def answer_expired_selection(query) -> None:
     await query.answer("Expired task", show_alert=True)
-    try:
+    with suppress(Exception):
         await query.message.edit("Selection expired. Send /add again.")
-    except Exception:
-        pass
+
 
 async def update_status_message(chat_id: int) -> None:
     await telegram_status.update(chat_id)
 
+
 async def replace_status_message(chat_id: int) -> None:
     await telegram_status.replace(chat_id)
+
 
 async def start_live_status(chat_id: int, message: Message) -> None:
     await telegram_status.start(chat_id, message)
 
+
 async def send_live_status(chat_id: int) -> None:
     await telegram_status.send(chat_id)
+
 
 def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
 
+
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_buttons(token)
+
 
 def ytdlp_video_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_video_buttons(token)
 
+
 def ytdlp_audio_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_audio_buttons(token)
+
 
 def completion_message(task) -> str:
     return telegram_messages.completion_message(task)
 
+
 def completion_buttons(task) -> InlineKeyboardMarkup | None:
     return telegram_keyboards.completion_buttons(task)
+
 
 async def launch_selected_task(
     query,
@@ -162,10 +179,8 @@ async def launch_selected_task(
 
     async def runner():
         async def selector_ready(selected_task):
-            try:
+            with suppress(Exception):
                 await query.message.delete()
-            except Exception:
-                pass
             return await app.send_message(
                 task.chat_id,
                 "Torrent files are ready for review.",
@@ -189,10 +204,8 @@ async def launch_selected_task(
             )
 
         async def selector_done(selector_message):
-            try:
+            with suppress(Exception):
                 await selector_message.delete()
-            except Exception:
-                pass
             if task.phase == TaskPhase.DOWNLOADING:
                 task.status_visible = True
                 await replace_status_message(task.chat_id)
@@ -205,10 +218,8 @@ async def launch_selected_task(
             on_selector_done=selector_done,
         )
         if is_torrent:
-            try:
+            with suppress(Exception):
                 await query.message.delete()
-            except Exception:
-                pass
         if task.phase.value == "complete":
             await app.send_message(
                 task.chat_id,
@@ -236,13 +247,12 @@ async def launch_selected_task(
 
     manager.spawn(runner(), name="transfer-task")
     if not is_torrent:
-        try:
+        with suppress(Exception):
             await query.message.delete()
-        except Exception:
-            pass
     if not is_torrent:
         await asyncio.sleep(0)
         await replace_status_message(task.chat_id)
+
 
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
@@ -251,7 +261,9 @@ def register_command_handlers() -> None:
         return
     from .commands import add, common, r2  # noqa: F401
 
+
 register_command_handlers()
+
 
 async def shutdown_bot() -> None:
     global shutting_down
@@ -265,14 +277,13 @@ async def shutdown_bot() -> None:
     await runtime.shutdown()
     LOGGER.info("Graceful shutdown complete")
 
+
 async def wait_for_shutdown_signal() -> None:
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass
     await stop_event.wait()
 
 
@@ -289,7 +300,8 @@ async def validate_telegram_dump_channel() -> None:
         )
     except Exception:
         LOGGER.warning(
-            "Telegram dump channel is not reachable. Telegram uploads will fall back to the requester chat when possible.",
+            "Telegram dump channel is not reachable. Telegram uploads will "
+            "fall back to the requester chat when possible.",
             exc_info=True,
         )
 
@@ -332,6 +344,7 @@ async def main() -> None:
         await shutdown_bot()
         if telegram_started:
             await app.stop()
+
 
 def run():
     if app is not None:

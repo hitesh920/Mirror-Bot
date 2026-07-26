@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "E", "F", "I", "PERF", "RET", "RUF", "SIM", "UP"]
+ignore = [
+    "ASYNC109", # Timeout parameters are part of the downloader API.
+    "ASYNC240", # Small local pathlib operations do not justify another dependency.
+    "PERF203",  # Network retry loops intentionally handle errors per attempt.
+    "RUF001",   # User-facing messages intentionally use typographic punctuation.
+    "UP042",    # Keep Enum declarations compatible with existing serialized values.
+    "UP046",    # Keep generic syntax compatible with runtime type consumers.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"mirrorbot/downloaders/torrent_selector.py" = ["E501"]
+"mirrorbot/services/r2_delivery.py" = ["E501"]

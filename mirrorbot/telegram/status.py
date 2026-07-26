@@ -59,9 +59,7 @@ class TelegramStatus:
                     await message.edit_text(text, parse_mode=ParseMode.HTML)
                     self.text[chat_id] = text
                 except Exception:
-                    LOGGER.exception(
-                        "Could not update status message chat=%s", chat_id
-                    )
+                    LOGGER.exception("Could not update status message chat=%s", chat_id)
 
     async def replace(self, chat_id: int) -> None:
         async with self.locks[chat_id]:

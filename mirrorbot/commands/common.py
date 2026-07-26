@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import time
+from contextlib import suppress
 from html import escape
 from pathlib import Path
 
@@ -64,10 +65,8 @@ async def status(_, message: Message):
         await message.reply("No active tasks.")
         return
     await telegram_status.replace(message.chat.id)
-    try:
+    with suppress(Exception):
         await message.delete()
-    except Exception:
-        pass
 
 
 @app.on_message(filters.command("stats") & owner_filter)
@@ -90,7 +89,9 @@ async def stats(_, message: Message):
 async def cancel(_, message: Message):
     parts = (message.text or "").split()
     if len(parts) < 2:
-        await message.reply("Usage: <code>/cancel &lt;task-id&gt;</code>", parse_mode=ParseMode.HTML)
+        await message.reply(
+            "Usage: <code>/cancel &lt;task-id&gt;</code>", parse_mode=ParseMode.HTML
+        )
         return
     if manager.cancel(parts[1]):
         log_event(
@@ -166,7 +167,10 @@ async def speedtest_cmd(_, message: Message):
                 f"<b>Download:</b> <code>{result.download_mbps:.2f} Mbps</code>",
                 f"<b>Upload:</b> <code>{result.upload_mbps:.2f} Mbps</code>",
                 f"<b>ISP:</b> <code>{escape(result.isp)}</code>",
-                f"<b>Server:</b> <code>{escape(result.sponsor)} - {escape(result.server)}</code>",
+                (
+                    f"<b>Server:</b> <code>{escape(result.sponsor)} - "
+                    f"{escape(result.server)}</code>"
+                ),
             ]
         ),
         parse_mode=ParseMode.HTML,

@@ -5,7 +5,6 @@ from urllib.parse import urljoin, urlparse
 
 from .base import ResolvedDownload, ResolverError, host_matches
 
-
 DOOD_DOMAINS = (
     "dood.watch",
     "doodstream.com",

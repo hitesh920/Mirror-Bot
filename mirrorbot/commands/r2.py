@@ -32,10 +32,14 @@ def period_date(value) -> str:
 
 def delete_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton("Permanently delete", callback_data=f"r2del:{token}"),
-            InlineKeyboardButton("Cancel", callback_data=f"r2cancel:{token}"),
-        ]]
+        [
+            [
+                InlineKeyboardButton(
+                    "Permanently delete", callback_data=f"r2del:{token}"
+                ),
+                InlineKeyboardButton("Cancel", callback_data=f"r2cancel:{token}"),
+            ]
+        ]
     )
 
 
@@ -70,30 +74,32 @@ async def r2stats(_, message: Message):
     if analytics is not None:
         currency = analytics["currency"]
         symbol = "$" if currency == "USD" else f"{currency} "
-        lines.extend([
-            "",
-            "<b>Current billing period</b>",
-            (
-                f"<b>Period:</b> <code>{period_date(analytics['period_start'])}"
-                f" – {period_date(analytics['period_end'])}</code>"
-            ),
-            (
-                f"<b>Class A operations:</b> "
-                f"<code>{analytics['class_a']:,} / 1,000,000</code>"
-            ),
-            (
-                f"<b>Class B operations:</b> "
-                f"<code>{analytics['class_b']:,} / 10,000,000</code>"
-            ),
-            (
-                f"<b>Total bucket storage:</b> "
-                f"<code>{human_size(analytics['bytes'])}</code>"
-            ),
-            (
-                f"<b>Billable usage:</b> "
-                f"<code>{symbol}{analytics['billable_cost']:.2f}</code>"
-            ),
-        ])
+        lines.extend(
+            [
+                "",
+                "<b>Current billing period</b>",
+                (
+                    f"<b>Period:</b> <code>{period_date(analytics['period_start'])}"
+                    f" – {period_date(analytics['period_end'])}</code>"
+                ),
+                (
+                    f"<b>Class A operations:</b> "
+                    f"<code>{analytics['class_a']:,} / 1,000,000</code>"
+                ),
+                (
+                    f"<b>Class B operations:</b> "
+                    f"<code>{analytics['class_b']:,} / 10,000,000</code>"
+                ),
+                (
+                    f"<b>Total bucket storage:</b> "
+                    f"<code>{human_size(analytics['bytes'])}</code>"
+                ),
+                (
+                    f"<b>Billable usage:</b> "
+                    f"<code>{symbol}{analytics['billable_cost']:.2f}</code>"
+                ),
+            ]
+        )
     elif config.cloudflare_analytics_configured:
         lines.extend(["", "<i>Account usage analytics is temporarily unavailable.</i>"])
     lines.append(
@@ -141,7 +147,7 @@ async def search(_, message: Message):
         if item["url"]:
             lines.append(
                 f'{index}. <a href="{escape(item["url"], quote=True)}">'
-                f'{escape(name[:100])}</a> — <code>{kind} · {size}</code>'
+                f"{escape(name[:100])}</a> — <code>{kind} · {size}</code>"
             )
         else:
             lines.append(

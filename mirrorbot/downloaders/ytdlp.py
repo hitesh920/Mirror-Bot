@@ -1,11 +1,12 @@
 import asyncio
-from asyncio import to_thread
 import logging
+from asyncio import to_thread
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
 from ..core.models import Task
+from ..resolvers.base import safe_name
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +59,24 @@ def _progress_hook(task: Task):
     return update
 
 
+def output_template(task: Task) -> Path:
+    if task.options.name:
+        requested_name = safe_name(task.options.name, "yt-dlp")
+        return task.work_dir / f"{requested_name}.%(ext)s"
+    return task.work_dir / "%(title).180B.%(ext)s"
+
+
+def select_download_result(work_dir: Path, before: set[Path]) -> Path:
+    created = sorted(
+        (path for path in work_dir.iterdir() if path not in before),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not created:
+        raise RuntimeError("yt-dlp did not create an output file")
+    return created[0] if len(created) == 1 else work_dir
+
+
 async def download_ytdlp(task: Task) -> Path:
     task.work_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info(
@@ -66,9 +85,8 @@ async def download_ytdlp(task: Task) -> Path:
         task.options.ytdlp_kind or "video",
         task.options.ytdlp_quality or "1080",
     )
-    output = task.work_dir / "%(title).180B.%(ext)s"
     options = {
-        "outtmpl": str(output),
+        "outtmpl": str(output_template(task)),
         "merge_output_format": "mp4",
         "noplaylist": False,
         "quiet": True,
@@ -77,22 +95,15 @@ async def download_ytdlp(task: Task) -> Path:
         "progress_hooks": [_progress_hook(task)],
         **_format_for(task),
     }
-    if task.options.name:
-        options["outtmpl"] = str(task.work_dir / f"{task.options.name}.%(ext)s")
 
     def run() -> Path:
         before = set(task.work_dir.iterdir())
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(task.source.value, download=True)
-            task.name = info.get("title") or task.options.name or "yt-dlp"
-        after = set(task.work_dir.iterdir())
-        created = sorted(after - before, key=lambda p: p.stat().st_mtime, reverse=True)
-        if created:
-            return created[0]
-        files = sorted(task.work_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            raise RuntimeError("yt-dlp did not create an output file")
-        return files[0]
+            task.name = (
+                info.get("title") or safe_name(task.options.name, "yt-dlp") or "yt-dlp"
+            )
+        return select_download_result(task.work_dir, before)
 
     result = await to_thread(run)
     if task.cancelled:

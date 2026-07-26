@@ -20,7 +20,9 @@ class QBittorrentClient:
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+            self.session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
+            )
         return self.session
 
     async def login(self) -> None:
@@ -85,7 +87,8 @@ class QBittorrentClient:
             text = await response.text()
             if not response.ok:
                 raise RuntimeError(
-                    f"qBittorrent API {endpoint} failed ({response.status}): {text[:200]}"
+                    f"qBittorrent API {endpoint} failed "
+                    f"({response.status}): {text[:200]}"
                 )
             content_type = response.headers.get("content-type", "")
             if "application/json" in content_type:

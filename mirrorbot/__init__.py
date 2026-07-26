@@ -1,2 +1,1 @@
 """Personal mirror/leech bot."""
-

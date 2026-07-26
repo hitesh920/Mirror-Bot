@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 from time import time
 
-
 LOG_DIR = Path("/app/logs")
 LOG_FILE = LOG_DIR / "qbittorrent.log"
 PASSWORD_FILE = Path("/app/data/qbittorrent/webui-password")

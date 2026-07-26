@@ -1,6 +1,12 @@
 from urllib.parse import parse_qs, urlparse
 
-from .base import ResolvedCollection, ResolvedDownload, ResolvedFile, ResolverError, host_matches
+from .base import (
+    ResolvedCollection,
+    ResolvedDownload,
+    ResolvedFile,
+    ResolverError,
+    host_matches,
+)
 
 
 def onedrive_ids(url: str) -> tuple[str, str]:
@@ -38,10 +44,14 @@ class OneDriveResolver:
         if not data.get("folder"):
             raise ResolverError("OneDrive direct link was not found")
         collection = ResolvedCollection(data.get("name") or "OneDrive")
-        await self._collect_folder(drive_id, data["id"], authkey, "", collection, session)
+        await self._collect_folder(
+            drive_id, data["id"], authkey, "", collection, session
+        )
         return collection
 
-    async def _collect_folder(self, drive_id, item_id, authkey, path, collection, session):
+    async def _collect_folder(
+        self, drive_id, item_id, authkey, path, collection, session
+    ):
         next_url = (
             f"https://api.onedrive.com/v1.0/drives/{drive_id}/items/{item_id}/children"
             f"?$select=id,name,size,folder,@content.downloadUrl&authKey={authkey}"

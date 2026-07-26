@@ -23,7 +23,8 @@ class BackgroundTasks:
             exc = task.exception()
             LOGGER.error(
                 "Background task failed name=%s: %s",
-                task.get_name(), exc,
+                task.get_name(),
+                exc,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
@@ -34,6 +35,11 @@ class BackgroundTasks:
             task.cancel()
         if tasks:
             try:
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout)
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True), timeout
+                )
             except TimeoutError:
-                LOGGER.warning("Timed out waiting for background tasks to stop count=%s", len(tasks))
+                LOGGER.warning(
+                    "Timed out waiting for background tasks to stop count=%s",
+                    len(tasks),
+                )

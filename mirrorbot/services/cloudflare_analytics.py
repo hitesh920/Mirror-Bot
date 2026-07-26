@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -101,7 +101,7 @@ def _month_anchor(reference: datetime, month_offset: int, day: int) -> datetime:
         reference.hour,
         reference.minute,
         reference.second,
-        tzinfo=timezone.utc,
+        tzinfo=UTC,
     )
 
 
@@ -112,9 +112,11 @@ def billing_period(
 ) -> tuple[datetime, datetime]:
     """Return the current monthly period for a subscription anchor."""
 
-    anchor = anchor.astimezone(timezone.utc)
-    now = now.astimezone(timezone.utc)
-    current_anchor = _month_anchor(anchor, (now.year - anchor.year) * 12 + now.month - anchor.month, anchor.day)
+    anchor = anchor.astimezone(UTC)
+    now = now.astimezone(UTC)
+    current_anchor = _month_anchor(
+        anchor, (now.year - anchor.year) * 12 + now.month - anchor.month, anchor.day
+    )
     if now < current_anchor:
         start = _month_anchor(current_anchor, -1, anchor.day)
         end = current_anchor
@@ -122,7 +124,7 @@ def billing_period(
         start = current_anchor
         end = _month_anchor(current_anchor, 1, anchor.day)
     if subscription_start is not None:
-        start = max(start, subscription_start.astimezone(timezone.utc))
+        start = max(start, subscription_start.astimezone(UTC))
     return start, end
 
 
@@ -161,8 +163,7 @@ def _request_json(
         try:
             details = json.load(exc)
             message = "; ".join(
-                str(item.get("message") or item)
-                for item in details.get("errors", [])
+                str(item.get("message") or item) for item in details.get("errors", [])
             )
         except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
             message = exc.reason
@@ -174,10 +175,7 @@ def _request_json(
 
     errors = result.get("errors") or []
     if errors:
-        message = "; ".join(
-            str(item.get("message") or item)
-            for item in errors
-        )
+        message = "; ".join(str(item.get("message") or item) for item in errors)
         raise RuntimeError(f"Cloudflare API error: {message}")
     if result.get("success") is False:
         raise RuntimeError("Cloudflare API request was unsuccessful")
@@ -196,8 +194,7 @@ def _subscription_period(
     active = [
         item
         for item in subscriptions
-        if not item.get("end_timestamp")
-        or _parse_time(item["end_timestamp"]) > now
+        if not item.get("end_timestamp") or _parse_time(item["end_timestamp"]) > now
     ]
     if not active:
         raise RuntimeError("Cloudflare returned no active billing subscription")
@@ -253,7 +250,7 @@ def r2_account_usage(
 
     if not config.cloudflare_analytics_configured:
         raise RuntimeError("Cloudflare account analytics is not configured")
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now = (now or datetime.now(UTC)).astimezone(UTC)
     period_start, period_end = _subscription_period(config, now)
     response = _request_json(
         f"{CLOUDFLARE_API}/graphql",

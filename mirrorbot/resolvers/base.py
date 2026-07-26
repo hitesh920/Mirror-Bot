@@ -80,7 +80,9 @@ def safe_name(value: str, fallback: str = "") -> str:
     return fallback if name in {"", ".", ".."} else name
 
 
-def resolved_source(original: Source, result: ResolvedResult, resolver_name: str) -> Source:
+def resolved_source(
+    original: Source, result: ResolvedResult, resolver_name: str
+) -> Source:
     metadata = dict(original.metadata)
     headers = {**(metadata.get("headers") or {}), **result.headers}
     cookies = {**(metadata.get("cookies") or {}), **result.cookies}

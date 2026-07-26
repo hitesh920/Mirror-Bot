@@ -5,7 +5,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from time import time
 
-
 RESTART_STATE_FILE = Path("/app/logs/.restart.json")
 MAX_RESTART_AGE = 10 * 60
 

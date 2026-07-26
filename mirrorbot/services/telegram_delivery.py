@@ -1,6 +1,6 @@
 import asyncio
-from hashlib import sha1
 import logging
+from hashlib import sha1
 from pathlib import Path
 from shutil import rmtree
 from time import monotonic
@@ -115,7 +115,8 @@ async def send_telegram_file_with_retry(*args, task: Task):
             if attempt >= TELEGRAM_SEND_RETRIES:
                 raise
             LOGGER.warning(
-                "Task %s: Telegram FloodWait while uploading; retrying in %ss attempt=%s",
+                "Task %s: Telegram FloodWait while uploading; "
+                "retrying in %ss attempt=%s",
                 task.short_id(),
                 wait_for,
                 attempt,
@@ -123,6 +124,26 @@ async def send_telegram_file_with_retry(*args, task: Task):
             await asyncio.sleep(max(wait_for, 1))
         except RPCError:
             raise
+    raise RuntimeError("Telegram upload retries exhausted")
+
+
+def upload_progress_callback(
+    task: Task,
+    client: Client,
+    total_size: int,
+    uploaded_before: int,
+    started: float,
+):
+    async def progress(current: int, _total: int) -> None:
+        if task.cancelled:
+            client.stop_transmission()
+        task.downloaded = min(total_size, uploaded_before + current)
+        task.progress = task.downloaded / total_size if total_size else 0
+        elapsed = monotonic() - started
+        task.speed = int(task.downloaded / elapsed) if elapsed else 0
+        task.eta = int((total_size - task.downloaded) / task.speed) if task.speed else 0
+
+    return progress
 
 
 async def split_file(
@@ -158,7 +179,9 @@ async def split_file(
                 while written < part_size:
                     if task.cancelled:
                         raise asyncio.CancelledError()
-                    chunk = await input_file.read(min(8 * 1024 * 1024, part_size - written))
+                    chunk = await input_file.read(
+                        min(8 * 1024 * 1024, part_size - written)
+                    )
                     if not chunk:
                         break
                     await output_file.write(chunk)
@@ -242,7 +265,8 @@ async def upload_to_telegram(
                 "Telegram dump channel is unavailable and no request chat is available"
             ) from exc
         LOGGER.warning(
-            "Task %s: Telegram dump channel upload failed before posting; falling back to request chat: %s",
+            "Task %s: Telegram dump channel upload failed before posting; "
+            "falling back to request chat: %s",
             task.short_id(),
             exc,
         )
@@ -302,24 +326,16 @@ async def _upload_to_telegram_chat(
             for index, item in enumerate(outgoing, start=1):
                 if task.cancelled:
                     raise asyncio.CancelledError()
-                part_suffix = (
-                    f" ({index}/{len(outgoing)})" if len(outgoing) > 1 else ""
-                )
+                part_suffix = f" ({index}/{len(outgoing)})" if len(outgoing) > 1 else ""
                 current_file = f"{relative_name}{part_suffix}"
                 task.current_file = current_file
-
-                async def progress(current: int, _total: int):
-                    if task.cancelled:
-                        client.stop_transmission()
-                    task.downloaded = min(total_size, uploaded + current)
-                    task.progress = task.downloaded / total_size if total_size else 0
-                    elapsed = monotonic() - started
-                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                    task.eta = (
-                        int((total_size - task.downloaded) / task.speed)
-                        if task.speed
-                        else 0
-                    )
+                progress = upload_progress_callback(
+                    task,
+                    client,
+                    total_size,
+                    uploaded,
+                    started,
+                )
 
                 caption = current_file[:1024]
                 metadata = MediaMetadata()
@@ -337,7 +353,8 @@ async def _upload_to_telegram_chat(
                             metadata.duration,
                         )
                 LOGGER.info(
-                    "Task %s: uploading Telegram file name=%r size=%s type=%s thumb=%s duration=%s size=%sx%s",
+                    "Task %s: uploading Telegram file name=%r size=%s type=%s "
+                    "thumb=%s duration=%s size=%sx%s",
                     task.short_id(),
                     current_file,
                     item.stat().st_size,

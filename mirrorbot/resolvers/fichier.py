@@ -30,7 +30,9 @@ class FichierResolver:
         password = ""
         if "::" in url:
             url, password = url.rsplit("::", 1)
-        async with session.post(url, data={"pass": password} if password else None) as response:
+        async with session.post(
+            url, data={"pass": password} if password else None
+        ) as response:
             if response.status == 404:
                 raise ResolverError("1fichier file was not found")
             response.raise_for_status()

@@ -10,6 +10,7 @@ from .logging_config import log_event
 
 LOGGER = logging.getLogger(__name__)
 
+
 class SourceType(str, Enum):
     DIRECT_URL = "direct_url"
     TELEGRAM_FILE = "telegram_file"

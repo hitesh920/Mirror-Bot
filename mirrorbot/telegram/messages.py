@@ -47,7 +47,10 @@ def result_list(title: str, items: list[str], links: list[str] | None = None) ->
     for index, name in enumerate(items[:limit]):
         safe_name = escape(name[:120])
         if links and index < len(links) and links[index]:
-            lines.append(f'<a href="{escape(links[index], quote=True)}">Open</a> - <code>{safe_name}</code>')
+            lines.append(
+                f'<a href="{escape(links[index], quote=True)}">Open</a> - '
+                f"<code>{safe_name}</code>"
+            )
         else:
             lines.append(f"<code>{safe_name}</code>")
     if len(items) > limit:
@@ -107,5 +110,7 @@ def completion_message(task) -> str:
             warning_list(task.processing_warnings),
         ]
     else:
-        raise ValueError(f"Unsupported completion destination: {task.destination.value}")
+        raise ValueError(
+            f"Unsupported completion destination: {task.destination.value}"
+        )
     return "\n".join(section for section in sections if section)

@@ -33,9 +33,7 @@ class TaskManager:
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
             self.qb,
-            public_base_url(
-                config.torrent_selection_port, config.public_base_url
-            ),
+            public_base_url(config.torrent_selection_port, config.public_base_url),
             config.torrent_selection_port,
             config.torrent_selection_timeout,
         )
@@ -100,14 +98,10 @@ class TaskManager:
         on_selector_done=None,
     ) -> Path:
         if task.source.type == SourceType.TELEGRAM_FILE:
-            return await download_telegram_file(
-                task, telegram_reply, telegram_client
-            )
+            return await download_telegram_file(task, telegram_reply, telegram_client)
         if task.source.type == SourceType.TORRENT_FILE:
             torrent_file = (
-                await download_telegram_file(
-                    task, telegram_reply, telegram_client
-                )
+                await download_telegram_file(task, telegram_reply, telegram_client)
                 if telegram_reply is not None
                 else None
             )
@@ -197,18 +191,12 @@ class TaskManager:
             rmtree(path, ignore_errors=True)
 
     @staticmethod
-    def _start_processing_phase(
-        task: Task, phase: TaskPhase, path: Path
-    ) -> None:
+    def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
         task.transition(phase, path.name)
         task.size = (
             path.stat().st_size
             if path.is_file()
-            else sum(
-                item.stat().st_size
-                for item in path.rglob("*")
-                if item.is_file()
-            )
+            else sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
         )
         task.downloaded = 0
         task.progress = 0
@@ -247,9 +235,7 @@ class TaskManager:
                 break
             except Exception:
                 if attempt >= attempts:
-                    LOGGER.exception(
-                        "Could not inspect qBittorrent for orphaned tasks"
-                    )
+                    LOGGER.exception("Could not inspect qBittorrent for orphaned tasks")
                     return 0
                 await asyncio.sleep(1)
         removed = 0
@@ -287,9 +273,7 @@ class TaskManager:
         return await operation
 
     @asynccontextmanager
-    async def _queue_slot(
-        self, semaphore: asyncio.Semaphore, task: Task
-    ):
+    async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):
         self._raise_if_cancelled(task)
         acquire = asyncio.create_task(semaphore.acquire())
         cancelled = asyncio.create_task(task.cancel_event.wait())

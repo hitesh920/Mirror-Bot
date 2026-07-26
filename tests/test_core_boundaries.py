@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.header import Header
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,8 +31,12 @@ from mirrorbot.core.models import (
 from mirrorbot.core.parser import parse_add_text, replied_link
 from mirrorbot.core.source_detector import detect_source
 from mirrorbot.downloaders.direct import retryable_direct_error
-from mirrorbot.downloaders.torrent import selected_torrent_size
+from mirrorbot.downloaders.torrent import (
+    selected_torrent_size,
+    torrent_content_path,
+)
 from mirrorbot.downloaders.torrent_selector import TorrentSelector
+from mirrorbot.downloaders.ytdlp import output_template, select_download_result
 from mirrorbot.services import media_metadata, r2_delivery, telegram_delivery
 from mirrorbot.services.cloudflare_analytics import (
     billing_period,
@@ -51,11 +55,13 @@ from mirrorbot.services.r2_delivery import (
     object_key,
     search_objects,
 )
+from mirrorbot.services.runtime import RuntimeCoordinator
 from mirrorbot.services.task_manager import MAX_TERMINAL_TASKS, TaskManager
 from mirrorbot.services.telegram_delivery import (
     telegram_chat_id,
     telegram_message_link,
     upload_files,
+    upload_progress_callback,
     upload_to_telegram,
 )
 from mirrorbot.telegram.keyboards import completion_buttons, destination_buttons
@@ -76,8 +82,32 @@ def make_task() -> Task:
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("TASK_LIMIT", "many", "must be an integer"),
+        ("TORRENT_SELECTION_PORT", "70000", "between 1 and 65535"),
+        ("TORRENT_SELECTION_TIMEOUT", "0", "at least 1"),
+        ("R2_AUTO_DELETE_SECONDS", "-1", "at least 0"),
+    ],
+)
+def test_config_rejects_invalid_numeric_settings(
+    monkeypatch,
+    name,
+    value,
+    message,
+):
+    monkeypatch.setenv("ENABLE_TELEGRAM_UI", "false")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(RuntimeError, match=message):
+        Config.load()
+
+
 def test_parse_add_text_flags():
-    link, options = parse_add_text("/add https://example.com/a.zip -zp secret -e -n custom")
+    link, options = parse_add_text(
+        "/add https://example.com/a.zip -zp secret -e -n custom"
+    )
     assert link == "https://example.com/a.zip"
     assert options.zip is True
     assert options.zip_password == "secret"
@@ -200,15 +230,15 @@ def test_cloudflare_operation_classes_follow_r2_pricing():
 
 
 def test_cloudflare_billing_period_uses_monthly_anchor():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    anchor = datetime(2026, 8, 25, tzinfo=timezone.utc)
-    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
-    start = datetime(2026, 7, 25, tzinfo=timezone.utc)
+    anchor = datetime(2026, 8, 25, tzinfo=UTC)
+    now = datetime(2026, 7, 26, tzinfo=UTC)
+    start = datetime(2026, 7, 25, tzinfo=UTC)
 
     assert billing_period(anchor, now, start) == (
         start,
-        datetime(2026, 8, 25, tzinfo=timezone.utc),
+        datetime(2026, 8, 25, tzinfo=UTC),
     )
 
 
@@ -240,9 +270,9 @@ def test_upload_tree_rejects_symbolic_links(tmp_path):
 
 
 def test_mobile_action_bars_reserve_list_space():
-    torrent_page_source = Path(
-        "mirrorbot/downloaders/torrent_selector.py"
-    ).read_text(encoding="utf-8")
+    torrent_page_source = Path("mirrorbot/downloaders/torrent_selector.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "--selectionbar-height" in torrent_page_source
     assert "ResizeObserver(syncSelectionSpace)" in torrent_page_source
@@ -379,10 +409,7 @@ def test_folder_page_copy_all_uses_basenames_and_original_links():
     assert 'data-file-name="Season 1/Episodes/one.mkv"' not in page
     assert "item.dataset.fileName" in page
     assert "item.dataset.fileUrl" in page
-    assert (
-        'data-file-url="https://r2.example/one?signature=1&amp;download=yes"'
-        in page
-    )
+    assert 'data-file-url="https://r2.example/one?signature=1&amp;download=yes"' in page
 
 
 def test_r2_search_returns_stored_original_link_without_presigning(monkeypatch):
@@ -436,9 +463,7 @@ def test_folder_delete_scope_includes_every_task_object(monkeypatch):
     monkeypatch.setattr(
         r2_delivery,
         "list_objects",
-        lambda _config, prefix=None: objects
-        if prefix == "uploads/task/"
-        else [],
+        lambda _config, prefix=None: objects if prefix == "uploads/task/" else [],
     )
 
     result = delete_scope(config, key)
@@ -450,7 +475,7 @@ def test_folder_delete_scope_includes_every_task_object(monkeypatch):
 
 
 def test_r2_expiry_only_deletes_old_objects(monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     config = SimpleNamespace(r2_configured=True, r2_auto_delete_seconds=86400)
     objects = [
         {"Key": "uploads/old", "LastModified": now - timedelta(days=2)},
@@ -587,6 +612,7 @@ def test_container_shutdown_keeps_qbittorrent_alive_for_bot_cleanup():
 
     assert 'kill -TERM "$bot_pid"' in shutdown_block
     assert '"$qbit_pid"' not in shutdown_block
+    assert 'wait -n -p first_pid "$bot_pid" "$qbit_pid"' in script
     assert script.index('wait "$bot_pid"') < script.index('kill -TERM "$qbit_pid"')
 
 
@@ -598,6 +624,76 @@ def test_selected_torrent_size_uses_current_priorities():
     ]
 
     assert selected_torrent_size(files) == 500
+
+
+def test_torrent_content_path_must_remain_inside_task_workspace(tmp_path):
+    task = make_task()
+    task.work_dir = tmp_path / "task"
+    task.work_dir.mkdir()
+
+    assert (
+        torrent_content_path(
+            task,
+            {"content_path": str(task.work_dir / "movie.mkv")},
+        )
+        == task.work_dir / "movie.mkv"
+    )
+    with pytest.raises(ValueError, match="outside"):
+        torrent_content_path(
+            task,
+            {"content_path": str(tmp_path / "other" / "movie.mkv")},
+        )
+
+
+def test_ytdlp_custom_name_cannot_escape_task_workspace(tmp_path):
+    task = make_task()
+    task.work_dir = tmp_path / "task"
+    task.options.name = "../../outside"
+
+    template = output_template(task)
+
+    assert template.parent == task.work_dir
+    assert template.name == "outside.%(ext)s"
+
+
+def test_ytdlp_multiple_outputs_return_the_whole_workspace(tmp_path):
+    first = tmp_path / "one.mp4"
+    second = tmp_path / "two.mp4"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+
+    assert select_download_result(tmp_path, set()) == tmp_path
+
+
+@pytest.mark.asyncio
+async def test_telegram_upload_progress_binds_completed_bytes():
+    task = make_task()
+    client = SimpleNamespace(stop_transmission=lambda: None)
+    first = upload_progress_callback(task, client, 1_000, 100, 0)
+    second = upload_progress_callback(task, client, 1_000, 600, 0)
+
+    await first(50, 100)
+    assert task.downloaded == 150
+    await second(50, 100)
+    assert task.downloaded == 650
+
+
+@pytest.mark.asyncio
+async def test_runtime_shutdown_continues_after_component_failures():
+    manager = SimpleNamespace(
+        shutdown=AsyncMock(side_effect=RuntimeError("manager failed"))
+    )
+    background = SimpleNamespace(
+        close=AsyncMock(side_effect=RuntimeError("background failed"))
+    )
+    cleanup = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    runtime = RuntimeCoordinator(manager, background, timeout=7)
+
+    await runtime.shutdown([cleanup])
+
+    manager.shutdown.assert_awaited_once_with(7)
+    cleanup.assert_awaited_once()
+    background.close.assert_awaited_once_with(7)
 
 
 def test_terminal_transition_is_not_overwritten():
@@ -643,13 +739,17 @@ def test_direct_retry_classifier():
 @pytest.mark.asyncio
 async def test_probe_media_reads_video_metadata(monkeypatch):
     async def fake_run(*_args, timeout=60):
-        return 0, (
-            '{"format":{"duration":"42.4","tags":{"artist":"A","title":"T"}},'
-            '"streams":['
-            '{"codec_type":"video","codec_name":"h264","width":1920,"height":1080},'
-            '{"codec_type":"audio","codec_name":"aac"}'
-            ']}'
-        ), ""
+        return (
+            0,
+            (
+                '{"format":{"duration":"42.4","tags":{"artist":"A","title":"T"}},'
+                '"streams":['
+                '{"codec_type":"video","codec_name":"h264","width":1920,"height":1080},'
+                '{"codec_type":"audio","codec_name":"aac"}'
+                "]}"
+            ),
+            "",
+        )
 
     monkeypatch.setattr(media_metadata, "_run_command", fake_run)
 
@@ -684,8 +784,12 @@ async def test_torrent_selector_tracks_multiple_pending_selections():
     selector._start_server = AsyncMock()
     selector._stop_server = AsyncMock()
 
-    first = asyncio.create_task(selector.select("hash-one", [{"index": 0, "name": "a.bin"}]))
-    second = asyncio.create_task(selector.select("hash-two", [{"index": 0, "name": "b.bin"}]))
+    first = asyncio.create_task(
+        selector.select("hash-one", [{"index": 0, "name": "a.bin"}])
+    )
+    second = asyncio.create_task(
+        selector.select("hash-two", [{"index": 0, "name": "b.bin"}])
+    )
 
     for _ in range(20):
         if selector.get("hash-one") and selector.get("hash-two"):

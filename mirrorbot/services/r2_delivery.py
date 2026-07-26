@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from email.header import decode_header
 from html import escape
 from pathlib import Path, PurePosixPath
@@ -63,10 +64,8 @@ async def cancellable_thread(function, /, *args, **kwargs):
     try:
         return await asyncio.shield(job)
     except asyncio.CancelledError:
-        try:
+        with suppress(Exception):
             await job
-        except Exception:
-            pass
         raise
 
 
@@ -105,8 +104,7 @@ def generate_download_url(client, config: Config, key: str) -> str:
 def folder_page_key(config: Config, task: Task, name: str) -> str:
     safe_name = PurePosixPath(name.replace("\\", "/")).name or "folder"
     return (
-        f"{normalize_prefix(config.r2_prefix)}{task.id}/"
-        f"{safe_name}{FOLDER_PAGE_SUFFIX}"
+        f"{normalize_prefix(config.r2_prefix)}{task.id}/{safe_name}{FOLDER_PAGE_SUFFIX}"
     )
 
 
@@ -143,9 +141,7 @@ def upload_metadata(
         "mirror-link": download_url,
     }
     if config.r2_auto_delete_seconds > 0:
-        metadata["expires-at"] = str(
-            int(time()) + config.r2_auto_delete_seconds
-        )
+        metadata["expires-at"] = str(int(time()) + config.r2_auto_delete_seconds)
     return metadata
 
 
@@ -203,7 +199,7 @@ span{{overflow-wrap:anywhere}}small{{color:#94a3b8}}
 <button id="copy-all" type="button">Copy all</button>
 <span id="copy-status" role="status" aria-live="polite"></span>
 </div>
-<ul>{''.join(rows)}</ul>
+<ul>{"".join(rows)}</ul>
 </main>
 <script>
 const copyButton = document.getElementById("copy-all");
@@ -328,9 +324,9 @@ class R2Uploader:
                 )
                 self.task.result_links = [page_url]
             else:
-                self.task.result_links = [
-                    uploaded_files[0][1]
-                ] if uploaded_files else []
+                self.task.result_links = (
+                    [uploaded_files[0][1]] if uploaded_files else []
+                )
             self.task.downloaded = self.total_size
             self.task.progress = 1
             self.task.eta = 0
@@ -481,11 +477,7 @@ class R2Uploader:
 
 def list_objects(config: Config, prefix: str | None = None) -> list[dict]:
     client = r2_client(config)
-    search_prefix = (
-        normalize_prefix(config.r2_prefix)
-        if prefix is None
-        else prefix
-    )
+    search_prefix = normalize_prefix(config.r2_prefix) if prefix is None else prefix
     objects: list[dict] = []
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(
@@ -519,9 +511,7 @@ def search_objects(config: Config, query: str, limit: int = 100) -> list[dict]:
         return []
     client = r2_client(config)
     results = [
-        item
-        for item in list_objects(config)
-        if needle in item["Key"].casefold()
+        item for item in list_objects(config) if needle in item["Key"].casefold()
     ]
     results.sort(
         key=lambda item: (
@@ -535,9 +525,7 @@ def search_objects(config: Config, query: str, limit: int = 100) -> list[dict]:
             Key=item["Key"],
         )
         metadata = response.get("Metadata", {})
-        item["url"] = decode_metadata_value(
-            metadata.get("mirror-link", "")
-        )
+        item["url"] = decode_metadata_value(metadata.get("mirror-link", ""))
         item["kind"] = metadata.get("mirror-kind", "file")
         item["name"] = display_name_for_key(item["Key"])
     return results[:limit]
@@ -604,14 +592,16 @@ def key_from_input(config: Config, value: str) -> str:
     key = raw.lstrip("/")
     prefix = normalize_prefix(config.r2_prefix)
     if not key.startswith(prefix) or key == prefix:
-        raise ValueError(f"R2 object must be inside the {prefix or 'configured'} prefix")
+        raise ValueError(
+            f"R2 object must be inside the {prefix or 'configured'} prefix"
+        )
     return key
 
 
 def delete_expired_objects(config: Config) -> int:
     if not config.r2_configured or config.r2_auto_delete_seconds <= 0:
         return 0
-    cutoff = datetime.now(timezone.utc).timestamp() - config.r2_auto_delete_seconds
+    cutoff = datetime.now(UTC).timestamp() - config.r2_auto_delete_seconds
     keys = [
         item["Key"]
         for item in list_objects(config)

@@ -15,12 +15,20 @@ shutdown() {
 trap shutdown TERM INT
 
 set +e
-while kill -0 "$bot_pid" 2>/dev/null; do
-  wait "$bot_pid"
-  bot_status=$?
+first_pid=""
+while [[ -z "$first_pid" ]]; do
+  wait -n -p first_pid "$bot_pid" "$qbit_pid"
+  first_status=$?
 done
-wait "$bot_pid" 2>/dev/null
-bot_status=${bot_status:-$?}
+
+if [[ "$first_pid" == "$qbit_pid" ]]; then
+  kill -TERM "$bot_pid" 2>/dev/null || true
+  wait "$bot_pid" 2>/dev/null || true
+  bot_status=$first_status
+else
+  bot_status=$first_status
+fi
+
 kill -TERM "$qbit_pid" 2>/dev/null || true
 wait "$qbit_pid" 2>/dev/null || true
 exit "$bot_status"

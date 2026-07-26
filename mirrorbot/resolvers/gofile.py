@@ -30,12 +30,11 @@ class GoFileResolver:
         if account.get("status") != "ok":
             raise ResolverError("Gofile could not create a guest account")
         token = account["data"]["token"]
+        token_payload = f"{USER_AGENT}::en-US::{token}::{int(time()) // 14400}::gf2026x"
         headers = {
             "Authorization": f"Bearer {token}",
             "X-BL": "en-US",
-            "X-Website-Token": sha256(
-                f"{USER_AGENT}::en-US::{token}::{int(time()) // 14400}::gf2026x".encode()
-            ).hexdigest(),
+            "X-Website-Token": sha256(token_payload.encode()).hexdigest(),
         }
         collection = ResolvedCollection(
             title=content_id,
@@ -68,7 +67,9 @@ class GoFileResolver:
             "error-notPublic": "Gofile content is not public",
         }
         if status != "ok":
-            raise ResolverError(errors.get(status, f"Gofile returned {status or 'an error'}"))
+            raise ResolverError(
+                errors.get(status, f"Gofile returned {status or 'an error'}")
+            )
         data = payload["data"]
         if collection.title == content_id:
             collection.title = data.get("name") or content_id
@@ -79,7 +80,13 @@ class GoFileResolver:
             name = item.get("name") or item.get("id", "unnamed")
             if item.get("type") == "folder":
                 if item.get("public", True):
-                    await self._collect(item["id"], f"{path}/{name}".strip("/"), collection, session, headers)
+                    await self._collect(
+                        item["id"],
+                        f"{path}/{name}".strip("/"),
+                        collection,
+                        session,
+                        headers,
+                    )
                 continue
             collection.files.append(
                 ResolvedFile(

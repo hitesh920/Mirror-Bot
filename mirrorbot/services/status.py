@@ -33,7 +33,11 @@ def field(label: str, value: str) -> str:
 
 def task_status(task: Task, number: int) -> str:
     name = (task.name or task.source.type.value).replace("\n", " ")[:70]
-    lines = [f"<b>{number}.{escape(task.phase.value.title())}:</b> <code>{escape(name)}</code>"]
+    heading = (
+        f"<b>{number}.{escape(task.phase.value.title())}:</b> "
+        f"<code>{escape(name)}</code>"
+    )
+    lines = [heading]
     current_file = task.current_file.replace("\n", " ")[:70]
     if current_file and current_file != name:
         lines.append(field("Current file", current_file))
@@ -55,10 +59,7 @@ def task_status(task: Task, number: int) -> str:
         TaskPhase.DELIVERING,
         TaskPhase.UPLOADING,
     }:
-        if task.size:
-            percent = f"{task.progress * 100:.1f}%"
-        else:
-            percent = "--"
+        percent = f"{task.progress * 100:.1f}%" if task.size else "--"
         lines.append(f"<code>{progress_bar(task.progress)}</code> <b>{percent}</b>")
         if task.phase == TaskPhase.UPLOADING:
             processed_label = "Uploaded"
@@ -66,7 +67,9 @@ def task_status(task: Task, number: int) -> str:
             processed_label = "Processed"
         lines.append(field(processed_label, human_size(task.downloaded)))
         lines.append(field("Size", human_size(task.size) if task.size else "Unknown"))
-        lines.append(field("Speed", f"{human_size(task.speed)}/s" if task.speed else "-"))
+        lines.append(
+            field("Speed", f"{human_size(task.speed)}/s" if task.speed else "-")
+        )
         lines.append(field("ETA", human_time(task.eta)))
     lines.append(field("ID", task.short_id()))
     return "\n".join(lines)

@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -58,7 +59,11 @@ async def resolve_source(source: Source) -> Source:
     async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
         for _ in range(3):
             resolver = next(
-                (candidate for candidate in RESOLVERS if candidate.supports(current.value)),
+                (
+                    candidate
+                    for candidate in RESOLVERS
+                    if candidate.supports(current.value)
+                ),
                 None,
             )
             if resolver is None:
@@ -76,7 +81,7 @@ async def resolve_source(source: Source) -> Source:
             resolved_target = (
                 f"collection:{len(result.files)}"
                 if isinstance(result, ResolvedCollection)
-                else result.url
+                else urlparse(result.url).hostname or "unknown-host"
             )
             LOGGER.info(
                 "Resolved direct-host link resolver=%s target=%s",

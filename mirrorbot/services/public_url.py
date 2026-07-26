@@ -33,7 +33,9 @@ def detect_public_host() -> str:
         LOGGER.warning("Using local network host %s for public web links", host)
         return host
     except OSError as exc:
-        LOGGER.warning("Could not detect public host, falling back to localhost: %s", exc)
+        LOGGER.warning(
+            "Could not detect public host, falling back to localhost: %s", exc
+        )
         return "localhost"
 
 
@@ -54,6 +56,8 @@ def public_base_url(port: int, override: str = "") -> str:
             if parsed.password:
                 auth += f":{parsed.password}"
             netloc = f"{auth}@{netloc}"
-        return urlunparse((scheme, netloc, parsed.path.rstrip("/"), "", "", "")).rstrip("/")
+        return urlunparse((scheme, netloc, parsed.path.rstrip("/"), "", "", "")).rstrip(
+            "/"
+        )
 
     return f"http://{_format_host(detect_public_host())}:{port}"

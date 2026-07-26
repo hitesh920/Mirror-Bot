@@ -38,7 +38,11 @@ class ExpiringStore(Generic[T]):
 
     def pop_expired(self) -> list[tuple[str, T]]:
         now = monotonic()
-        expired = [(key, item.value) for key, item in self._items.items() if item.expires_at <= now]
+        expired = [
+            (key, item.value)
+            for key, item in self._items.items()
+            if item.expires_at <= now
+        ]
         for key, _ in expired:
             self._items.pop(key, None)
         return expired

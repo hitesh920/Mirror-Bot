@@ -9,7 +9,28 @@ def _int(name: str, default: int = 0) -> int:
     value = getenv(name)
     if value is None or value == "":
         return default
-    return int(value)
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
+def _bounded_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    value = _int(name, default)
+    if value < minimum or (maximum is not None and value > maximum):
+        expected = (
+            f"between {minimum} and {maximum}"
+            if maximum is not None
+            else f"at least {minimum}"
+        )
+        raise RuntimeError(f"{name} must be {expected}")
+    return value
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -56,12 +77,14 @@ class Config:
         enable_telegram_ui = _bool("ENABLE_TELEGRAM_UI", True)
         required = []
         if enable_telegram_ui:
-            required.extend([
-                "BOT_TOKEN",
-                "OWNER_ID",
-                "TELEGRAM_API_ID",
-                "TELEGRAM_API_HASH",
-            ])
+            required.extend(
+                [
+                    "BOT_TOKEN",
+                    "OWNER_ID",
+                    "TELEGRAM_API_ID",
+                    "TELEGRAM_API_HASH",
+                ]
+            )
         missing = [key for key in required if not getenv(key)]
         if missing:
             raise RuntimeError(f"Missing required config: {', '.join(missing)}")
@@ -71,20 +94,34 @@ class Config:
             owner_id=_int("OWNER_ID"),
             telegram_api_id=_int("TELEGRAM_API_ID"),
             telegram_api_hash=getenv("TELEGRAM_API_HASH", ""),
-            task_limit=max(1, _int("TASK_LIMIT", 10)),
-            status_update_interval=max(1, _int("STATUS_UPDATE_INTERVAL", 10)),
+            task_limit=_bounded_int("TASK_LIMIT", 10, minimum=1),
+            status_update_interval=_bounded_int(
+                "STATUS_UPDATE_INTERVAL",
+                10,
+                minimum=1,
+            ),
             public_base_url=getenv("PUBLIC_BASE_URL", ""),
-            torrent_selection_port=_int("TORRENT_SELECTION_PORT", 8001),
-            torrent_selection_timeout=_int("TORRENT_SELECTION_TIMEOUT", 300),
+            torrent_selection_port=_bounded_int(
+                "TORRENT_SELECTION_PORT",
+                8001,
+                minimum=1,
+                maximum=65535,
+            ),
+            torrent_selection_timeout=_bounded_int(
+                "TORRENT_SELECTION_TIMEOUT",
+                300,
+                minimum=1,
+            ),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
             r2_endpoint_url=getenv("R2_ENDPOINT_URL", "").strip().rstrip("/"),
             r2_bucket=getenv("R2_BUCKET", "").strip(),
             r2_access_key_id=getenv("R2_ACCESS_KEY_ID", "").strip(),
             r2_secret_access_key=getenv("R2_SECRET_ACCESS_KEY", "").strip(),
             r2_prefix=getenv("R2_PREFIX", "uploads/").strip(),
-            r2_auto_delete_seconds=max(
-                0,
-                _int("R2_AUTO_DELETE_SECONDS", 172800),
+            r2_auto_delete_seconds=_bounded_int(
+                "R2_AUTO_DELETE_SECONDS",
+                172800,
+                minimum=0,
             ),
             cloudflare_account_id=getenv(
                 "CLOUDFLARE_ACCOUNT_ID",
@@ -111,7 +148,5 @@ class Config:
     @property
     def cloudflare_analytics_configured(self) -> bool:
         return bool(
-            self.cloudflare_account_id
-            and self.cloudflare_api_token
-            and self.r2_bucket
+            self.cloudflare_account_id and self.cloudflare_api_token and self.r2_bucket
         )

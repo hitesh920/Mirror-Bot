@@ -7,7 +7,9 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Telegram", callback_data=f"dest:telegram:{token}"),
+                InlineKeyboardButton(
+                    "Telegram", callback_data=f"dest:telegram:{token}"
+                ),
                 InlineKeyboardButton("Cloudflare R2", callback_data=f"dest:r2:{token}"),
             ],
         ]
@@ -16,7 +18,12 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
 
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Video", callback_data=f"ytkind:video:{token}"), InlineKeyboardButton("Audio", callback_data=f"ytkind:audio:{token}")]]
+        [
+            [
+                InlineKeyboardButton("Video", callback_data=f"ytkind:video:{token}"),
+                InlineKeyboardButton("Audio", callback_data=f"ytkind:audio:{token}"),
+            ]
+        ]
     )
 
 
