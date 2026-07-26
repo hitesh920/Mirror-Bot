@@ -327,6 +327,25 @@ def test_folder_page_contains_every_original_file_link():
     assert "Automatically deleted after 2 days" in page
 
 
+def test_folder_page_displays_adaptive_decimal_file_sizes():
+    page = build_folder_page(
+        "Mixed sizes",
+        [
+            ("small.txt", "https://r2.example/small", 999),
+            ("kilobytes.bin", "https://r2.example/kilobytes", 1_500),
+            ("megabytes.bin", "https://r2.example/megabytes", 711_052_006),
+            ("gigabytes.bin", "https://r2.example/gigabytes", 3_400_000_000),
+        ],
+        172800,
+    ).decode()
+
+    assert "<small>999 B</small>" in page
+    assert "<small>1.5 KB</small>" in page
+    assert "<small>711.1 MB</small>" in page
+    assert "<small>3.4 GB</small>" in page
+    assert "711,052,006 bytes" not in page
+
+
 def test_folder_page_copy_all_uses_basenames_and_original_links():
     page = build_folder_page(
         "Season 1",
