@@ -157,7 +157,7 @@ def build_folder_page(
             f'<li data-file-name="{escape(file_name, quote=True)}" '
             f'data-file-url="{escape(url, quote=True)}">'
             f'<a href="{escape(url, quote=True)}">Download</a>'
-            f"<span>{escape(display_name)}</span>"
+            f"<span>{escape(file_name)}</span>"
             f"<small>{human_size(size)}</small>"
             "</li>"
         )

@@ -216,7 +216,8 @@ error.
 - Large files use multipart uploads.
 - A single-file upload returns one download button.
 - A folder upload creates one private HTML landing page containing every file.
-- Folder pages include a **Copy all** action that copies each basename and link.
+- Folder pages display only file basenames and include a **Copy all** action
+  that copies each basename and link.
 - `/search` returns the link stored during upload; it does not generate a new
   link.
 - Links are signed for seven days, while objects are deleted after the

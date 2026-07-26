@@ -327,6 +327,7 @@ Single-file uploads return one download button.
 Folder uploads create one private HTML landing page. That page:
 
 - Lists every uploaded file.
+- Displays only each file's basename, without its stored folder path.
 - Uses each file's original stored link.
 - Shows decimal KB, MB, and GB sizes.
 - Includes a Copy all action using basenames rather than folder paths.

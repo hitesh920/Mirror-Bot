@@ -341,7 +341,7 @@ def test_r2_key_input_accepts_signed_url_and_rejects_outside_prefix():
         key_from_input(config, "other/file.bin")
 
 
-def test_folder_page_contains_every_original_file_link():
+def test_folder_page_contains_every_link_without_displaying_paths():
     page = build_folder_page(
         "Season 1",
         [
@@ -351,8 +351,10 @@ def test_folder_page_contains_every_original_file_link():
         172800,
     ).decode()
 
-    assert "Season 1/one.mkv" in page
-    assert "Season 1/two.mkv" in page
+    assert "<span>one.mkv</span>" in page
+    assert "<span>two.mkv</span>" in page
+    assert "Season 1/one.mkv" not in page
+    assert "Season 1/two.mkv" not in page
     assert "https://r2.example/one" in page
     assert "https://r2.example/two" in page
     assert "Automatically deleted after 2 days" in page
@@ -407,6 +409,9 @@ def test_folder_page_copy_all_uses_basenames_and_original_links():
     assert 'data-file-name="one.mkv"' in page
     assert 'data-file-name="two.mkv"' in page
     assert 'data-file-name="Season 1/Episodes/one.mkv"' not in page
+    assert "<span>one.mkv</span>" in page
+    assert "<span>two.mkv</span>" in page
+    assert "<span>Season 1/Episodes/one.mkv</span>" not in page
     assert "item.dataset.fileName" in page
     assert "item.dataset.fileUrl" in page
     assert 'data-file-url="https://r2.example/one?signature=1&amp;download=yes"' in page
