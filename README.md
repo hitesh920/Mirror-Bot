@@ -164,9 +164,10 @@ stable private download links, and removes objects older than
 Every bot-owned object is stored below `R2_PREFIX` and a task-specific UUID.
 Single-file uploads return one direct `Download` button. Folder uploads create
 one private folder page containing every original file link, so Telegram still
-shows only one `Download` button. `/search` returns the stored original link and
-never refreshes its lifetime. `/delete all` only removes the configured prefix
-and preserves the bucket.
+shows only one `Download` button. The folder page includes `Copy all`, which
+copies each basename and its original link without the folder path. `/search`
+returns the stored original link and never refreshes its lifetime. `/delete
+all` only removes the configured prefix and preserves the bucket.
 
 To include current-period Class A/Class B operations, total bucket storage, and
 billable usage in `/r2stats`, set `CLOUDFLARE_ACCOUNT_ID` and a read-only

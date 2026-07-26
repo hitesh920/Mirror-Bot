@@ -155,8 +155,10 @@ def build_folder_page(
 ) -> bytes:
     rows = []
     for display_name, url, size in files:
+        file_name = display_name.replace("\\", "/").rsplit("/", 1)[-1]
         rows.append(
-            "<li>"
+            f'<li data-file-name="{escape(file_name, quote=True)}" '
+            f'data-file-url="{escape(url, quote=True)}">'
             f'<a href="{escape(url, quote=True)}">Download</a>'
             f"<span>{escape(display_name)}</span>"
             f"<small>{size:,} bytes</small>"
@@ -179,6 +181,11 @@ def build_folder_page(
 body{{margin:0;background:#0f172a;color:#e2e8f0;font:16px system-ui,sans-serif}}
 main{{max-width:900px;margin:auto;padding:32px 18px}}
 h1{{margin:0 0 8px;font-size:1.7rem}}p{{color:#94a3b8;margin:0 0 24px}}
+.toolbar{{display:flex;align-items:center;gap:12px;margin:0 0 18px}}
+.toolbar button{{border:0;border-radius:8px;padding:9px 14px;background:#2563eb;
+color:#fff;font:inherit;font-weight:600;cursor:pointer}}
+.toolbar button:hover{{background:#1d4ed8}}.toolbar button:focus-visible{{outline:3px solid #60a5fa}}
+#copy-status{{color:#94a3b8;font-size:.9rem}}
 ul{{list-style:none;padding:0;margin:0;display:grid;gap:10px}}
 li{{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;
 background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px}}
@@ -190,8 +197,52 @@ span{{overflow-wrap:anywhere}}small{{color:#94a3b8}}
 <body><main>
 <h1>{escape(folder_name)}</h1>
 <p>{len(files)} file(s) · Automatically deleted after {escape(retention)}</p>
+<div class="toolbar">
+<button id="copy-all" type="button">Copy all</button>
+<span id="copy-status" role="status" aria-live="polite"></span>
+</div>
 <ul>{''.join(rows)}</ul>
-</main></body>
+</main>
+<script>
+const copyButton = document.getElementById("copy-all");
+const copyStatus = document.getElementById("copy-status");
+
+async function writeClipboard(text) {{
+  if (navigator.clipboard && window.isSecureContext) {{
+    await navigator.clipboard.writeText(text);
+    return;
+  }}
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  if (!copied) throw new Error("Clipboard copy was rejected");
+}}
+
+copyButton.addEventListener("click", async () => {{
+  const entries = Array.from(document.querySelectorAll("li[data-file-url]"));
+  const text = entries.map(
+    (item) => item.dataset.fileName + "\\n" + item.dataset.fileUrl
+  ).join("\\n\\n");
+  try {{
+    await writeClipboard(text);
+    copyButton.textContent = "Copied!";
+    copyStatus.textContent = `${{entries.length}} file links copied`;
+    setTimeout(() => {{
+      copyButton.textContent = "Copy all";
+      copyStatus.textContent = "";
+    }}, 2200);
+  }} catch (error) {{
+    copyStatus.textContent = "Copy failed. Allow clipboard access and try again.";
+  }}
+}});
+</script>
+</body>
 </html>"""
     return document.encode("utf-8")
 

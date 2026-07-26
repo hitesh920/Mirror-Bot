@@ -327,6 +327,36 @@ def test_folder_page_contains_every_original_file_link():
     assert "Automatically deleted after 2 days" in page
 
 
+def test_folder_page_copy_all_uses_basenames_and_original_links():
+    page = build_folder_page(
+        "Season 1",
+        [
+            (
+                "Season 1/Episodes/one.mkv",
+                "https://r2.example/one?signature=1&download=yes",
+                10,
+            ),
+            (
+                r"Season 1\Extras\two.mkv",
+                "https://r2.example/two",
+                20,
+            ),
+        ],
+        172800,
+    ).decode()
+
+    assert '<button id="copy-all" type="button">Copy all</button>' in page
+    assert 'data-file-name="one.mkv"' in page
+    assert 'data-file-name="two.mkv"' in page
+    assert 'data-file-name="Season 1/Episodes/one.mkv"' not in page
+    assert "item.dataset.fileName" in page
+    assert "item.dataset.fileUrl" in page
+    assert (
+        'data-file-url="https://r2.example/one?signature=1&amp;download=yes"'
+        in page
+    )
+
+
 def test_r2_search_returns_stored_original_link_without_presigning(monkeypatch):
     config = SimpleNamespace(r2_bucket="mirror-bot")
     objects = [

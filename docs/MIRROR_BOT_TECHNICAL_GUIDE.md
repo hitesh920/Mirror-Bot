@@ -144,6 +144,7 @@ Cloudflare R2 buckets remain private. Large objects use multipart uploads and
 each successful object stores its original private GET link in object metadata.
 Search returns that stored link and never creates a replacement. Folder uploads
 also create one private HTML folder page containing every original file link.
+Its `Copy all` control copies basename/link pairs without including folder paths.
 Links are signed beyond the configured two-day retention, so users encounter
 object deletion rather than a separate link-expiry window. The sweeper lists
 only `R2_PREFIX`, permanently deletes objects older than the configured
