@@ -180,7 +180,8 @@ def build_folder_page(
 <style>
 body{{margin:0;background:#0f172a;color:#e2e8f0;font:16px system-ui,sans-serif}}
 main{{max-width:900px;margin:auto;padding:32px 18px}}
-h1{{margin:0 0 8px;font-size:1.7rem}}p{{color:#94a3b8;margin:0 0 24px}}
+h1{{margin:0 0 8px;font-size:1.7rem;overflow-wrap:anywhere}}
+p{{color:#94a3b8;margin:0 0 24px}}
 .toolbar{{display:flex;align-items:center;gap:12px;margin:0 0 18px}}
 .toolbar button{{border:0;border-radius:8px;padding:9px 14px;background:#2563eb;
 color:#fff;font:inherit;font-weight:600;cursor:pointer}}
