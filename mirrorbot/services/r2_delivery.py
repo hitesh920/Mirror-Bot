@@ -505,21 +505,84 @@ def object_info(config: Config, key: str) -> dict:
     }
 
 
-def search_objects(config: Config, query: str, limit: int = 100) -> list[dict]:
+def _task_group_key(config: Config, key: str) -> str:
+    prefix = normalize_prefix(getattr(config, "r2_prefix", ""))
+    relative = key.removeprefix(prefix)
+    task_id, separator, _ = relative.partition("/")
+    return task_id if separator else key
+
+
+def _task_objects(config: Config, objects: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {}
+    for item in objects:
+        group_key = _task_group_key(config, item["Key"])
+        groups.setdefault(group_key, []).append(item)
+    return groups
+
+
+def _folder_summary(page: dict, objects: list[dict]) -> dict:
+    summary = dict(page)
+    contents = [item for item in objects if not is_folder_page_key(item["Key"])]
+    summary["Size"] = sum(int(item.get("Size") or 0) for item in contents)
+    summary["ObjectCount"] = len(contents)
+    return summary
+
+
+def _all_uploads(config: Config, objects: list[dict]) -> list[dict]:
+    uploads: list[dict] = []
+    for group in _task_objects(config, objects).values():
+        folder_page = next(
+            (item for item in group if is_folder_page_key(item["Key"])),
+            None,
+        )
+        if folder_page is not None:
+            uploads.append(_folder_summary(folder_page, group))
+        else:
+            uploads.extend(dict(item) for item in group)
+
+    def modified_timestamp(item: dict) -> float:
+        modified = item.get("LastModified")
+        return modified.timestamp() if hasattr(modified, "timestamp") else 0
+
+    uploads.sort(key=modified_timestamp, reverse=True)
+    return uploads
+
+
+def search_objects(
+    config: Config,
+    query: str,
+    limit: int | None = 100,
+) -> list[dict]:
     needle = query.strip().casefold()
     if not needle:
         return []
     client = r2_client(config)
-    results = [
-        item for item in list_objects(config) if needle in item["Key"].casefold()
-    ]
-    results.sort(
-        key=lambda item: (
-            not is_folder_page_key(item["Key"]),
-            item["Key"].casefold(),
+    objects = list_objects(config)
+    if needle == "*":
+        results = _all_uploads(config, objects)
+    else:
+        groups = _task_objects(config, objects)
+        results = [
+            (
+                _folder_summary(
+                    item,
+                    groups.get(_task_group_key(config, item["Key"]), [item]),
+                )
+                if is_folder_page_key(item["Key"])
+                else dict(item)
+            )
+            for item in objects
+            if needle in item["Key"].casefold()
+        ]
+        results.sort(
+            key=lambda item: (
+                not is_folder_page_key(item["Key"]),
+                item["Key"].casefold(),
+            )
         )
-    )
-    for item in results[:limit]:
+
+    selected = results if limit is None else results[: max(0, limit)]
+    for item in selected:
         response = client.head_object(
             Bucket=config.r2_bucket,
             Key=item["Key"],
@@ -528,7 +591,7 @@ def search_objects(config: Config, query: str, limit: int = 100) -> list[dict]:
         item["url"] = decode_metadata_value(metadata.get("mirror-link", ""))
         item["kind"] = metadata.get("mirror-kind", "file")
         item["name"] = display_name_for_key(item["Key"])
-    return results[:limit]
+    return selected
 
 
 def delete_scope(config: Config, key: str) -> dict:

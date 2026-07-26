@@ -441,6 +441,63 @@ def test_r2_search_returns_stored_original_link_without_presigning(monkeypatch):
     assert results[0]["url"] == "https://original.example/link"
 
 
+def test_r2_search_wildcard_lists_uploads_grouped_newest_first(monkeypatch):
+    config = SimpleNamespace(r2_bucket="mirror-bot", r2_prefix="uploads/")
+    now = datetime(2026, 7, 26, tzinfo=UTC)
+    folder_page = "uploads/folder-task/Season 1.mirrorbot-folder.html"
+    single_file = "uploads/file-task/movie.mkv"
+    objects = [
+        {
+            "Key": "uploads/folder-task/Season 1/episode-01.mkv",
+            "Size": 100,
+            "LastModified": now - timedelta(minutes=3),
+        },
+        {
+            "Key": "uploads/folder-task/Season 1/episode-02.mkv",
+            "Size": 200,
+            "LastModified": now - timedelta(minutes=2),
+        },
+        {
+            "Key": folder_page,
+            "Size": 10,
+            "LastModified": now,
+        },
+        {
+            "Key": single_file,
+            "Size": 400,
+            "LastModified": now - timedelta(hours=1),
+        },
+    ]
+    metadata = {
+        folder_page: {
+            "mirror-link": "https://original.example/folder",
+            "mirror-kind": "folder",
+        },
+        single_file: {
+            "mirror-link": "https://original.example/file",
+            "mirror-kind": "file",
+        },
+    }
+    inspected = []
+
+    class Client:
+        def head_object(self, **kwargs):
+            inspected.append(kwargs["Key"])
+            return {"Metadata": metadata[kwargs["Key"]]}
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+
+    results = search_objects(config, "*", None)
+
+    assert [item["Key"] for item in results] == [folder_page, single_file]
+    assert results[0]["Size"] == 300
+    assert results[0]["ObjectCount"] == 2
+    assert results[0]["url"] == "https://original.example/folder"
+    assert results[1]["url"] == "https://original.example/file"
+    assert inspected == [folder_page, single_file]
+
+
 def test_r2_metadata_link_decoding_does_not_insert_fold_spaces():
     url = (
         "https://account.r2.cloudflarestorage.com/bucket/file?"

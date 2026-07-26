@@ -24,6 +24,7 @@ from ..services.status import human_size, human_time
 from ..telegram.state import ExpiringStore
 
 pending_deletes = ExpiringStore[dict](ttl_seconds=120)
+SEARCH_MESSAGE_LIMIT = 3_800
 
 
 def period_date(value) -> str:
@@ -41,6 +42,38 @@ def delete_buttons(token: str) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def search_result_line(index: int, item: dict) -> str:
+    name = item["name"]
+    kind = "Folder" if item.get("kind") == "folder" else "File"
+    size = human_size(int(item.get("Size") or 0))
+    if item["url"]:
+        return (
+            f'{index}. <a href="{escape(item["url"], quote=True)}">'
+            f"{escape(name[:100])}</a> — <code>{kind} · {size}</code>"
+        )
+    return (
+        f"{index}. <code>{escape(name[:100])}</code> — "
+        f"<code>{kind} · {size}</code>\n"
+        "<i>Original link unavailable for this older upload.</i>"
+    )
+
+
+def search_result_messages(results: list[dict], list_all: bool) -> list[str]:
+    label = "Cloudflare R2 uploads" if list_all else "Cloudflare R2 results"
+    header = f"<b>{label}:</b> <code>{len(results)}</code>"
+    continuation = f"<b>{label} continued</b>"
+    messages: list[str] = []
+    current = [header]
+    for index, item in enumerate(results, 1):
+        line = search_result_line(index, item)
+        if len("\n".join([*current, line])) > SEARCH_MESSAGE_LIMIT:
+            messages.append("\n".join(current))
+            current = [continuation]
+        current.append(line)
+    messages.append("\n".join(current))
+    return messages
 
 
 @app.on_message(filters.command("r2stats") & owner_filter)
@@ -117,17 +150,19 @@ async def search(_, message: Message):
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.reply(
-            "Usage: <code>/search &lt;name&gt;</code>",
+            "Usage: <code>/search &lt;name|*&gt;</code>",
             parse_mode=ParseMode.HTML,
         )
         return
+    query = parts[1].strip()
+    list_all = query == "*"
     progress = await message.reply("Searching Cloudflare R2...")
     try:
         results = await asyncio.to_thread(
             search_objects,
             config,
-            parts[1].strip(),
-            5,
+            query,
+            None if list_all else 5,
         )
     except Exception as exc:
         LOGGER.exception("Cloudflare R2 search failed")
@@ -139,27 +174,18 @@ async def search(_, message: Message):
     if not results:
         await progress.edit_text("No Cloudflare R2 results found.")
         return
-    lines = [f"<b>Cloudflare R2 results:</b> <code>{len(results)}</code>"]
-    for index, item in enumerate(results, 1):
-        name = item["name"]
-        kind = "Folder" if item.get("kind") == "folder" else "File"
-        size = human_size(int(item.get("Size") or 0))
-        if item["url"]:
-            lines.append(
-                f'{index}. <a href="{escape(item["url"], quote=True)}">'
-                f"{escape(name[:100])}</a> — <code>{kind} · {size}</code>"
-            )
-        else:
-            lines.append(
-                f"{index}. <code>{escape(name[:100])}</code> — "
-                f"<code>{kind} · {size}</code>\n"
-                "<i>Original link unavailable for this older upload.</i>"
-            )
+    messages = search_result_messages(results, list_all)
     await progress.edit_text(
-        "\n".join(lines),
+        messages[0],
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+    for text in messages[1:]:
+        await message.reply(
+            text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 @app.on_message(filters.command("delete") & owner_filter)

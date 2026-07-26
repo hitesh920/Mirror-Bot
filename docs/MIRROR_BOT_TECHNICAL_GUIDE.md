@@ -334,7 +334,9 @@ Folder uploads create one private HTML landing page. That page:
 Generated links are signed for seven days. The default object retention is two
 days, so object deletion is normally the effective access limit.
 
-`/search` returns links stored during upload and does not generate replacements.
+`/search <name>` returns links stored during upload and does not generate
+replacements. `/search *` lists every current upload newest-first, groups a
+folder as one result, and reports the combined size of its files.
 
 The in-process expiry sweeper:
 

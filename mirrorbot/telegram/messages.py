@@ -34,6 +34,7 @@ HELP_TEXT = "\n".join(
         "",
         "<b>Cloudflare R2</b>",
         "<code>/search &lt;name&gt;</code> - search current R2 uploads",
+        "<code>/search *</code> - list all current R2 uploads",
         "Uploads are automatically deleted after their configured retention.",
     ]
 )

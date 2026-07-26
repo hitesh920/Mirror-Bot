@@ -116,6 +116,7 @@ All commands are restricted to `OWNER_ID`.
 
 - `/r2stats` — Show stored objects, usage, operations, and billing-period data.
 - `/search <name>` — Search uploads and return their original stored links.
+- `/search *` — List every current upload, newest first.
 - `/delete <key-or-link>` — Permanently delete one file or folder after
   confirmation.
 - `/delete all` — Permanently delete everything under `R2_PREFIX` after
