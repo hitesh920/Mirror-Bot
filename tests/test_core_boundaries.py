@@ -18,6 +18,7 @@ from mirrorbot.core.errors import (
     TorrentMetadataTimeoutError,
     TorrentRemovedError,
 )
+from mirrorbot.core.formatting import human_size
 from mirrorbot.core.logging_config import sanitize_text
 from mirrorbot.core.models import (
     AddOptions,
@@ -344,6 +345,14 @@ def test_folder_page_displays_adaptive_decimal_file_sizes():
     assert "<small>711.1 MB</small>" in page
     assert "<small>3.4 GB</small>" in page
     assert "711,052,006 bytes" not in page
+
+
+def test_human_size_uses_decimal_units_everywhere():
+    assert human_size(999) == "999 B"
+    assert human_size(1_500) == "1.5 KB"
+    assert human_size(711_052_006) == "711.1 MB"
+    assert human_size(6_300_000_000) == "6.3 GB"
+    assert human_size(7_100_000_000_000) == "7.1 TB"
 
 
 def test_folder_page_copy_all_uses_basenames_and_original_links():

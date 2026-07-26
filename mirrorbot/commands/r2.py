@@ -26,15 +26,6 @@ from ..telegram.state import ExpiringStore
 pending_deletes = ExpiringStore[dict](ttl_seconds=120)
 
 
-def decimal_size(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1000 or unit == "TB":
-            return f"{value:.1f} {unit}"
-        value /= 1000
-    return f"{value:.1f} TB"
-
-
 def period_date(value) -> str:
     return f"{value.strftime('%b')} {value.day}, {value.year}"
 
@@ -96,7 +87,7 @@ async def r2stats(_, message: Message):
             ),
             (
                 f"<b>Total bucket storage:</b> "
-                f"<code>{decimal_size(analytics['bytes'])}</code>"
+                f"<code>{human_size(analytics['bytes'])}</code>"
             ),
             (
                 f"<b>Billable usage:</b> "

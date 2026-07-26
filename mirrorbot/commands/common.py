@@ -14,12 +14,18 @@ from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
 from ..app import (
-    HELP_TEXT, LOGGER, app, config, manager, owner_filter, telegram_status,
+    HELP_TEXT,
+    LOGGER,
+    app,
+    config,
+    manager,
+    owner_filter,
+    telegram_status,
 )
+from ..core.formatting import human_size
 from ..core.logging_config import create_log_export, log_event
 from ..services.restart_state import save_restart_state
 from ..services.speedtest import SpeedtestError, run_speedtest
-
 
 speedtest_lock = asyncio.Lock()
 
@@ -75,7 +81,7 @@ async def stats(_, message: Message):
         f"Uptime: {uptime}\n"
         f"CPU: {psutil.cpu_percent()}%\n"
         f"RAM: {psutil.virtual_memory().percent}%\n"
-        f"Workspace free: {disk.free // (1024 ** 3)} GiB\n"
+        f"Workspace free: {human_size(disk.free)}\n"
         f"Tasks: {len(manager.active_tasks())}"
     )
 

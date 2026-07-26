@@ -4,6 +4,7 @@ from pathlib import Path
 from time import monotonic
 
 from ..core.errors import DiskSpaceError, StalledTransferError
+from ..core.formatting import human_size
 from ..core.models import Task, TaskPhase
 
 GIB = 1024 ** 3
@@ -31,7 +32,7 @@ def ensure_disk_space(path: Path, required: int = 0) -> None:
     reserve = max(MIN_RESERVE, int(usage.total * RESERVE_RATIO))
     if usage.free - max(0, required) < reserve:
         raise DiskSpaceError(
-            f"Insufficient disk space: preserving {reserve / GIB:.1f} GiB free"
+            f"Insufficient disk space: preserving {human_size(reserve)} free"
         )
 
 

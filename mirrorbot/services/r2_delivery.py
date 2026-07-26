@@ -14,6 +14,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from ..core.config import Config
+from ..core.formatting import human_size
 from ..core.models import Task
 from ..downloaders.process import path_size
 from .paths import ensure_no_symlinks
@@ -148,18 +149,6 @@ def upload_metadata(
     return metadata
 
 
-def human_readable_size(size: int) -> str:
-    value = float(max(0, size))
-    units = ("B", "KB", "MB", "GB", "TB")
-    for unit in units:
-        if value < 1000 or unit == units[-1]:
-            if unit == "B":
-                return f"{int(value):,} {unit}"
-            return f"{value:.1f} {unit}"
-        value /= 1000
-    raise AssertionError("unreachable")
-
-
 def build_folder_page(
     folder_name: str,
     files: list[tuple[str, str, int]],
@@ -173,7 +162,7 @@ def build_folder_page(
             f'data-file-url="{escape(url, quote=True)}">'
             f'<a href="{escape(url, quote=True)}">Download</a>'
             f"<span>{escape(display_name)}</span>"
-            f"<small>{human_readable_size(size)}</small>"
+            f"<small>{human_size(size)}</small>"
             "</li>"
         )
     retention = (

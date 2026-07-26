@@ -1,15 +1,7 @@
 from html import escape
 
+from ..core.formatting import human_size
 from ..core.models import Task, TaskPhase
-
-
-def human_size(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
-            return f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} TiB"
 
 
 def human_time(seconds: int) -> str:
