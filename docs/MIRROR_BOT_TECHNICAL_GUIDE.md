@@ -350,8 +350,9 @@ folder as one result, and reports the combined size of its files.
 
 The in-process expiry sweeper:
 
-- Runs every 15 minutes.
+- Runs every hour.
 - Lists only objects under `R2_PREFIX`.
+- Caches folder-page expiry metadata until the object changes.
 - Deletes objects older than `R2_AUTO_DELETE_SECONDS`.
 - Does nothing when retention is set to `0`.
 

@@ -693,6 +693,53 @@ def test_r2_folder_expiry_uses_original_metadata_after_rewrite(monkeypatch):
     assert deleted == [expired_page]
 
 
+def test_r2_folder_expiry_metadata_is_cached_until_object_changes(monkeypatch):
+    now = datetime.now(UTC)
+    key = "uploads/task/folder.mirrorbot-folder.html"
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_auto_delete_seconds=86400,
+        r2_bucket="mirror-bot",
+    )
+    objects = [
+        {
+            "Key": key,
+            "ETag": '"version-1"',
+            "LastModified": now,
+        }
+    ]
+    head_calls = []
+
+    class Client:
+        def head_object(self, **kwargs):
+            head_calls.append(kwargs["Key"])
+            return {
+                "Metadata": {
+                    "expires-at": str(int((now + timedelta(days=1)).timestamp()))
+                }
+            }
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+    cache = {}
+
+    assert delete_expired_objects(config, cache) == 0
+    assert delete_expired_objects(config, cache) == 0
+    assert head_calls == [key]
+
+    objects[0]["LastModified"] = now + timedelta(seconds=1)
+    assert delete_expired_objects(config, cache) == 0
+    assert head_calls == [key, key]
+
+    objects.clear()
+    assert delete_expired_objects(config, cache) == 0
+    assert cache == {}
+
+
+def test_r2_expiry_sweeper_runs_hourly():
+    assert r2_delivery.EXPIRY_SWEEP_INTERVAL == 60 * 60
+
+
 @pytest.mark.asyncio
 async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypatch):
     source = tmp_path / "movie.bin"

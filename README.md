@@ -223,8 +223,9 @@ error.
 - Links are signed for seven days, while objects are deleted after the
   configured retention—two days by default—making deletion the effective
   access limit.
-- The expiry sweeper runs every 15 minutes and only manages objects under
-  `R2_PREFIX`.
+- The expiry sweeper runs hourly and only manages objects under `R2_PREFIX`.
+  Folder expiry metadata is cached until the object changes, avoiding repeated
+  R2 reads during routine scans.
 - `/delete all` removes bot-managed objects but preserves the bucket itself.
 
 You may also configure a matching R2 lifecycle rule as an additional

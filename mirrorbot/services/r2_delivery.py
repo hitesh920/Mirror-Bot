@@ -24,9 +24,10 @@ from .paths import ensure_no_symlinks
 LOGGER = logging.getLogger(__name__)
 MULTIPART_THRESHOLD = 64 * 1024 * 1024
 PART_SIZE = 32 * 1024 * 1024
-EXPIRY_SWEEP_INTERVAL = 15 * 60
+EXPIRY_SWEEP_INTERVAL = 60 * 60
 PRESIGNED_URL_LIFETIME = 7 * 24 * 60 * 60
 FOLDER_PAGE_SUFFIX = ".mirrorbot-folder.html"
+FolderExpiryCache = dict[str, tuple[tuple[str, float], int | None]]
 FOLDER_LABEL_PATTERN = re.compile(
     r'(?P<prefix><li data-file-name="(?P<name>[^"]+)" '
     r'data-file-url="[^"]+"><a href="[^"]+">Download</a><span>)'
@@ -735,45 +736,92 @@ def key_from_input(config: Config, value: str) -> str:
     return key
 
 
-def delete_expired_objects(config: Config) -> int:
+def _object_identity(item: dict) -> tuple[str, float]:
+    modified = item.get("LastModified")
+    modified_at = modified.timestamp() if hasattr(modified, "timestamp") else 0.0
+    return str(item.get("ETag") or ""), modified_at
+
+
+def _folder_page_expiry(
+    config: Config,
+    item: dict,
+    cache: FolderExpiryCache,
+    client,
+) -> tuple[int | None, object]:
+    key = item["Key"]
+    identity = _object_identity(item)
+    cached = cache.get(key)
+    if cached is not None and cached[0] == identity:
+        return cached[1], client
+
+    client = client or r2_client(config)
+    try:
+        response = client.head_object(
+            Bucket=config.r2_bucket,
+            Key=key,
+        )
+        raw_expiry = response.get("Metadata", {}).get("expires-at", "")
+        expires_at = int(raw_expiry) if raw_expiry else None
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid R2 folder page expiry metadata key=%s", key)
+        expires_at = None
+    except Exception:
+        LOGGER.warning(
+            "Could not inspect R2 folder page expiry key=%s",
+            key,
+            exc_info=True,
+        )
+        return None, client
+
+    cache[key] = (identity, expires_at)
+    return expires_at, client
+
+
+def delete_expired_objects(
+    config: Config,
+    folder_expiry_cache: FolderExpiryCache | None = None,
+) -> int:
     if not config.r2_configured or config.r2_auto_delete_seconds <= 0:
         return 0
+    cache = folder_expiry_cache if folder_expiry_cache is not None else {}
     now = datetime.now(UTC).timestamp()
     cutoff = now - config.r2_auto_delete_seconds
     client = None
     keys = []
-    for item in list_objects(config):
+    objects = list_objects(config)
+    folder_keys = {item["Key"] for item in objects if is_folder_page_key(item["Key"])}
+    for key in set(cache).difference(folder_keys):
+        cache.pop(key, None)
+
+    for item in objects:
         expired = item["LastModified"].timestamp() <= cutoff
         if is_folder_page_key(item["Key"]):
-            try:
-                client = client or r2_client(config)
-                response = client.head_object(
-                    Bucket=config.r2_bucket,
-                    Key=item["Key"],
-                )
-                expires_at = response.get("Metadata", {}).get("expires-at", "")
-                if expires_at:
-                    expired = int(expires_at) <= now
-            except (TypeError, ValueError):
-                LOGGER.warning(
-                    "Invalid R2 folder page expiry metadata key=%s",
-                    item["Key"],
-                )
-            except Exception:
-                LOGGER.warning(
-                    "Could not inspect R2 folder page expiry key=%s",
-                    item["Key"],
-                    exc_info=True,
-                )
+            expires_at, client = _folder_page_expiry(
+                config,
+                item,
+                cache,
+                client,
+            )
+            if expires_at is not None:
+                expired = expires_at <= now
         if expired:
             keys.append(item["Key"])
-    return delete_keys(config, keys)
+    deleted = delete_keys(config, keys)
+    if deleted:
+        for key in keys:
+            cache.pop(key, None)
+    return deleted
 
 
 async def expiry_sweeper(config: Config) -> None:
+    folder_expiry_cache: FolderExpiryCache = {}
     while True:
         try:
-            deleted = await asyncio.to_thread(delete_expired_objects, config)
+            deleted = await asyncio.to_thread(
+                delete_expired_objects,
+                config,
+                folder_expiry_cache,
+            )
             if deleted:
                 LOGGER.info("Deleted %s expired Cloudflare R2 object(s)", deleted)
         except asyncio.CancelledError:
