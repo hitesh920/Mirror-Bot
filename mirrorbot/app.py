@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from contextlib import suppress
+from dataclasses import dataclass, replace
 from time import time
 
 from pyrogram import Client, filters, idle
@@ -10,7 +11,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .core.config import Config
 from .core.logging_config import setup_logging
-from .core.models import Destination, Source, SourceType, TaskPhase
+from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .services.background import BackgroundTasks
 from .services.r2_delivery import expiry_sweeper
 from .services.restart_state import take_restart_state
@@ -29,7 +30,18 @@ manager = TaskManager(config)
 background = BackgroundTasks()
 runtime = RuntimeCoordinator(manager, background)
 shutting_down = False
-pending_adds: dict[str, tuple[Source, object, Message | None]] = {}
+
+
+@dataclass
+class PendingAdd:
+    sources: list[Source]
+    options: AddOptions
+    reply: Message | None = None
+    batch_mode: str = ""
+    skipped: int = 0
+
+
+pending_adds: dict[str, PendingAdd] = {}
 pending_add_messages: dict[str, Message] = {}
 pending_add_expiry_jobs: dict[str, asyncio.Task] = {}
 PENDING_ADD_TIMEOUT = 120
@@ -129,6 +141,10 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.destination_buttons(token)
 
 
+def batch_mode_buttons(token: str) -> InlineKeyboardMarkup:
+    return telegram_keyboards.batch_mode_buttons(token)
+
+
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return telegram_keyboards.ytdlp_buttons(token)
 
@@ -149,33 +165,12 @@ def completion_buttons(task) -> InlineKeyboardMarkup | None:
     return telegram_keyboards.completion_buttons(task)
 
 
-async def launch_selected_task(
-    query,
-    token: str,
-    destination: Destination,
-) -> None:
-    pending = take_pending_add(token)
-    if pending is None:
-        await answer_expired_selection(query)
-        return
-    source, options, reply = pending
-    task = manager.create_task(
-        query.from_user.id,
-        query.message.chat.id,
-        int(token),
-        source,
-        destination,
-        options,
-    )
+def _spawn_transfer_task(task, reply, query, *, is_torrent: bool = False) -> None:
     LOGGER.info(
         "Task %s: selected destination=%s",
         task.short_id(),
-        destination.value,
+        task.destination.value,
     )
-    is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
-    if is_torrent:
-        task.status_visible = False
-        await query.message.edit("Collecting torrent metadata...")
 
     async def runner():
         async def selector_ready(selected_task):
@@ -246,12 +241,101 @@ async def launch_selected_task(
         await update_status_message(task.chat_id)
 
     manager.spawn(runner(), name="transfer-task")
+
+
+async def launch_selected_task(
+    query,
+    token: str,
+    destination: Destination,
+) -> None:
+    pending = take_pending_add(token)
+    if pending is None:
+        await answer_expired_selection(query)
+        return
+    if pending.options.batch_messages:
+        await _launch_batch_tasks(query, token, destination, pending)
+        return
+
+    source = pending.sources[0]
+    task = manager.create_task(
+        query.from_user.id,
+        query.message.chat.id,
+        int(token),
+        source,
+        destination,
+        pending.options,
+    )
+    is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
+    if is_torrent:
+        task.status_visible = False
+        await query.message.edit("Collecting torrent metadata...")
+    _spawn_transfer_task(task, pending.reply, query, is_torrent=is_torrent)
     if not is_torrent:
         with suppress(Exception):
             await query.message.delete()
     if not is_torrent:
         await asyncio.sleep(0)
         await replace_status_message(task.chat_id)
+
+
+async def _launch_batch_tasks(
+    query,
+    token: str,
+    destination: Destination,
+    pending: PendingAdd,
+) -> None:
+    if pending.batch_mode == "separate":
+        tasks = []
+        for source in pending.sources:
+            options = replace(pending.options, name="", batch_messages=0)
+            task = manager.create_task(
+                query.from_user.id,
+                query.message.chat.id,
+                int(token),
+                source,
+                destination,
+                options,
+            )
+            tasks.append(task)
+            _spawn_transfer_task(task, None, query)
+        await query.message.edit(
+            f"{len(tasks)} tasks started. Each transfer will finish independently."
+        )
+        await asyncio.sleep(0)
+        await replace_status_message(query.message.chat.id)
+        return
+
+    if pending.batch_mode != "zip":
+        await query.message.edit("Batch mode was not selected. Send /add again.")
+        return
+    archive_stem = pending.options.name or f"batch-{token}"
+    options = replace(
+        pending.options,
+        name=archive_stem,
+        zip=True,
+        zip_password="",
+    )
+    source = Source(
+        SourceType.BATCH,
+        "",
+        archive_stem,
+        {"sources": pending.sources},
+    )
+    task = manager.create_task(
+        query.from_user.id,
+        query.message.chat.id,
+        int(token),
+        source,
+        destination,
+        options,
+    )
+    task.batch_total = len(pending.sources)
+    task.batch_initial_skipped = pending.skipped
+    _spawn_transfer_task(task, None, query)
+    with suppress(Exception):
+        await query.message.delete()
+    await asyncio.sleep(0)
+    await replace_status_message(task.chat_id)
 
 
 def register_command_handlers() -> None:

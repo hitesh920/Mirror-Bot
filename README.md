@@ -35,6 +35,8 @@ inside one supervised Docker container.
 
 - **Flexible inputs** — Direct HTTP/HTTPS links, magnet links, `.torrent`
   files, replied Telegram media, yt-dlp-supported sites, and popular file hosts.
+- **Reply-based batches** — Collect direct links from one or more exact Telegram
+  messages, then upload them separately or as one fast ZIP archive.
 - **Two delivery options** — Upload to Telegram chats/channels or a private
   Cloudflare R2 bucket.
 - **Built-in processing** — Create ZIP files, use password protection, extract
@@ -108,6 +110,9 @@ All commands are restricted to `OWNER_ID`.
 
 - `/add <link>` — Add a URL, magnet, or torrent link.
 - Reply with `/add` — Add the replied Telegram file or link.
+- Reply with `/add -b` — Collect every supported direct link in that message.
+- Reply with `/add -b 3` — Collect links from that message and the next two
+  exact message IDs.
 - `/status` — Show live progress, speed, phase, and ETA.
 - `/cancel <task-id>` — Cancel one task.
 - `/cancelall` — Cancel every active task.
@@ -143,6 +148,12 @@ All commands are restricted to `OWNER_ID`.
 - `-e` extracts a supported archive.
 - `-ep <password>` extracts a password-protected archive.
 - `-n <name>` applies a custom task and output name.
+
+Batch mode accepts up to 20 unique direct HTTP or supported file-host links and
+requires at least two. It skips unsupported, duplicate, malformed, yt-dlp,
+Telegram, magnet, and torrent sources. After collection, choose separate tasks
+or one uncompressed ZIP. With batch mode, `-n` names only the aggregate ZIP;
+archive creation/extraction flags cannot be combined with `-b`.
 
 For yt-dlp sources, the bot presents video/audio and quality controls before
 destination selection. Torrent sources open a temporary browser page where

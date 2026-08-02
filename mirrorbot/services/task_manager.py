@@ -8,6 +8,7 @@ from uuid import uuid4
 from ..core.config import Config
 from ..core.logging_config import log_event
 from ..core.models import SourceType, Task, TaskPhase
+from ..downloaders.batch import download_batch
 from ..downloaders.direct import download_direct
 from ..downloaders.qbittorrent import QBittorrentClient
 from ..downloaders.telegram import download_telegram_file
@@ -97,6 +98,8 @@ class TaskManager:
         on_selector_ready=None,
         on_selector_done=None,
     ) -> Path:
+        if task.source.type == SourceType.BATCH:
+            return await download_batch(task)
         if task.source.type == SourceType.TELEGRAM_FILE:
             return await download_telegram_file(task, telegram_reply, telegram_client)
         if task.source.type == SourceType.TORRENT_FILE:

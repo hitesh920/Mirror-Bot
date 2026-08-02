@@ -12,6 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SourceType(str, Enum):
+    BATCH = "batch"
     DIRECT_URL = "direct_url"
     TELEGRAM_FILE = "telegram_file"
     MAGNET = "magnet"
@@ -52,6 +53,7 @@ class AddOptions:
     extract_password: str = ""
     ytdlp_kind: str = ""
     ytdlp_quality: str = ""
+    batch_messages: int = 0
 
 
 @dataclass
@@ -90,6 +92,10 @@ class Task:
     result_is_folder: bool = False
     telegram_upload_mode: str = ""
     processing_warnings: list[str] = field(default_factory=list)
+    batch_total: int = 0
+    batch_completed: int = 0
+    batch_failed: int = 0
+    batch_initial_skipped: int = 0
     torrent_hash: str = ""
     selection_url: str = ""
     created_at: float = field(default_factory=time)

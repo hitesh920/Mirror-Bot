@@ -59,6 +59,11 @@ def task_status(task: Task, number: int) -> str:
         TaskPhase.DELIVERING,
         TaskPhase.UPLOADING,
     }:
+        if task.batch_total and task.phase == TaskPhase.DOWNLOADING:
+            lines.append(
+                field("Batch", f"{task.batch_completed} / {task.batch_total} completed")
+            )
+            lines.append(field("Failed", str(task.batch_failed)))
         percent = f"{task.progress * 100:.1f}%" if task.size else "--"
         lines.append(f"<code>{progress_bar(task.progress)}</code> <b>{percent}</b>")
         if task.phase == TaskPhase.UPLOADING:

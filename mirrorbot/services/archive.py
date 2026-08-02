@@ -89,7 +89,14 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
     task.downloaded = task.size
 
 
-async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -> Path:
+async def zip_path(
+    path: Path,
+    task: Task,
+    password: str = "",
+    level: int = 5,
+    *,
+    contents_only: bool = False,
+) -> Path:
     if task.cancelled:
         raise asyncio.CancelledError()
     output = path.with_suffix(".zip")
@@ -100,8 +107,8 @@ async def zip_path(path: Path, task: Task, password: str = "", level: int = 5) -
     command = ["7z", "a", "-tzip", f"-mx={level}", "-y", "-bsp1"]
     if password:
         command.extend([f"-p{password}", "-mem=AES256"])
-    command.extend([str(output), path.name])
-    await _run(task, *command, cwd=path.parent)
+    command.extend([str(output), "." if contents_only else path.name])
+    await _run(task, *command, cwd=path if contents_only else path.parent)
     return output
 
 

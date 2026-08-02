@@ -4,7 +4,8 @@ from ..core.models import Destination
 
 ADD_USAGE = (
     "Usage: <code>/add &lt;link&gt; [-z|-zp password|-e|-ep password|-n name]</code>\n"
-    "You can also reply to a Telegram file or link with <code>/add</code>."
+    "You can also reply to a Telegram file or link with <code>/add</code>.\n"
+    "Batch: reply with <code>/add -b [message-count] [-n ZIP-name]</code>."
 )
 
 HELP_TEXT = "\n".join(
@@ -14,6 +15,8 @@ HELP_TEXT = "\n".join(
         "<b>Add</b>",
         "<code>/add &lt;link&gt;</code> - add a link",
         "<code>/add</code> - use the replied file/link",
+        "<code>/add -b</code> - batch links from the replied message",
+        "<code>/add -b 3</code> - batch links from 3 exact messages",
         "<code>-z</code> zip, <code>-zp pass</code> password zip",
         "<code>-e</code> extract, <code>-ep pass</code> password extract",
         "<code>-n name</code> custom task name",
@@ -84,6 +87,17 @@ def retention_text(seconds: int) -> str:
 
 def completion_message(task) -> str:
     name = escape(task.result_name or task.name or task.source.type.value)
+    batch_sections = []
+    if task.batch_total:
+        batch_sections = [
+            f"<b>Batch total:</b> <code>{task.batch_total}</code>",
+            f"<b>Succeeded:</b> <code>{task.batch_completed}</code>",
+            (
+                "<b>Skipped:</b> "
+                f"<code>{task.batch_failed + task.batch_initial_skipped}</code>"
+            ),
+            f"<b>Uploaded outputs:</b> <code>{len(task.result_files)}</code>",
+        ]
     if task.destination == Destination.TELEGRAM:
         upload_label = (
             "Telegram dump channel"
@@ -95,6 +109,7 @@ def completion_message(task) -> str:
             f"<b>Name:</b> <code>{name}</code>",
             f"<b>Uploaded to:</b> <code>{upload_label}</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            *batch_sections,
             result_list("Uploaded files", task.result_files, task.result_links),
             warning_list(task.processing_warnings),
         ]
@@ -104,6 +119,7 @@ def completion_message(task) -> str:
             f"<b>Name:</b> <code>{name}</code>",
             "<b>Uploaded to:</b> <code>Cloudflare R2</code>",
             f"<b>Files:</b> <code>{len(task.result_files)}</code>",
+            *batch_sections,
             (
                 "<b>Automatically deleted after:</b> "
                 f"<code>{retention_text(task.result_auto_delete_seconds)}</code>"

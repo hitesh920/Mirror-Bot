@@ -2,7 +2,9 @@ from shlex import split
 
 from .models import AddOptions
 
-OPTION_FLAGS = {"-z", "-zp", "-e", "-ep", "-n"}
+OPTION_FLAGS = {"-z", "-zp", "-e", "-ep", "-n", "-b"}
+MAGNET_OPTION_FLAGS = OPTION_FLAGS - {"-b"}
+MAX_BATCH_MESSAGES = 20
 
 
 def _parse_options(parts: list[str]) -> AddOptions:
@@ -31,9 +33,25 @@ def _parse_options(parts: list[str]) -> AddOptions:
                 raise ValueError("-n requires a name")
             index += 1
             options.name = parts[index]
+        elif flag == "-b":
+            if options.batch_messages:
+                raise ValueError("-b can only be used once")
+            options.batch_messages = 1
+            if index + 1 < len(parts) and not parts[index + 1].startswith("-"):
+                index += 1
+                try:
+                    options.batch_messages = int(parts[index])
+                except ValueError as exc:
+                    raise ValueError("-b count must be a whole number") from exc
+                if not 1 <= options.batch_messages <= MAX_BATCH_MESSAGES:
+                    raise ValueError(
+                        f"-b count must be between 1 and {MAX_BATCH_MESSAGES}"
+                    )
         else:
             raise ValueError(f"Unknown /add option: {flag}")
         index += 1
+    if options.batch_messages and (options.zip or options.extract):
+        raise ValueError("-b cannot be combined with -z, -zp, -e, or -ep")
     return options
 
 
@@ -61,7 +79,7 @@ def parse_add_text(text: str) -> tuple[str, AddOptions]:
 
     if parts[0].lower().startswith("magnet:?"):
         for index in range(1, len(parts)):
-            if parts[index] not in OPTION_FLAGS:
+            if parts[index] not in MAGNET_OPTION_FLAGS:
                 continue
             try:
                 options = _parse_options(parts[index:])

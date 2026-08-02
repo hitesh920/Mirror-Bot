@@ -19,6 +19,7 @@ then removes local temporary data.
 The application supports:
 
 - Direct HTTP and HTTPS downloads.
+- Reply-based direct-link batches with separate-task and aggregate-ZIP modes.
 - Magnet links and `.torrent` files.
 - Selective torrent downloads through a temporary browser page.
 - Replied Telegram documents, videos, audio, photos, and animations.
@@ -187,6 +188,21 @@ to disk.
 
 Resolved collections download up to three files concurrently while preserving
 their relative folder structure. Duplicate target names are made unique.
+
+### Batch links
+
+`/add -b` extracts supported direct links from the replied message. A numeric
+count fetches that exact consecutive message-ID range without searching past
+missing messages. Collection preserves first-seen order, removes duplicates,
+requires at least two valid links, and caps a batch at 20 links.
+
+Separate mode creates ordinary independent tasks that share one selected
+destination and use the global task queue. ZIP mode creates one visible parent
+task, resolves and downloads up to three links concurrently in isolated child
+workspaces, keeps successful results when another link fails, and creates a
+store-only ZIP. Normal files are placed at the archive root with collision-safe
+names; resolved collection folders keep their internal structure. Cancellation
+stops child operations and removes their partial workspaces.
 
 ### File-host resolvers
 

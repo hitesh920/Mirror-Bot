@@ -16,6 +16,19 @@ def destination_buttons(token: str) -> InlineKeyboardMarkup:
     )
 
 
+def batch_mode_buttons(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Separate uploads", callback_data=f"batch:separate:{token}"
+                ),
+                InlineKeyboardButton("ZIP upload", callback_data=f"batch:zip:{token}"),
+            ]
+        ]
+    )
+
+
 def ytdlp_buttons(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ..core.errors import TaskFailure
 from ..core.logging_config import log_event
-from ..core.models import Destination, Task, TaskPhase
+from ..core.models import Destination, SourceType, Task, TaskPhase
 from ..resolvers import resolve_source
 from .archive import (
     ArchiveCorruptError,
@@ -53,6 +53,11 @@ class TaskRunner:
                 task.source = await manager._run_or_cancel(
                     task, resolve_source(task.source)
                 )
+                if (
+                    task.source.metadata.get("batch_direct_only")
+                    and task.source.type != SourceType.DIRECT_URL
+                ):
+                    raise TaskFailure("Batch link resolved to an unsupported source")
                 manager._raise_if_cancelled(task)
                 downloaded = await manager._run_or_cancel(
                     task,
@@ -138,7 +143,10 @@ class TaskRunner:
                 downloaded,
                 task,
                 task.options.zip_password,
-                manager.config.zip_compression_level,
+                0
+                if task.source.type == SourceType.BATCH
+                else manager.config.zip_compression_level,
+                contents_only=task.source.type == SourceType.BATCH,
             )
             manager._raise_if_cancelled(task)
         return downloaded
