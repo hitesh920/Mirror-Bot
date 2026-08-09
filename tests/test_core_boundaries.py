@@ -109,7 +109,10 @@ def test_config_rejects_invalid_numeric_settings(
     value,
     message,
 ):
-    monkeypatch.setenv("ENABLE_TELEGRAM_UI", "false")
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("TELEGRAM_API_ID", "1")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "test-hash")
     monkeypatch.setenv(name, value)
 
     with pytest.raises(RuntimeError, match=message):
@@ -336,6 +339,7 @@ def test_telegram_only_public_surface():
         "web_port",
         "web_username",
         "web_password",
+        "enable_telegram_ui",
     }
     assert removed_config.isdisjoint(Config.__dataclass_fields__)
 

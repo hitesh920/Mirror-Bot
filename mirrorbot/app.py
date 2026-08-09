@@ -48,16 +48,12 @@ PENDING_ADD_TIMEOUT = 120
 ADD_USAGE = telegram_messages.ADD_USAGE
 HELP_TEXT = telegram_messages.HELP_TEXT
 
-app = (
-    Client(
-        "mirrorbot",
-        api_id=config.telegram_api_id,
-        api_hash=config.telegram_api_hash,
-        bot_token=config.bot_token,
-        max_concurrent_transmissions=config.task_limit,
-    )
-    if config.enable_telegram_ui and config.bot_token
-    else None
+app = Client(
+    "mirrorbot",
+    api_id=config.telegram_api_id,
+    api_hash=config.telegram_api_hash,
+    bot_token=config.bot_token,
+    max_concurrent_transmissions=config.task_limit,
 )
 telegram_status = TelegramStatus(
     app,
@@ -340,9 +336,6 @@ async def _launch_batch_tasks(
 
 def register_command_handlers() -> None:
     """Import focused handler modules after shared app state is initialized."""
-    if app is None:
-        LOGGER.info("Telegram UI disabled; command handlers were not registered")
-        return
     from .commands import add, common, r2  # noqa: F401
 
 
@@ -373,7 +366,7 @@ async def wait_for_shutdown_signal() -> None:
 
 async def validate_telegram_dump_channel() -> None:
     upload_chat_id = telegram_chat_id(config.telegram_dump_chat_id)
-    if app is None or upload_chat_id is None:
+    if upload_chat_id is None:
         return
     try:
         chat = await app.get_chat(upload_chat_id)
@@ -391,8 +384,6 @@ async def validate_telegram_dump_channel() -> None:
 
 
 async def send_r2_expiry_warning(upload: dict) -> None:
-    if app is None:
-        raise RuntimeError("Telegram UI is unavailable")
     await app.send_message(
         config.owner_id,
         telegram_messages.r2_expiry_warning_message(upload),
@@ -407,14 +398,13 @@ async def main() -> None:
     await manager.cleanup_orphaned_torrents()
     cleanup_abandoned_downloads(config.download_dir)
     telegram_started = False
-    if app is not None:
-        try:
-            LOGGER.info("Starting Telegram UI")
-            await app.start()
-            telegram_started = True
-            await validate_telegram_dump_channel()
-        except Exception:
-            LOGGER.exception("Telegram UI failed to start")
+    try:
+        LOGGER.info("Starting Telegram UI")
+        await app.start()
+        telegram_started = True
+        await validate_telegram_dump_channel()
+    except Exception:
+        LOGGER.exception("Telegram UI failed to start")
 
     restart_state = await asyncio.to_thread(take_restart_state)
     if restart_state is not None and telegram_started:
@@ -451,7 +441,4 @@ async def main() -> None:
 
 
 def run():
-    if app is not None:
-        app.loop.run_until_complete(main())
-    else:
-        asyncio.run(main())
+    app.loop.run_until_complete(main())

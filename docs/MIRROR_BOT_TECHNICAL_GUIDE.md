@@ -404,14 +404,13 @@ chmod 600 .env
 - `TELEGRAM_API_ID` is the Telegram application ID.
 - `TELEGRAM_API_HASH` is the Telegram application hash.
 
-These variables are required when `ENABLE_TELEGRAM_UI=true`.
+These variables are always required because Telegram is the bot's control
+interface.
 
 ### Optional Telegram settings
 
 - `TELEGRAM_DUMP_CHAT_ID` selects a channel or chat for Telegram uploads. Use a
   numeric ID such as `-1001234567890` or a resolvable `@username`.
-- `ENABLE_TELEGRAM_UI` defaults to `true`.
-
 The bot must be allowed to post in the configured dump destination.
 
 ### Cloudflare R2 settings
@@ -604,7 +603,6 @@ If the bot does not answer:
 
 - Verify `OWNER_ID`.
 - Verify Telegram token and API credentials.
-- Confirm `ENABLE_TELEGRAM_UI=true`.
 - Check outbound network access.
 
 If a temporary selector URL fails:

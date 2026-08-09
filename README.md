@@ -176,8 +176,6 @@ Optional:
 
 - `TELEGRAM_DUMP_CHAT_ID` — Channel ID or `@username` used for Telegram
   uploads. Empty by default.
-- `ENABLE_TELEGRAM_UI` — Enables the Telegram client and command handlers.
-  Defaults to `true`.
 
 If `TELEGRAM_DUMP_CHAT_ID` is configured, the bot must be allowed to post in
 that chat. If it is unavailable, uploads fall back to the requesting private

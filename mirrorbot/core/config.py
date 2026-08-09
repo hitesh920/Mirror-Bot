@@ -33,13 +33,6 @@ def _bounded_int(
     return value
 
 
-def _bool(name: str, default: bool = False) -> bool:
-    value = getenv(name)
-    if value is None or value == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class Config:
     bot_token: str
@@ -60,8 +53,6 @@ class Config:
     r2_auto_delete_seconds: int
     cloudflare_account_id: str
     cloudflare_api_token: str
-    enable_telegram_ui: bool
-
     download_dir: Path = Path("/app/downloads")
     qb_host: str = "http://localhost:8080"
     telegram_leech_split_size: int = 2_000_000_000
@@ -74,17 +65,12 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         load_dotenv()
-        enable_telegram_ui = _bool("ENABLE_TELEGRAM_UI", True)
-        required = []
-        if enable_telegram_ui:
-            required.extend(
-                [
-                    "BOT_TOKEN",
-                    "OWNER_ID",
-                    "TELEGRAM_API_ID",
-                    "TELEGRAM_API_HASH",
-                ]
-            )
+        required = [
+            "BOT_TOKEN",
+            "OWNER_ID",
+            "TELEGRAM_API_ID",
+            "TELEGRAM_API_HASH",
+        ]
         missing = [key for key in required if not getenv(key)]
         if missing:
             raise RuntimeError(f"Missing required config: {', '.join(missing)}")
@@ -131,7 +117,6 @@ class Config:
                 "CLOUDFLARE_API_TOKEN",
                 "",
             ).strip(),
-            enable_telegram_ui=enable_telegram_ui,
         )
 
     @property
