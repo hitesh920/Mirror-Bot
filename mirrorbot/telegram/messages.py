@@ -110,7 +110,8 @@ def r2_expiry_warning_message(upload: dict) -> str:
         f"<b>Deletes in:</b> <code>{countdown}</code>",
         f"<b>Scheduled:</b> <code>{scheduled}</code>",
         "",
-        "Use <code>/search</code> if you still need its stored download link.",
+        "Use <code>/search &lt;name&gt;</code> or <code>/search *</code> if you "
+        "still need its stored download link.",
     ]
     return "\n".join(sections)
 

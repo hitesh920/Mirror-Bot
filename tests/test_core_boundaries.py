@@ -935,6 +935,8 @@ def test_r2_expiry_warning_message_contains_schedule_and_size():
     assert "1.5 KB" in message
     assert "11h 30m" in message
     assert "10 Aug 2026, 00:00 UTC" in message
+    assert "/search &lt;name&gt;" in message
+    assert "/search *" in message
 
 
 def test_r2_expiry_sweeper_runs_hourly():
