@@ -51,11 +51,15 @@ from mirrorbot.services.r2_delivery import (
     decode_metadata_value,
     delete_expired_objects,
     delete_scope,
+    expiring_uploads,
+    expiry_warning_token,
     folder_page_key,
     key_from_input,
+    load_warning_state,
     normalize_folder_page_labels,
     normalize_prefix,
     object_key,
+    run_expiry_sweep_once,
     search_objects,
     update_existing_folder_pages,
 )
@@ -69,7 +73,11 @@ from mirrorbot.services.telegram_delivery import (
     upload_to_telegram,
 )
 from mirrorbot.telegram.keyboards import completion_buttons, destination_buttons
-from mirrorbot.telegram.messages import HELP_TEXT, completion_message
+from mirrorbot.telegram.messages import (
+    HELP_TEXT,
+    completion_message,
+    r2_expiry_warning_message,
+)
 from mirrorbot.telegram.state import ExpiringStore
 
 
@@ -736,8 +744,198 @@ def test_r2_folder_expiry_metadata_is_cached_until_object_changes(monkeypatch):
     assert cache == {}
 
 
+def test_r2_expiry_warning_groups_uploads_and_uses_folder_metadata(monkeypatch):
+    now = datetime(2026, 8, 9, 12, tzinfo=UTC)
+    folder_page = "uploads/folder-task/Season 1.mirrorbot-folder.html"
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_auto_delete_seconds=86400,
+        r2_bucket="mirror-bot",
+        r2_prefix="uploads/",
+    )
+    objects = [
+        {
+            "Key": "uploads/single-task/movie.mkv",
+            "Size": 400,
+            "LastModified": now - timedelta(hours=14),
+        },
+        {
+            "Key": "uploads/later-task/later.mkv",
+            "Size": 500,
+            "LastModified": now - timedelta(hours=11),
+        },
+        {
+            "Key": "uploads/folder-task/Season 1/one.mkv",
+            "Size": 100,
+            "LastModified": now - timedelta(hours=14),
+        },
+        {
+            "Key": "uploads/folder-task/Season 1/two.mkv",
+            "Size": 200,
+            "LastModified": now - timedelta(hours=14),
+        },
+        {
+            "Key": folder_page,
+            "Size": 10,
+            "ETag": '"folder-v1"',
+            "LastModified": now,
+        },
+    ]
+
+    class Client:
+        def head_object(self, **kwargs):
+            assert kwargs["Key"] == folder_page
+            return {
+                "Metadata": {
+                    "expires-at": str(int((now + timedelta(hours=11)).timestamp()))
+                }
+            }
+
+    monkeypatch.setattr(r2_delivery, "r2_client", lambda _config: Client())
+
+    warnings = expiring_uploads(
+        config,
+        {},
+        objects=objects,
+        now=now.timestamp(),
+    )
+
+    assert [item["name"] for item in warnings] == ["movie.mkv", "Season 1"]
+    assert warnings[0]["kind"] == "file"
+    assert warnings[0]["bytes"] == 400
+    assert warnings[1]["kind"] == "folder"
+    assert warnings[1]["objects"] == 2
+    assert warnings[1]["bytes"] == 300
+
+
+@pytest.mark.asyncio
+async def test_r2_expiry_warning_is_sent_once_and_persisted(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC)
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_auto_delete_seconds=86400,
+        r2_bucket="mirror-bot",
+        r2_prefix="uploads/",
+        log_file=str(tmp_path / "bot.log"),
+    )
+    objects = [
+        {
+            "Key": "uploads/task/movie.mkv",
+            "Size": 400,
+            "LastModified": now - timedelta(hours=14),
+        }
+    ]
+    notifications = []
+    state = {}
+    state_path = tmp_path / ".warning-state.json"
+
+    async def notify(upload):
+        notifications.append(upload)
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "delete_keys", lambda _config, _keys: 0)
+
+    first = await run_expiry_sweep_once(
+        config,
+        notify,
+        {},
+        state,
+        state_path,
+    )
+    reloaded_state = load_warning_state(state_path)
+    second = await run_expiry_sweep_once(
+        config,
+        notify,
+        {},
+        reloaded_state,
+        state_path,
+    )
+
+    assert first == {"warned": 1, "deleted": 0}
+    assert second == {"warned": 0, "deleted": 0}
+    assert len(notifications) == 1
+    assert reloaded_state == state
+    assert expiry_warning_token(notifications[0]) in reloaded_state
+
+
+@pytest.mark.asyncio
+async def test_r2_warning_failure_remains_retryable_while_deletion_continues(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.now(UTC)
+    config = SimpleNamespace(
+        r2_configured=True,
+        r2_auto_delete_seconds=86400,
+        r2_bucket="mirror-bot",
+        r2_prefix="uploads/",
+        log_file=str(tmp_path / "bot.log"),
+    )
+    warning_key = "uploads/warning/movie.mkv"
+    expired_key = "uploads/expired/old.mkv"
+    objects = [
+        {
+            "Key": warning_key,
+            "Size": 400,
+            "LastModified": now - timedelta(hours=14),
+        },
+        {
+            "Key": expired_key,
+            "Size": 500,
+            "LastModified": now - timedelta(hours=25),
+        },
+    ]
+    deleted = []
+    state = {}
+
+    async def failed_notification(_upload):
+        raise RuntimeError("Telegram unavailable")
+
+    def fake_delete(_config, keys):
+        deleted.extend(keys)
+        return len(keys)
+
+    monkeypatch.setattr(r2_delivery, "list_objects", lambda _config: objects)
+    monkeypatch.setattr(r2_delivery, "delete_keys", fake_delete)
+
+    result = await run_expiry_sweep_once(
+        config,
+        failed_notification,
+        {},
+        state,
+        tmp_path / ".warning-state.json",
+    )
+
+    assert result == {"warned": 0, "deleted": 1}
+    assert state == {}
+    assert deleted == [expired_key]
+
+
+def test_r2_expiry_warning_message_contains_schedule_and_size():
+    upload = {
+        "name": "Season 1",
+        "kind": "folder",
+        "bytes": 1_500,
+        "expires_at": datetime(2026, 8, 10, 0, tzinfo=UTC).timestamp(),
+        "remaining_seconds": 11 * 60 * 60 + 30 * 60,
+    }
+
+    message = r2_expiry_warning_message(upload)
+
+    assert "Cloudflare R2 deletion warning" in message
+    assert "Season 1" in message
+    assert "Folder" in message
+    assert "1.5 KB" in message
+    assert "11h 30m" in message
+    assert "10 Aug 2026, 00:00 UTC" in message
+
+
 def test_r2_expiry_sweeper_runs_hourly():
     assert r2_delivery.EXPIRY_SWEEP_INTERVAL == 60 * 60
+    assert r2_delivery.R2_DELETE_WARNING_SECONDS == 12 * 60 * 60
 
 
 @pytest.mark.asyncio

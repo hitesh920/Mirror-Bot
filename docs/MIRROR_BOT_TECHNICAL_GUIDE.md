@@ -369,8 +369,18 @@ The in-process expiry sweeper:
 - Runs every hour.
 - Lists only objects under `R2_PREFIX`.
 - Caches folder-page expiry metadata until the object changes.
+- Sends the configured owner one Telegram warning when an upload enters its
+  final 12 hours. A folder and its objects produce one grouped warning.
+- Stores hashed sent-warning markers in
+  `logs/.r2-delete-warnings.json`, which is retained by the persistent logs
+  volume so container restarts do not repeat a warning.
 - Deletes objects older than `R2_AUTO_DELETE_SECONDS`.
 - Does nothing when retention is set to `0`.
+
+Because the sweep runs hourly, the warning normally arrives with between 11
+and 12 hours remaining. If Telegram is unavailable, deletion continues and the
+warning remains eligible for a later retry; a failed notification is not marked
+as sent.
 
 A matching two-day R2 lifecycle rule is recommended as a server-side fallback.
 It should apply only to the bot-managed prefix.
@@ -668,6 +678,10 @@ Transfer-related changes should test:
 - Cleanup after every terminal outcome.
 - Restart and shutdown behavior.
 - Absence of secrets in staged files and logs.
+
+R2 retention changes should also test the 12-hour warning boundary, one-warning
+deduplication across restarts, folder grouping, notification failure retries,
+and deletion behavior when Telegram is unavailable.
 
 ### Coding standards
 

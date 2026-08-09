@@ -390,13 +390,22 @@ async def validate_telegram_dump_channel() -> None:
         )
 
 
+async def send_r2_expiry_warning(upload: dict) -> None:
+    if app is None:
+        raise RuntimeError("Telegram UI is unavailable")
+    await app.send_message(
+        config.owner_id,
+        telegram_messages.r2_expiry_warning_message(upload),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        disable_notification=False,
+    )
+
+
 async def main() -> None:
     LOGGER.info("========== BOT STARTED ================")
     await manager.cleanup_orphaned_torrents()
     cleanup_abandoned_downloads(config.download_dir)
-    if config.r2_configured and config.r2_auto_delete_seconds > 0:
-        background.create(expiry_sweeper(config), name="r2-expiry-sweeper")
-
     telegram_started = False
     if app is not None:
         try:
@@ -419,6 +428,17 @@ async def main() -> None:
             LOGGER.info("Restart success notification sent elapsed=%ss", elapsed)
         except Exception:
             LOGGER.exception("Could not send restart success notification")
+    if config.r2_configured and config.r2_auto_delete_seconds > 0:
+        warning_callback = send_r2_expiry_warning if telegram_started else None
+        if warning_callback is None:
+            LOGGER.warning(
+                "R2 expiry deletion remains active, but Telegram deletion "
+                "warnings are unavailable"
+            )
+        background.create(
+            expiry_sweeper(config, warning_callback),
+            name="r2-expiry-sweeper",
+        )
     try:
         if telegram_started:
             await idle()

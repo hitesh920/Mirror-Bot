@@ -237,6 +237,9 @@ error.
 - The expiry sweeper runs hourly and only manages objects under `R2_PREFIX`.
   Folder expiry metadata is cached until the object changes, avoiding repeated
   R2 reads during routine scans.
+- When an upload enters its final 12 hours, the bot sends the owner one Telegram
+  warning for that upload. Folder uploads are grouped into one warning, and the
+  sent-warning state is retained across container restarts.
 - `/delete all` removes bot-managed objects but preserves the bucket itself.
 
 You may also configure a matching R2 lifecycle rule as an additional

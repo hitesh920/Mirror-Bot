@@ -1,5 +1,7 @@
+from datetime import UTC, datetime
 from html import escape
 
+from ..core.formatting import human_size
 from ..core.models import Destination
 
 ADD_USAGE = (
@@ -83,6 +85,34 @@ def retention_text(seconds: int) -> str:
         return f"{hours} hour{'s' if hours != 1 else ''}"
     minutes = max(1, seconds // 60)
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+
+def r2_expiry_warning_message(upload: dict) -> str:
+    remaining = max(1, int(upload["remaining_seconds"]))
+    hours, remainder = divmod(remaining, 3600)
+    minutes = max(1, remainder // 60) if not hours else remainder // 60
+    countdown = (
+        f"{hours}h {minutes}m"
+        if hours and minutes
+        else (f"{hours}h" if hours else f"{minutes}m")
+    )
+    scheduled = datetime.fromtimestamp(upload["expires_at"], UTC).strftime(
+        "%d %b %Y, %H:%M UTC"
+    )
+    kind = "Folder" if upload.get("kind") == "folder" else "File"
+    sections = [
+        "<b>Cloudflare R2 deletion warning</b>",
+        "This upload is scheduled for automatic deletion within 12 hours.",
+        "",
+        f"<b>Name:</b> <code>{escape(str(upload['name'])[:120])}</code>",
+        f"<b>Type:</b> <code>{kind}</code>",
+        f"<b>Size:</b> <code>{human_size(int(upload.get('bytes') or 0))}</code>",
+        f"<b>Deletes in:</b> <code>{countdown}</code>",
+        f"<b>Scheduled:</b> <code>{scheduled}</code>",
+        "",
+        "Use <code>/search</code> if you still need its stored download link.",
+    ]
+    return "\n".join(sections)
 
 
 def completion_message(task) -> str:

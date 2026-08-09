@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
+import os
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
 from email.header import decode_header
+from hashlib import sha256
 from html import escape
 from pathlib import Path, PurePosixPath
+from tempfile import NamedTemporaryFile
 from time import monotonic, time
 from urllib.parse import unquote, urlsplit
 
@@ -25,9 +29,12 @@ LOGGER = logging.getLogger(__name__)
 MULTIPART_THRESHOLD = 64 * 1024 * 1024
 PART_SIZE = 32 * 1024 * 1024
 EXPIRY_SWEEP_INTERVAL = 60 * 60
+R2_DELETE_WARNING_SECONDS = 12 * 60 * 60
 PRESIGNED_URL_LIFETIME = 7 * 24 * 60 * 60
 FOLDER_PAGE_SUFFIX = ".mirrorbot-folder.html"
+WARNING_STATE_FILENAME = ".r2-delete-warnings.json"
 FolderExpiryCache = dict[str, tuple[tuple[str, float], int | None]]
+WarningState = dict[str, int]
 FOLDER_LABEL_PATTERN = re.compile(
     r'(?P<prefix><li data-file-name="(?P<name>[^"]+)" '
     r'data-file-url="[^"]+"><a href="[^"]+">Download</a><span>)'
@@ -777,23 +784,155 @@ def _folder_page_expiry(
     return expires_at, client
 
 
+def _warning_state_path(config: Config) -> Path:
+    return Path(getattr(config, "log_file", "logs/bot.log")).parent / (
+        WARNING_STATE_FILENAME
+    )
+
+
+def load_warning_state(path: Path) -> WarningState:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise TypeError("warning state must be an object")
+        return {
+            str(token): int(expires_at)
+            for token, expires_at in payload.items()
+            if int(expires_at) > 0
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        LOGGER.warning("Could not read R2 deletion warning state", exc_info=True)
+        return {}
+
+
+def save_warning_state(path: Path, state: WarningState) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}-",
+        suffix=".tmp",
+        delete=False,
+    ) as temporary:
+        json.dump(state, temporary, sort_keys=True, separators=(",", ":"))
+        temporary.flush()
+        os.fsync(temporary.fileno())
+        temporary_path = Path(temporary.name)
+    os.chmod(temporary_path, 0o600)
+    temporary_path.replace(path)
+
+
+def expiry_warning_token(upload: dict) -> str:
+    identity = f"{upload['group']}:{int(upload['expires_at'])}"
+    return sha256(identity.encode("utf-8")).hexdigest()
+
+
+def expiring_uploads(
+    config: Config,
+    folder_expiry_cache: FolderExpiryCache | None = None,
+    *,
+    objects: list[dict] | None = None,
+    now: float | None = None,
+    warning_seconds: int = R2_DELETE_WARNING_SECONDS,
+) -> list[dict]:
+    """Return one upload-level warning for objects entering their final window."""
+    if not config.r2_configured or config.r2_auto_delete_seconds <= 0:
+        return []
+    cache = folder_expiry_cache if folder_expiry_cache is not None else {}
+    current_time = datetime.now(UTC).timestamp() if now is None else now
+    current_objects = list_objects(config) if objects is None else objects
+    folder_keys = {
+        item["Key"] for item in current_objects if is_folder_page_key(item["Key"])
+    }
+    for key in set(cache).difference(folder_keys):
+        cache.pop(key, None)
+
+    warnings = []
+    client = None
+    for group_key, group in _task_objects(config, current_objects).items():
+        folder_page = next(
+            (item for item in group if is_folder_page_key(item["Key"])),
+            None,
+        )
+        contents = [item for item in group if not is_folder_page_key(item["Key"])]
+        if folder_page is not None:
+            expires_at, client = _folder_page_expiry(
+                config,
+                folder_page,
+                cache,
+                client,
+            )
+            representative = folder_page
+            kind = "folder"
+            size = sum(int(item.get("Size") or 0) for item in contents)
+            object_count = len(contents)
+        else:
+            dated_items = [
+                item for item in group if hasattr(item.get("LastModified"), "timestamp")
+            ]
+            if not dated_items:
+                continue
+            representative = min(
+                dated_items,
+                key=lambda item: item["LastModified"].timestamp(),
+            )
+            expires_at = int(
+                representative["LastModified"].timestamp()
+                + config.r2_auto_delete_seconds
+            )
+            kind = "file"
+            size = sum(int(item.get("Size") or 0) for item in group)
+            object_count = len(group)
+
+        if expires_at is None:
+            modified = representative.get("LastModified")
+            if not hasattr(modified, "timestamp"):
+                continue
+            expires_at = int(modified.timestamp() + config.r2_auto_delete_seconds)
+        remaining = int(expires_at - current_time)
+        if remaining <= 0 or remaining > warning_seconds:
+            continue
+        warnings.append(
+            {
+                "group": group_key,
+                "key": representative["Key"],
+                "name": display_name_for_key(representative["Key"]),
+                "kind": kind,
+                "objects": object_count,
+                "bytes": size,
+                "expires_at": int(expires_at),
+                "remaining_seconds": remaining,
+            }
+        )
+    warnings.sort(key=lambda item: (item["expires_at"], item["name"].casefold()))
+    return warnings
+
+
 def delete_expired_objects(
     config: Config,
     folder_expiry_cache: FolderExpiryCache | None = None,
+    *,
+    objects: list[dict] | None = None,
+    now: float | None = None,
 ) -> int:
     if not config.r2_configured or config.r2_auto_delete_seconds <= 0:
         return 0
     cache = folder_expiry_cache if folder_expiry_cache is not None else {}
-    now = datetime.now(UTC).timestamp()
-    cutoff = now - config.r2_auto_delete_seconds
+    current_time = datetime.now(UTC).timestamp() if now is None else now
+    cutoff = current_time - config.r2_auto_delete_seconds
     client = None
     keys = []
-    objects = list_objects(config)
-    folder_keys = {item["Key"] for item in objects if is_folder_page_key(item["Key"])}
+    current_objects = list_objects(config) if objects is None else objects
+    folder_keys = {
+        item["Key"] for item in current_objects if is_folder_page_key(item["Key"])
+    }
     for key in set(cache).difference(folder_keys):
         cache.pop(key, None)
 
-    for item in objects:
+    for item in current_objects:
         expired = item["LastModified"].timestamp() <= cutoff
         if is_folder_page_key(item["Key"]):
             expires_at, client = _folder_page_expiry(
@@ -803,7 +942,7 @@ def delete_expired_objects(
                 client,
             )
             if expires_at is not None:
-                expired = expires_at <= now
+                expired = expires_at <= current_time
         if expired:
             keys.append(item["Key"])
     deleted = delete_keys(config, keys)
@@ -813,17 +952,93 @@ def delete_expired_objects(
     return deleted
 
 
-async def expiry_sweeper(config: Config) -> None:
+async def run_expiry_sweep_once(
+    config: Config,
+    notify_warning=None,
+    folder_expiry_cache: FolderExpiryCache | None = None,
+    warning_state: WarningState | None = None,
+    state_path: Path | None = None,
+) -> dict[str, int]:
+    cache = folder_expiry_cache if folder_expiry_cache is not None else {}
+    state = warning_state if warning_state is not None else {}
+    path = state_path or _warning_state_path(config)
+    current_time = datetime.now(UTC).timestamp()
+    objects = await asyncio.to_thread(list_objects, config)
+    warnings = await asyncio.to_thread(
+        expiring_uploads,
+        config,
+        cache,
+        objects=objects,
+        now=current_time,
+    )
+
+    state_changed = False
+    for token, expires_at in list(state.items()):
+        if expires_at <= current_time:
+            state.pop(token, None)
+            state_changed = True
+
+    warned = 0
+    if notify_warning is not None:
+        for upload in warnings:
+            token = expiry_warning_token(upload)
+            if token in state:
+                continue
+            try:
+                await notify_warning(upload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.warning(
+                    "Could not send R2 deletion warning key=%s",
+                    upload["key"],
+                    exc_info=True,
+                )
+                continue
+            state[token] = upload["expires_at"]
+            state_changed = True
+            warned += 1
+
+    if state_changed:
+        try:
+            await asyncio.to_thread(save_warning_state, path, state)
+        except Exception:
+            LOGGER.warning(
+                "Could not persist R2 deletion warning state",
+                exc_info=True,
+            )
+
+    deleted = await asyncio.to_thread(
+        delete_expired_objects,
+        config,
+        cache,
+        objects=objects,
+        now=current_time,
+    )
+    return {"warned": warned, "deleted": deleted}
+
+
+async def expiry_sweeper(config: Config, notify_warning=None) -> None:
     folder_expiry_cache: FolderExpiryCache = {}
+    state_path = _warning_state_path(config)
+    warning_state = await asyncio.to_thread(load_warning_state, state_path)
     while True:
         try:
-            deleted = await asyncio.to_thread(
-                delete_expired_objects,
+            result = await run_expiry_sweep_once(
                 config,
+                notify_warning,
                 folder_expiry_cache,
+                warning_state,
+                state_path,
             )
-            if deleted:
-                LOGGER.info("Deleted %s expired Cloudflare R2 object(s)", deleted)
+            if result["warned"]:
+                LOGGER.info(
+                    "Sent %s Cloudflare R2 deletion warning(s)", result["warned"]
+                )
+            if result["deleted"]:
+                LOGGER.info(
+                    "Deleted %s expired Cloudflare R2 object(s)", result["deleted"]
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
