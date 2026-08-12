@@ -1,11 +1,8 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..core.config import Config
@@ -13,19 +10,13 @@ from ..core.logging_config import log_event
 from ..core.models import SourceType, Task, TaskPhase
 from ..downloaders.batch import download_batch
 from ..downloaders.direct import download_direct
-from ..downloaders.process import path_size
 from ..downloaders.qbittorrent import QBittorrentClient
 from ..downloaders.telegram import download_telegram_file
 from ..downloaders.torrent import download_torrent
 from ..downloaders.torrent_selector import TorrentSelector
 from ..downloaders.ytdlp import download_ytdlp
-from .paths import ensure_no_symlinks
 from .public_url import public_base_url
 from .task_runner import TaskRunner
-from .transfer_guard import DiskReservationPool
-
-if TYPE_CHECKING:
-    from .r2.client import R2Service
 
 LOGGER = logging.getLogger(__name__)
 MAX_TERMINAL_TASKS = 200
@@ -34,13 +25,11 @@ MAX_TERMINAL_TASKS = 200
 class TaskManager:
     """Owns task registry, engine clients, queueing, and cancellation."""
 
-    def __init__(self, config: Config, r2_service: R2Service | None = None):
+    def __init__(self, config: Config):
         self.config = config
-        self.r2_service = r2_service
         self.tasks: dict[str, Task] = {}
         self.task_sem = asyncio.Semaphore(config.task_limit)
         self.runner_jobs: set[asyncio.Task] = set()
-        self.disk_reservations = DiskReservationPool()
         self.accepting_tasks = True
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
@@ -66,7 +55,6 @@ class TaskManager:
             destination=destination,
             options=options,
             work_dir=self.config.download_dir / task_id,
-            disk_reservation_pool=self.disk_reservations,
         )
         self.tasks[task_id] = task
         log_event(
@@ -201,15 +189,18 @@ class TaskManager:
                 task.result_folders.append(relative)
 
     @staticmethod
-    async def _cleanup(path: Path) -> None:
-        if await asyncio.to_thread(path.exists):
-            await asyncio.to_thread(rmtree, path)
+    def _cleanup(path: Path) -> None:
+        if path.exists():
+            rmtree(path, ignore_errors=True)
 
     @staticmethod
-    async def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
-        await asyncio.to_thread(ensure_no_symlinks, path)
+    def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
         task.transition(phase, path.name)
-        task.size = await asyncio.to_thread(path_size, path)
+        task.size = (
+            path.stat().st_size
+            if path.is_file()
+            else sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+        )
         task.downloaded = 0
         task.progress = 0
         task.speed = 0
@@ -268,68 +259,43 @@ class TaskManager:
         return removed
 
     async def _run_or_cancel(self, task: Task, awaitable):
-        try:
-            self._raise_if_cancelled(task)
-        except BaseException:
-            close = getattr(awaitable, "close", None)
-            if close is not None:
-                close()
-            raise
+        self._raise_if_cancelled(task)
         operation = asyncio.create_task(awaitable)
         cancelled = asyncio.create_task(task.cancel_event.wait())
-        try:
-            done, _ = await asyncio.wait(
-                {operation, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done or task.cancelled:
-                if task.guard_error:
-                    raise task.guard_error
-                raise asyncio.CancelledError()
-            return await operation
-        finally:
-            for child in (operation, cancelled):
-                if not child.done():
-                    child.cancel()
-            await self._drain_children(operation, cancelled)
-
-    @staticmethod
-    async def _drain_children(*children: asyncio.Task) -> None:
-        """Finish child cleanup even if the parent is cancelled a second time."""
-        pending = asyncio.gather(*children, return_exceptions=True)
-        interrupted = False
-        while not pending.done():
-            try:
-                await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                interrupted = True
-        if interrupted:
+        done, _ = await asyncio.wait(
+            {operation, cancelled}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancelled in done or task.cancelled:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            if task.guard_error:
+                raise task.guard_error
             raise asyncio.CancelledError()
+        cancelled.cancel()
+        await asyncio.gather(cancelled, return_exceptions=True)
+        return await operation
 
     @asynccontextmanager
     async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):
         self._raise_if_cancelled(task)
         acquire = asyncio.create_task(semaphore.acquire())
         cancelled = asyncio.create_task(task.cancel_event.wait())
-        acquired = False
+        done, _ = await asyncio.wait(
+            {acquire, cancelled}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancelled in done or task.cancelled:
+            if acquire.done() and not acquire.cancelled():
+                semaphore.release()
+            else:
+                acquire.cancel()
+                await asyncio.gather(acquire, return_exceptions=True)
+            if not cancelled.done():
+                cancelled.cancel()
+                await asyncio.gather(cancelled, return_exceptions=True)
+            raise asyncio.CancelledError()
+        cancelled.cancel()
+        await asyncio.gather(cancelled, return_exceptions=True)
         try:
-            done, _ = await asyncio.wait(
-                {acquire, cancelled}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if cancelled in done or task.cancelled:
-                raise asyncio.CancelledError()
-            await acquire
-            acquired = True
             yield
         finally:
-            cancelled.cancel()
-            if not acquire.done():
-                acquire.cancel()
-            try:
-                await self._drain_children(acquire, cancelled)
-            finally:
-                if acquired or (
-                    acquire.done()
-                    and not acquire.cancelled()
-                    and acquire.exception() is None
-                ):
-                    semaphore.release()
+            semaphore.release()

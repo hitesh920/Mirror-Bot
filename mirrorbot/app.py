@@ -13,8 +13,7 @@ from .core.config import Config
 from .core.logging_config import setup_logging
 from .core.models import AddOptions, Destination, Source, SourceType, TaskPhase
 from .services.background import BackgroundTasks
-from .services.r2 import R2Service
-from .services.r2.retention import expiry_sweeper
+from .services.r2_delivery import expiry_sweeper
 from .services.restart_state import take_restart_state
 from .services.runtime import RuntimeCoordinator
 from .services.startup import cleanup_abandoned_downloads
@@ -27,8 +26,7 @@ from .telegram.status import TelegramStatus
 setup_logging()
 LOGGER = logging.getLogger(__name__)
 config = Config.load()
-r2_service = R2Service(config) if config.r2_configured else None
-manager = TaskManager(config, r2_service)
+manager = TaskManager(config)
 background = BackgroundTasks()
 runtime = RuntimeCoordinator(manager, background)
 shutting_down = False
@@ -354,8 +352,6 @@ async def shutdown_bot() -> None:
     for job in list(pending_add_expiry_jobs.values()):
         job.cancel()
     await runtime.shutdown()
-    if r2_service is not None:
-        await asyncio.to_thread(r2_service.close)
     LOGGER.info("Graceful shutdown complete")
 
 
@@ -422,7 +418,7 @@ async def main() -> None:
             LOGGER.info("Restart success notification sent elapsed=%ss", elapsed)
         except Exception:
             LOGGER.exception("Could not send restart success notification")
-    if r2_service is not None and config.r2_auto_delete_seconds > 0:
+    if config.r2_configured and config.r2_auto_delete_seconds > 0:
         warning_callback = send_r2_expiry_warning if telegram_started else None
         if warning_callback is None:
             LOGGER.warning(
@@ -430,7 +426,7 @@ async def main() -> None:
                 "warnings are unavailable"
             )
         background.create(
-            expiry_sweeper(r2_service, warning_callback),
+            expiry_sweeper(config, warning_callback),
             name="r2-expiry-sweeper",
         )
     try:

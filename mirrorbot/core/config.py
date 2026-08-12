@@ -33,23 +33,6 @@ def _bounded_int(
     return value
 
 
-def _r2_prefix(value: str | None, *, r2_enabled: bool) -> str:
-    raw = (value or "").strip()
-    if not raw:
-        return "uploads/"
-    if "\\" in raw or any(ord(character) < 32 for character in raw):
-        raise RuntimeError("R2_PREFIX contains unsupported characters")
-    stripped = raw.strip("/")
-    if not stripped:
-        if r2_enabled:
-            raise RuntimeError("R2_PREFIX cannot be the bucket root")
-        return "uploads/"
-    parts = stripped.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise RuntimeError("R2_PREFIX contains an unsafe path component")
-    return f"{'/'.join(parts)}/"
-
-
 @dataclass(frozen=True)
 class Config:
     bot_token: str
@@ -92,25 +75,12 @@ class Config:
         if missing:
             raise RuntimeError(f"Missing required config: {', '.join(missing)}")
 
-        r2_endpoint_url = getenv("R2_ENDPOINT_URL", "").strip().rstrip("/")
-        r2_bucket = getenv("R2_BUCKET", "").strip()
-        r2_access_key_id = getenv("R2_ACCESS_KEY_ID", "").strip()
-        r2_secret_access_key = getenv("R2_SECRET_ACCESS_KEY", "").strip()
-        r2_enabled = all(
-            (
-                r2_endpoint_url,
-                r2_bucket,
-                r2_access_key_id,
-                r2_secret_access_key,
-            )
-        )
-
         return cls(
             bot_token=getenv("BOT_TOKEN", ""),
             owner_id=_int("OWNER_ID"),
             telegram_api_id=_int("TELEGRAM_API_ID"),
             telegram_api_hash=getenv("TELEGRAM_API_HASH", ""),
-            task_limit=_bounded_int("TASK_LIMIT", 10, minimum=1, maximum=50),
+            task_limit=_bounded_int("TASK_LIMIT", 10, minimum=1),
             status_update_interval=_bounded_int(
                 "STATUS_UPDATE_INTERVAL",
                 10,
@@ -129,11 +99,11 @@ class Config:
                 minimum=1,
             ),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
-            r2_endpoint_url=r2_endpoint_url,
-            r2_bucket=r2_bucket,
-            r2_access_key_id=r2_access_key_id,
-            r2_secret_access_key=r2_secret_access_key,
-            r2_prefix=_r2_prefix(getenv("R2_PREFIX"), r2_enabled=r2_enabled),
+            r2_endpoint_url=getenv("R2_ENDPOINT_URL", "").strip().rstrip("/"),
+            r2_bucket=getenv("R2_BUCKET", "").strip(),
+            r2_access_key_id=getenv("R2_ACCESS_KEY_ID", "").strip(),
+            r2_secret_access_key=getenv("R2_SECRET_ACCESS_KEY", "").strip(),
+            r2_prefix=getenv("R2_PREFIX", "uploads/").strip(),
             r2_auto_delete_seconds=_bounded_int(
                 "R2_AUTO_DELETE_SECONDS",
                 172800,

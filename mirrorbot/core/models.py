@@ -106,7 +106,6 @@ class Task:
     failure_category: str = ""
     guard_error: Exception | None = field(default=None, repr=False)
     guard_path: Path | None = None
-    disk_reservation_pool: Any | None = field(default=None, repr=False)
     last_progress_at: float = field(default_factory=monotonic)
     last_processed_bytes: int = 0
 

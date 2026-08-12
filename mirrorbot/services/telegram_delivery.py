@@ -14,7 +14,7 @@ from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
 from .media_metadata import MediaMetadata, create_video_thumbnail, probe_media
 from .paths import ensure_no_symlinks
-from .transfer_guard import reserve_disk_space, update_disk_reservation
+from .transfer_guard import ensure_disk_space
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = {".mkv", ".m4v", ".mov", ".mp4", ".webm"}
@@ -156,8 +156,7 @@ async def split_file(
         source.stat().st_size,
         part_size,
     )
-    source_size = source.stat().st_size
-    await reserve_disk_space(task, parts_dir, source_size)
+    ensure_disk_space(parts_dir, source.stat().st_size)
     key = sha1(str(source).encode(), usedforsecurity=False).hexdigest()[:12]
     target_dir = parts_dir / key
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -188,10 +187,6 @@ async def split_file(
                     await output_file.write(chunk)
                     written += len(chunk)
                     task.downloaded += len(chunk)
-                    await update_disk_reservation(
-                        task,
-                        max(0, source_size - task.downloaded),
-                    )
                     task.progress = task.downloaded / task.size if task.size else 0
                     elapsed = monotonic() - started
                     task.speed = int(task.downloaded / elapsed) if elapsed else 0
@@ -213,7 +208,6 @@ async def split_file(
         source.name,
         len(parts),
     )
-    await update_disk_reservation(task, 0)
     return parts
 
 
@@ -289,13 +283,13 @@ async def _upload_to_telegram_chat(
     upload_chat_id: int | str,
     upload_mode: str,
 ) -> int:
-    files = await asyncio.to_thread(upload_files, path)
+    files = upload_files(path)
     if not files:
         raise RuntimeError("Nothing to upload to Telegram")
 
     parts_dir = task.work_dir / ".telegram-parts"
     thumbs_dir = task.work_dir / ".telegram-thumbs"
-    total_size = await asyncio.to_thread(path_size, path)
+    total_size = path_size(path)
     task.size = total_size
     task.downloaded = 0
     task.progress = 0
@@ -409,5 +403,5 @@ async def _upload_to_telegram_chat(
         )
         return sent
     finally:
-        await asyncio.to_thread(rmtree, parts_dir, True)
-        await asyncio.to_thread(rmtree, thumbs_dir, True)
+        rmtree(parts_dir, ignore_errors=True)
+        rmtree(thumbs_dir, ignore_errors=True)
