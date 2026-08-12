@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import rmtree
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..core.config import Config
@@ -21,6 +24,9 @@ from .public_url import public_base_url
 from .task_runner import TaskRunner
 from .transfer_guard import DiskReservationPool
 
+if TYPE_CHECKING:
+    from .r2.client import R2Service
+
 LOGGER = logging.getLogger(__name__)
 MAX_TERMINAL_TASKS = 200
 
@@ -28,8 +34,9 @@ MAX_TERMINAL_TASKS = 200
 class TaskManager:
     """Owns task registry, engine clients, queueing, and cancellation."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, r2_service: R2Service | None = None):
         self.config = config
+        self.r2_service = r2_service
         self.tasks: dict[str, Task] = {}
         self.task_sem = asyncio.Semaphore(config.task_limit)
         self.runner_jobs: set[asyncio.Task] = set()

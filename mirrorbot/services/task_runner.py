@@ -19,7 +19,7 @@ from .archive import (
     zip_path,
 )
 from .paths import ensure_no_symlinks
-from .r2_delivery import upload_to_r2
+from .r2.upload import upload_to_r2
 from .telegram_delivery import upload_to_telegram
 from .transfer_guard import (
     TransferGuard,
@@ -128,8 +128,22 @@ class TaskRunner:
                 self._mark_failed(task, exc, "unexpected", logging.ERROR)
                 LOGGER.exception("Unexpected task failure task=%s", task.short_id())
         finally:
-            await self._finalize(task, guard_job)
+            await self._complete_finalization(task, guard_job)
         return task
+
+    async def _complete_finalization(
+        self,
+        task: Task,
+        guard_job: asyncio.Task | None,
+    ) -> None:
+        """Do not let repeated cancellation interrupt resource cleanup."""
+        cleanup = asyncio.create_task(self._finalize(task, guard_job))
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
 
     async def _process_download(self, task: Task, downloaded: Path) -> Path:
         manager = self.manager
@@ -196,7 +210,9 @@ class TaskRunner:
                 manager.config.telegram_dump_chat_id,
             )
         elif task.destination == Destination.CLOUDFLARE_R2:
-            operation = upload_to_r2(task, path, manager.config)
+            if manager.r2_service is None:
+                raise RuntimeError("Cloudflare R2 is unavailable")
+            operation = upload_to_r2(task, path, manager.r2_service)
         else:
             raise NotImplementedError(
                 f"{task.destination.value} upload is not implemented"

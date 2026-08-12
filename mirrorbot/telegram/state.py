@@ -14,30 +14,39 @@ class ExpiringItem(Generic[T]):
 
 
 class ExpiringStore(Generic[T]):
-    def __init__(self, ttl_seconds: int):
+    def __init__(self, ttl_seconds: int, *, max_items: int = 128):
+        if max_items < 1:
+            raise ValueError("max_items must be positive")
         self.ttl_seconds = ttl_seconds
+        self.max_items = max_items
         self._items: dict[str, ExpiringItem[T]] = {}
 
     def put(self, key: str, value: T) -> None:
-        self._items[key] = ExpiringItem(value, monotonic() + self.ttl_seconds)
+        now = monotonic()
+        self._prune(now)
+        if key not in self._items and len(self._items) >= self.max_items:
+            oldest = min(
+                self._items,
+                key=lambda stored: self._items[stored].expires_at,
+            )
+            self._items.pop(oldest, None)
+        self._items[key] = ExpiringItem(value, now + self.ttl_seconds)
 
     def take(self, key: str) -> T | None:
+        self._prune(monotonic())
         item = self._items.pop(key, None)
-        if item is None or item.expires_at <= monotonic():
+        if item is None:
             return None
         return item.value
 
     def get(self, key: str) -> T | None:
+        self._prune(monotonic())
         item = self._items.get(key)
         if item is None:
             return None
-        if item.expires_at <= monotonic():
-            self._items.pop(key, None)
-            return None
         return item.value
 
-    def pop_expired(self) -> list[tuple[str, T]]:
-        now = monotonic()
+    def _prune(self, now: float) -> list[tuple[str, T]]:
         expired = [
             (key, item.value)
             for key, item in self._items.items()
@@ -46,3 +55,6 @@ class ExpiringStore(Generic[T]):
         for key, _ in expired:
             self._items.pop(key, None)
         return expired
+
+    def pop_expired(self) -> list[tuple[str, T]]:
+        return self._prune(monotonic())

@@ -322,6 +322,40 @@ async def test_finalization_releases_disk_reservation(
 
 
 @pytest.mark.asyncio
+async def test_repeated_cancellation_cannot_interrupt_finalization(tmp_path):
+    task = make_task(tmp_path)
+    task.phase = TaskPhase.CANCELLED
+    pool = DiskReservationPool()
+    pool._remaining[task.id] = 100
+    task.disk_reservation_pool = pool
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+
+    async def cleanup(_path):
+        cleanup_started.set()
+        await allow_cleanup.wait()
+
+    manager = SimpleNamespace(
+        _cleanup=cleanup,
+        _prune_terminal_tasks=lambda: None,
+        qb=SimpleNamespace(delete=AsyncMock()),
+    )
+    finalization = asyncio.create_task(
+        TaskRunner(manager)._complete_finalization(task, None)
+    )
+    await cleanup_started.wait()
+    finalization.cancel()
+    finalization.cancel()
+    await asyncio.sleep(0)
+    assert not finalization.done()
+    allow_cleanup.set()
+
+    await finalization
+
+    assert await pool.reserved(task.id) == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "secondary_error",
     [asyncio.CancelledError(), RuntimeError("secondary engine error")],
