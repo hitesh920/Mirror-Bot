@@ -9,7 +9,9 @@ from ..core.errors import TaskFailure
 from ..core.models import AddOptions, Source, SourceType, Task
 from ..resolvers import resolve_source
 from ..resolvers.base import safe_name
+from ..services.transfer_guard import release_disk_reservation
 from .direct import download_direct
+from .process import path_size
 
 BATCH_DOWNLOAD_CONCURRENCY = 3
 URL_IN_TEXT = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -70,6 +72,7 @@ async def download_batch(task: Task) -> Path:
             destination=task.destination,
             options=AddOptions(),
             work_dir=parts / f"{index:02d}",
+            disk_reservation_pool=task.disk_reservation_pool,
         )
         children.append(child)
         try:
@@ -94,6 +97,7 @@ async def download_batch(task: Task) -> Path:
                 task.batch_failed += 1
                 task.processing_warnings.append(_failure_summary(index, source, exc))
         finally:
+            await release_disk_reservation(child)
             await asyncio.to_thread(rmtree, child.work_dir, True)
 
     async def update_progress() -> None:
@@ -142,7 +146,7 @@ async def download_batch(task: Task) -> Path:
 
     if task.batch_completed == 0:
         raise BatchDownloadError("Every link in the batch failed; nothing was uploaded")
-    task.size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
+    task.size = await asyncio.to_thread(path_size, root)
     task.downloaded = task.size
     task.progress = 1
     return root

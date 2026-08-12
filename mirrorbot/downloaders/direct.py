@@ -12,7 +12,11 @@ import aiohttp
 from ..core.errors import NetworkTimeoutError
 from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
-from ..services.transfer_guard import ensure_disk_space
+from ..services.transfer_guard import (
+    release_disk_reservation,
+    reserve_disk_space,
+    update_disk_reservation,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ async def download_single_direct_with_retries(task: Task) -> Path:
             task.progress = 0
             task.speed = 0
             task.eta = 0
-            rmtree(task.work_dir, ignore_errors=True)
+            await asyncio.to_thread(rmtree, task.work_dir, True)
             LOGGER.warning(
                 "Task %s: retrying direct download attempt=%s",
                 task.short_id(),
@@ -74,6 +78,7 @@ async def download_single_direct_with_retries(task: Task) -> Path:
         try:
             return await download_single_direct(task)
         except Exception as exc:
+            await release_disk_reservation(task)
             if not retryable_direct_error(exc) or attempt > DIRECT_DOWNLOAD_RETRIES:
                 raise
             last_error = exc
@@ -116,7 +121,8 @@ async def download_single_direct(task: Task) -> Path:
         target = task.work_dir / filename
         task.name = filename
         task.size = total
-        ensure_disk_space(target, total)
+        if total:
+            await reserve_disk_space(task, target, total)
         started = monotonic()
         async with aiofiles.open(target, "wb") as file:
             try:
@@ -125,6 +131,11 @@ async def download_single_direct(task: Task) -> Path:
                         raise asyncio.CancelledError()
                     await file.write(chunk)
                     task.downloaded += len(chunk)
+                    if total:
+                        await update_disk_reservation(
+                            task,
+                            max(0, total - task.downloaded),
+                        )
                     elapsed = monotonic() - started
                     task.speed = int(task.downloaded / elapsed) if elapsed else 0
                     if total:
@@ -155,7 +166,8 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     root.mkdir(parents=True, exist_ok=True)
     task.name = root.name
     task.size = collection.total_size
-    ensure_disk_space(root, task.size)
+    if task.size:
+        await reserve_disk_space(task, root, task.size)
     started = monotonic()
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(3)
@@ -198,6 +210,11 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
                             await file.write(chunk)
                             async with lock:
                                 task.downloaded += len(chunk)
+                                if task.size:
+                                    await update_disk_reservation(
+                                        task,
+                                        max(0, task.size - task.downloaded),
+                                    )
                                 elapsed = monotonic() - started
                                 task.speed = (
                                     int(task.downloaded / elapsed) if elapsed else 0

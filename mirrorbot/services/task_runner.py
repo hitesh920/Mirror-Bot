@@ -11,6 +11,7 @@ from ..core.logging_config import log_event
 from ..core.models import Destination, SourceType, Task, TaskPhase
 from ..resolvers import resolve_source
 from .archive import (
+    ArchiveCommandError,
     ArchiveCorruptError,
     ArchivePasswordError,
     ArchiveUnsupportedError,
@@ -20,7 +21,11 @@ from .archive import (
 from .paths import ensure_no_symlinks
 from .r2_delivery import upload_to_r2
 from .telegram_delivery import upload_to_telegram
-from .transfer_guard import TransferGuard, ensure_disk_space
+from .transfer_guard import (
+    TransferGuard,
+    ensure_disk_space,
+    release_disk_reservation,
+)
 
 if TYPE_CHECKING:
     from .task_manager import TaskManager
@@ -69,8 +74,10 @@ class TaskRunner:
                         on_selector_done,
                     ),
                 )
+                await release_disk_reservation(task)
 
                 manager._raise_if_cancelled(task)
+                await asyncio.to_thread(ensure_no_symlinks, downloaded)
                 task.transition(TaskPhase.PREPARING)
                 if not task.name:
                     task.name = downloaded.name
@@ -90,7 +97,15 @@ class TaskRunner:
                 task.current_file = ""
             self._log_completed(task)
         except asyncio.CancelledError:
-            self._mark_cancelled(task)
+            if task.guard_error is not None:
+                self._mark_failed(
+                    task,
+                    task.guard_error,
+                    task.failure_category or "engine",
+                    logging.WARNING,
+                )
+            else:
+                self._mark_cancelled(task)
         except TaskFailure as exc:
             self._mark_failed(task, exc, exc.category, logging.WARNING)
         except (
@@ -100,7 +115,14 @@ class TaskRunner:
         ) as exc:
             self._mark_failed(task, exc, "processing", logging.WARNING)
         except Exception as exc:
-            if task.cancelled:
+            if task.guard_error is not None:
+                self._mark_failed(
+                    task,
+                    task.guard_error,
+                    task.failure_category or "engine",
+                    logging.WARNING,
+                )
+            elif task.cancelled:
                 self._mark_cancelled(task, "cancelled during shutdown")
             else:
                 self._mark_failed(task, exc, "unexpected", logging.ERROR)
@@ -112,7 +134,9 @@ class TaskRunner:
     async def _process_download(self, task: Task, downloaded: Path) -> Path:
         manager = self.manager
         if task.options.extract:
-            manager._start_processing_phase(task, TaskPhase.EXTRACTING, downloaded)
+            await manager._start_processing_phase(
+                task, TaskPhase.EXTRACTING, downloaded
+            )
             original = downloaded
             try:
                 downloaded = await extract_path(
@@ -124,7 +148,9 @@ class TaskRunner:
                 ArchiveUnsupportedError,
             ):
                 raise
-            except RuntimeError as exc:
+            except TaskFailure:
+                raise
+            except ArchiveCommandError as exc:
                 task.processing_warnings.append(
                     "Extraction failed, so the original file was delivered."
                 )
@@ -137,8 +163,9 @@ class TaskRunner:
                 task.current_file = downloaded.name
                 self._reset_progress(task)
             manager._raise_if_cancelled(task)
+            await asyncio.to_thread(ensure_no_symlinks, downloaded)
         if task.options.zip:
-            manager._start_processing_phase(task, TaskPhase.ARCHIVING, downloaded)
+            await manager._start_processing_phase(task, TaskPhase.ARCHIVING, downloaded)
             downloaded = await zip_path(
                 downloaded,
                 task,
@@ -191,14 +218,29 @@ class TaskRunner:
                 LOGGER.exception(
                     "Task %s: failed to clean qBittorrent task", task.short_id()
                 )
-        manager._cleanup(task.work_dir)
-        log_event(
-            LOGGER,
-            logging.INFO,
-            "task.cleaned",
-            task=task.short_id(),
-            phase=task.phase.value,
-        )
+        await release_disk_reservation(task)
+        try:
+            await manager._cleanup(task.work_dir)
+        except Exception as exc:
+            task.processing_warnings.append(
+                "Temporary workspace cleanup failed; operator review is required."
+            )
+            log_event(
+                LOGGER,
+                logging.ERROR,
+                "task.cleanup_failed",
+                task=task.short_id(),
+                phase=task.phase.value,
+                result=exc,
+            )
+        else:
+            log_event(
+                LOGGER,
+                logging.INFO,
+                "task.cleaned",
+                task=task.short_id(),
+                phase=task.phase.value,
+            )
         manager._prune_terminal_tasks()
 
     @staticmethod

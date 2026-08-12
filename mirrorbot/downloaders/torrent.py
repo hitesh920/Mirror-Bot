@@ -15,7 +15,7 @@ from ..core.errors import (
 )
 from ..core.models import Task, TaskPhase
 from ..services.paths import ensure_inside
-from ..services.transfer_guard import ensure_disk_space
+from ..services.transfer_guard import reserve_disk_space, update_disk_reservation
 from .qbittorrent import QBittorrentClient
 from .torrent_selector import TorrentSelector
 
@@ -187,7 +187,7 @@ async def download_torrent(
         selected_files = await qb.files(task.torrent_hash)
         selected_size = selected_torrent_size(selected_files)
         task.size = selected_size
-        ensure_disk_space(task.work_dir, selected_size)
+        await reserve_disk_space(task, task.work_dir, selected_size)
     finally:
         task.selection_url = ""
         if on_selector_done and selector_message:
@@ -204,6 +204,11 @@ async def download_torrent(
         task.progress = float(torrent.get("progress", 0))
         task.downloaded = int(torrent.get("downloaded", 0))
         task.size = int(torrent.get("size", task.size))
+        if task.size:
+            await update_disk_reservation(
+                task,
+                max(0, task.size - task.downloaded),
+            )
         task.speed = int(torrent.get("dlspeed", 0))
         task.eta = int(torrent.get("eta", 0))
         state = torrent.get("state", "")
@@ -211,7 +216,7 @@ async def download_torrent(
             content_path = torrent_content_path(task, torrent)
             final_files = await qb.files(task.torrent_hash)
             await qb.delete(task.torrent_hash, False)
-            _clean_skipped_files(task, torrent, final_files)
+            await asyncio.to_thread(_clean_skipped_files, task, torrent, final_files)
             LOGGER.info("Task %s: torrent download complete", task.short_id())
             return content_path
         if state in ERROR_STATES:

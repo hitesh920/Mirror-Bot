@@ -336,13 +336,14 @@ class R2Uploader:
         self.client = r2_client(config)
         self.created_keys: list[str] = []
         self.active_upload: tuple[str, str] | None = None
-        self.total_size = path_size(path)
+        self.total_size = 0
         self.uploaded = 0
         self.started = monotonic()
 
     async def upload(self) -> None:
-        ensure_no_symlinks(self.path)
-        files, folders = iter_upload_files(self.path)
+        await asyncio.to_thread(ensure_no_symlinks, self.path)
+        files, folders = await asyncio.to_thread(iter_upload_files, self.path)
+        self.total_size = await asyncio.to_thread(path_size, self.path)
         self.task.size = self.total_size
         self.task.downloaded = 0
         self.task.progress = 0
