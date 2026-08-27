@@ -54,13 +54,19 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
         asyncio.create_task(read_stream(process.stdout)),
         asyncio.create_task(read_stream(process.stderr)),
     ]
-    while process.returncode is None:
-        if task.cancelled:
-            await terminate_process(process)
-            await asyncio.gather(*readers, return_exceptions=True)
-            raise asyncio.CancelledError()
-        await asyncio.sleep(0.25)
-    await asyncio.gather(*readers)
+    wait_job = asyncio.create_task(process.wait())
+    cancel_job = asyncio.create_task(task.cancel_event.wait())
+    done, _ = await asyncio.wait(
+        {wait_job, cancel_job}, return_when=asyncio.FIRST_COMPLETED
+    )
+    cancel_job.cancel()
+    if wait_job not in done:
+        await terminate_process(process)
+        await asyncio.gather(
+            wait_job, cancel_job, *readers, return_exceptions=True
+        )
+        raise asyncio.CancelledError()
+    await asyncio.gather(cancel_job, *readers, return_exceptions=True)
     detail = output.decode(errors="replace").strip()
     if process.returncode:
         if (

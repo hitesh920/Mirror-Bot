@@ -199,4 +199,8 @@ async def restart_cmd(_, message: Message):
     )
     LOGGER.info("========== RESTART REQUESTED ==========")
     await asyncio.sleep(0.5)
+    # PID 1 in the container is start.sh (see Dockerfile CMD / start.sh), whose
+    # TERM trap shuts the bot down cleanly and lets Docker's restart policy
+    # bring it back. Outside that wrapper (e.g. `python -m mirrorbot` directly)
+    # PID 1 is not this process and /restart will not work.
     os.kill(1, signal.SIGTERM)

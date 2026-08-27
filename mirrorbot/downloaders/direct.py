@@ -24,6 +24,19 @@ COLLECTION_DOWNLOAD_CONCURRENCY = 3
 CHUNK_SIZE = 1024 * 512
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
+# One global cap on simultaneous HTTP file transfers, shared by standalone
+# direct downloads, batch items, and collection items, so a batch of
+# collections cannot open (batch x collection x tasks) sockets at once.
+HTTP_DOWNLOAD_CONCURRENCY = 8
+_http_download_slots: asyncio.Semaphore | None = None
+
+
+def _download_slots() -> asyncio.Semaphore:
+    global _http_download_slots
+    if _http_download_slots is None:
+        _http_download_slots = asyncio.Semaphore(HTTP_DOWNLOAD_CONCURRENCY)
+    return _http_download_slots
+
 
 def filename_from_url(url: str) -> str:
     name = Path(unquote(urlparse(url).path)).name
@@ -135,6 +148,7 @@ async def download_single_direct(task: Task) -> Path:
     headers = {"User-Agent": USER_AGENT, **(task.source.metadata.get("headers") or {})}
     cookies = task.source.metadata.get("cookies") or {}
     async with (
+        _download_slots(),
         aiohttp.ClientSession(
             headers=headers,
             cookies=cookies,
@@ -217,12 +231,15 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
             await record_bytes(delta)
 
         try:
-            async with session.get(
-                item.url,
-                headers=item.headers,
-                cookies=item.cookies,
-                allow_redirects=True,
-            ) as response:
+            async with (
+                _download_slots(),
+                session.get(
+                    item.url,
+                    headers=item.headers,
+                    cookies=item.cookies,
+                    allow_redirects=True,
+                ) as response,
+            ):
                 response.raise_for_status()
                 await _stream_to_file(response, target, task, on_bytes)
         except BaseException:

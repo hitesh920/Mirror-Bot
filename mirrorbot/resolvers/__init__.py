@@ -65,62 +65,69 @@ def _cause_summary(exc: Exception) -> str:
     return type(exc).__name__
 
 
-async def resolve_source(source: Source) -> Source:
+async def resolve_source(
+    source: Source, session: aiohttp.ClientSession | None = None
+) -> Source:
     if source.type != SourceType.DIRECT_URL:
         return source
+    if session is not None:
+        return await _resolve_with(source, session)
+    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as owned:
+        return await _resolve_with(source, owned)
 
+
+async def _resolve_with(source: Source, session: aiohttp.ClientSession) -> Source:
     current = source
-    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
-        for _ in range(3):
-            resolver = next(
-                (
-                    candidate
-                    for candidate in RESOLVERS
-                    if candidate.supports(current.value)
-                ),
-                None,
-            )
-            if resolver is None:
-                return current
-            original = current.value
-            try:
-                result = await resolver.resolve(original, session)
-            except ResolverError:
-                raise
-            except Exception as exc:
-                LOGGER.warning(
-                    "Resolver %s failed host=%s error=%s: %s",
-                    resolver.name,
-                    urlparse(original).hostname or "unknown-host",
-                    type(exc).__name__,
-                    exc,
-                )
-                raise ResolverError(
-                    f"{resolver.name} could not resolve this link "
-                    f"({_cause_summary(exc)})"
-                ) from exc
-            current = resolved_source(current, result, resolver.name)
-            resolved_target = (
-                f"collection:{len(result.files)}"
-                if isinstance(result, ResolvedCollection)
-                else urlparse(result.url).hostname or "unknown-host"
-            )
-            LOGGER.info(
-                "Resolved direct-host link resolver=%s target=%s",
+    for _ in range(3):
+        resolver = next(
+            (
+                candidate
+                for candidate in RESOLVERS
+                if candidate.supports(current.value)
+            ),
+            None,
+        )
+        if resolver is None:
+            return current
+        original = current.value
+        try:
+            result = await resolver.resolve(original, session)
+        except ResolverError:
+            raise
+        except Exception as exc:
+            LOGGER.warning(
+                "Resolver %s failed host=%s error=%s: %s",
                 resolver.name,
-                resolved_target,
+                urlparse(original).hostname or "unknown-host",
+                type(exc).__name__,
+                exc,
             )
-            if isinstance(result, ResolvedCollection):
-                return current
-            if resolver.name == "redirect":
-                from ..core.source_detector import detect_source
+            raise ResolverError(
+                f"{resolver.name} could not resolve this link "
+                f"({_cause_summary(exc)})"
+            ) from exc
+        current = resolved_source(current, result, resolver.name)
+        resolved_target = (
+            f"collection:{len(result.files)}"
+            if isinstance(result, ResolvedCollection)
+            else urlparse(result.url).hostname or "unknown-host"
+        )
+        LOGGER.info(
+            "Resolved direct-host link resolver=%s target=%s",
+            resolver.name,
+            resolved_target,
+        )
+        if isinstance(result, ResolvedCollection):
+            return current
+        if resolver.name == "redirect":
+            from ..core.source_detector import detect_source
 
-                detected = detect_source(current.value, current.filename)
-                if detected.type != SourceType.DIRECT_URL:
-                    detected.metadata.update(current.metadata)
-                    return detected
-            if current.value == original:
-                return current
+            detected = detect_source(current.value, current.filename)
+            if detected.type != SourceType.DIRECT_URL:
+                detected.metadata.update(current.metadata)
+                return detected
+        if current.value == original:
+            return current
     if any(resolver.supports(current.value) for resolver in RESOLVERS):
         raise ResolverError(
             "This link kept redirecting and never resolved to a downloadable file"
