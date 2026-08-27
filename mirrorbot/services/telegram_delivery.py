@@ -3,7 +3,6 @@ import logging
 from hashlib import sha1
 from pathlib import Path
 from shutil import rmtree
-from time import monotonic
 
 import aiofiles
 from pyrogram import Client
@@ -132,16 +131,13 @@ def upload_progress_callback(
     client: Client,
     total_size: int,
     uploaded_before: int,
-    started: float,
 ):
     async def progress(current: int, _total: int) -> None:
         if task.cancelled:
             client.stop_transmission()
-        task.downloaded = min(total_size, uploaded_before + current)
-        task.progress = task.downloaded / total_size if total_size else 0
-        elapsed = monotonic() - started
-        task.speed = int(task.downloaded / elapsed) if elapsed else 0
-        task.eta = int((total_size - task.downloaded) / task.speed) if task.speed else 0
+        task.report_progress(
+            min(total_size, uploaded_before + current), size=total_size
+        )
 
     return progress
 
@@ -163,12 +159,7 @@ async def split_file(
     parts = []
     index = 1
     task.transition(TaskPhase.SPLITTING, source.name)
-    task.size = source.stat().st_size
-    task.downloaded = 0
-    task.progress = 0
-    task.speed = 0
-    task.eta = 0
-    started = monotonic()
+    task.begin_progress(source.stat().st_size)
     async with aiofiles.open(source, "rb") as input_file:
         while True:
             if task.cancelled:
@@ -186,15 +177,7 @@ async def split_file(
                         break
                     await output_file.write(chunk)
                     written += len(chunk)
-                    task.downloaded += len(chunk)
-                    task.progress = task.downloaded / task.size if task.size else 0
-                    elapsed = monotonic() - started
-                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                    task.eta = (
-                        int((task.size - task.downloaded) / task.speed)
-                        if task.speed
-                        else 0
-                    )
+                    task.advance_progress(len(chunk))
             if not written:
                 part.unlink(missing_ok=True)
                 break
@@ -290,12 +273,7 @@ async def _upload_to_telegram_chat(
     parts_dir = task.work_dir / ".telegram-parts"
     thumbs_dir = task.work_dir / ".telegram-thumbs"
     total_size = path_size(path)
-    task.size = total_size
-    task.downloaded = 0
-    task.progress = 0
-    task.speed = 0
-    task.eta = 0
-    started = monotonic()
+    task.begin_progress(total_size)
     uploaded = 0
     sent = 0
     task.result_files = []
@@ -315,11 +293,8 @@ async def _upload_to_telegram_chat(
             if source.stat().st_size > split_size:
                 outgoing = await split_file(task, source, parts_dir, split_size)
                 task.transition(TaskPhase.UPLOADING)
-                task.size = total_size
-                task.downloaded = uploaded
-                task.progress = uploaded / total_size if total_size else 0
-                task.speed = 0
-                task.eta = 0
+                task.begin_progress(total_size)
+                task.report_progress(uploaded, size=total_size)
             else:
                 outgoing = [source]
 
@@ -334,7 +309,6 @@ async def _upload_to_telegram_chat(
                     client,
                     total_size,
                     uploaded,
-                    started,
                 )
 
                 caption = current_file[:1024]
@@ -379,8 +353,7 @@ async def _upload_to_telegram_chat(
                 if message is None:
                     raise asyncio.CancelledError()
                 uploaded += item.stat().st_size
-                task.downloaded = min(total_size, uploaded)
-                task.progress = task.downloaded / total_size if total_size else 1
+                task.report_progress(min(total_size, uploaded), size=total_size)
                 sent += 1
                 task.result_files.append(current_file)
                 task.result_links.append(
@@ -392,9 +365,7 @@ async def _upload_to_telegram_chat(
                     current_file,
                 )
 
-        task.progress = 1
-        task.downloaded = total_size
-        task.eta = 0
+        task.report_progress(total_size, size=total_size, complete=True)
         LOGGER.info(
             "Task %s: Telegram delivery complete files=%s bytes=%s",
             task.short_id(),

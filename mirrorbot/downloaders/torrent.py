@@ -108,11 +108,13 @@ async def _wait_for_metadata(
         if not torrents:
             raise TorrentRemovedError("Torrent disappeared while fetching metadata")
         torrent = torrents[0]
-        task.progress = float(torrent.get("progress", 0))
-        task.downloaded = int(torrent.get("downloaded", 0))
-        task.size = int(torrent.get("size", task.size))
-        task.speed = int(torrent.get("dlspeed", 0))
-        task.eta = int(torrent.get("eta", 0))
+        task.set_transfer_stats(
+            downloaded=int(torrent.get("downloaded", 0)),
+            size=int(torrent.get("size", task.size)),
+            speed=int(torrent.get("dlspeed", 0)),
+            eta=int(torrent.get("eta", 0)),
+            progress=float(torrent.get("progress", 0)),
+        )
         files = await qb.files(task.torrent_hash)
         if files and torrent.get("state") not in {"metaDL", "checkingResumeData"}:
             return torrent, files
@@ -154,7 +156,7 @@ async def download_torrent(
     task.size = sum(file.get("size", 0) for file in files)
 
     selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
-    selection = selector.get(task.torrent_hash)
+    selection = await selector.get(task.torrent_hash)
     while selection is None and not selection_job.done():
         if task.cancelled:
             selection_job.cancel()
@@ -163,7 +165,7 @@ async def download_torrent(
             await qb.delete(task.torrent_hash, True)
             raise asyncio.CancelledError()
         await asyncio.sleep(0.2)
-        selection = selector.get(task.torrent_hash)
+        selection = await selector.get(task.torrent_hash)
     if selection is None:
         # select() finished without ever registering a selection: surface its
         # failure if it had one, otherwise treat it as an engine error rather
@@ -206,11 +208,13 @@ async def download_torrent(
         if not torrents:
             raise TorrentRemovedError("Torrent disappeared from qBittorrent")
         torrent = torrents[0]
-        task.progress = float(torrent.get("progress", 0))
-        task.downloaded = int(torrent.get("downloaded", 0))
-        task.size = int(torrent.get("size", task.size))
-        task.speed = int(torrent.get("dlspeed", 0))
-        task.eta = int(torrent.get("eta", 0))
+        task.set_transfer_stats(
+            downloaded=int(torrent.get("downloaded", 0)),
+            size=int(torrent.get("size", task.size)),
+            speed=int(torrent.get("dlspeed", 0)),
+            eta=int(torrent.get("eta", 0)),
+            progress=float(torrent.get("progress", 0)),
+        )
         state = torrent.get("state", "")
         if state in FINISHED_STATES or task.progress >= 1:
             content_path = torrent_content_path(task, torrent)

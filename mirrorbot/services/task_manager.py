@@ -210,15 +210,12 @@ class TaskManager:
     @staticmethod
     def _start_processing_phase(task: Task, phase: TaskPhase, path: Path) -> None:
         task.transition(phase, path.name)
-        task.size = (
+        size = (
             path.stat().st_size
             if path.is_file()
             else sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
         )
-        task.downloaded = 0
-        task.progress = 0
-        task.speed = 0
-        task.eta = 0
+        task.begin_progress(size)
 
     @staticmethod
     def _raise_if_cancelled(task: Task) -> None:

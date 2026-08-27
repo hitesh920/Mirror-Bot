@@ -13,7 +13,7 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
-from time import monotonic, time
+from time import time
 from urllib.parse import unquote, urlsplit
 
 import boto3
@@ -338,16 +338,11 @@ class R2Uploader:
         self.active_upload: tuple[str, str] | None = None
         self.total_size = path_size(path)
         self.uploaded = 0
-        self.started = monotonic()
 
     async def upload(self) -> None:
         ensure_no_symlinks(self.path)
         files, folders = iter_upload_files(self.path)
-        self.task.size = self.total_size
-        self.task.downloaded = 0
-        self.task.progress = 0
-        self.task.speed = 0
-        self.task.eta = 0
+        self.task.begin_progress(self.total_size)
         self.task.result_name = self.path.name
         self.task.result_files = []
         self.task.result_folders = folders
@@ -409,9 +404,9 @@ class R2Uploader:
                 self.task.result_links = (
                     [uploaded_files[0][1]] if uploaded_files else []
                 )
-            self.task.downloaded = self.total_size
-            self.task.progress = 1
-            self.task.eta = 0
+            self.task.report_progress(
+                self.total_size, size=self.total_size, complete=True
+            )
             LOGGER.info(
                 "Task %s: R2 upload complete files=%s bytes=%s",
                 self.task.short_id(),
@@ -545,15 +540,8 @@ class R2Uploader:
             )
 
     def update_progress(self) -> None:
-        processed = min(self.total_size, self.uploaded)
-        self.task.downloaded = processed
-        self.task.progress = processed / self.total_size if self.total_size else 1
-        elapsed = monotonic() - self.started
-        self.task.speed = int(processed / elapsed) if elapsed else 0
-        self.task.eta = (
-            int((self.total_size - processed) / self.task.speed)
-            if self.total_size and self.task.speed
-            else 0
+        self.task.report_progress(
+            min(self.total_size, self.uploaded), size=self.total_size
         )
 
 

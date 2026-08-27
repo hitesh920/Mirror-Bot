@@ -115,4 +115,4 @@ async def test_unknown_token_is_not_found():
 
 async def test_get_returns_none_for_unknown_hash():
     selector = _selector()
-    assert selector.get("nope") is None
+    assert await selector.get("nope") is None

@@ -1,6 +1,5 @@
 import asyncio
 from pathlib import Path
-from time import monotonic
 
 from pyrogram import Client
 from pyrogram.types import Message
@@ -36,7 +35,7 @@ async def download_telegram_file(
     target = task.work_dir / filename
     task.name = filename
 
-    started = monotonic()
+    task.begin_progress()
     checked_total = 0
 
     async def progress(current: int, total: int):
@@ -48,16 +47,10 @@ async def download_telegram_file(
             if client is None:
                 raise asyncio.CancelledError()
             client.stop_transmission()
-        task.downloaded = current
-        task.size = total
-        task.progress = current / total if total else 0
-        elapsed = monotonic() - started
-        task.speed = int(current / elapsed) if elapsed else 0
-        task.eta = int((total - current) / task.speed) if task.speed else 0
+        task.report_progress(current, size=total)
 
     path = await message.download(file_name=str(target), progress=progress)
     if not path:
         raise asyncio.CancelledError()
-    task.progress = 1
-    task.eta = 0
+    task.report_progress(task.downloaded, complete=True)
     return Path(path)

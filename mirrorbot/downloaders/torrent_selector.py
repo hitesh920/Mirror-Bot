@@ -110,8 +110,9 @@ class TorrentSelector:
             selection.closed.set()
             LOGGER.info("Torrent selector closed hash=%s", torrent_hash[:8])
 
-    def get(self, torrent_hash: str) -> Selection | None:
-        return self.selections_by_hash.get(torrent_hash)
+    async def get(self, torrent_hash: str) -> Selection | None:
+        async with self.lock:
+            return self.selections_by_hash.get(torrent_hash)
 
     async def cancel(self, torrent_hash: str) -> None:
         selection = self.selections_by_hash.get(torrent_hash)

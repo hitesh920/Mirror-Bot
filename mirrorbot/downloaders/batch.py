@@ -2,7 +2,6 @@ import asyncio
 import re
 from pathlib import Path
 from shutil import move, rmtree
-from time import monotonic
 from urllib.parse import urlparse
 
 from ..core.errors import TaskFailure
@@ -53,15 +52,14 @@ async def download_batch(task: Task) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     parts.mkdir(parents=True, exist_ok=True)
     task.name = f"{root.name}.zip"
+    task.begin_progress()
     semaphore = asyncio.Semaphore(BATCH_DOWNLOAD_CONCURRENCY)
     move_lock = asyncio.Lock()
     counter_lock = asyncio.Lock()
-    children: list[Task] = []
     jobs: list[asyncio.Task] = []
-    started = monotonic()
 
-    async def run_source(index: int, source: Source) -> None:
-        child = Task(
+    def _child(index: int, source: Source) -> Task:
+        return Task(
             id=f"{task.id}-{index}",
             user_id=task.user_id,
             chat_id=task.chat_id,
@@ -71,7 +69,14 @@ async def download_batch(task: Task) -> Path:
             options=AddOptions(),
             work_dir=parts / f"{index:02d}",
         )
-        children.append(child)
+
+    # Allocate every child up front so update_progress() iterates a list that
+    # is never mutated by another coroutine (#3).
+    children: list[Task] = [
+        _child(index, source) for index, source in enumerate(sources, 1)
+    ]
+
+    async def run_source(index: int, source: Source, child: Task) -> None:
         try:
             async with semaphore:
                 if task.cancelled:
@@ -98,18 +103,14 @@ async def download_batch(task: Task) -> Path:
 
     async def update_progress() -> None:
         while any(not job.done() for job in jobs):
-            task.downloaded = sum(child.downloaded for child in children)
+            total = sum(child.downloaded for child in children)
             known_sizes = [child.size for child in children if child.size]
-            task.size = sum(known_sizes) if len(known_sizes) == len(children) else 0
-            elapsed = monotonic() - started
-            task.speed = int(task.downloaded / elapsed) if elapsed else 0
-            if task.size:
-                task.progress = min(task.downloaded / task.size, 1)
-                task.eta = (
-                    int((task.size - task.downloaded) / task.speed) if task.speed else 0
+            size = sum(known_sizes) if len(known_sizes) == len(children) else 0
+            task.report_progress(total, size=size)
+            if not size:
+                task.progress = (
+                    task.batch_completed / task.batch_total if task.batch_total else 0
                 )
-            else:
-                task.progress = task.batch_completed / task.batch_total
                 task.eta = 0
             active_names = [
                 child.current_file or child.name
@@ -121,7 +122,7 @@ async def download_batch(task: Task) -> Path:
             await asyncio.sleep(0.5)
 
     jobs = [
-        asyncio.create_task(run_source(index, source))
+        asyncio.create_task(run_source(index, source, children[index - 1]))
         for index, source in enumerate(sources, 1)
     ]
     progress_job = asyncio.create_task(update_progress())
@@ -135,14 +136,15 @@ async def download_batch(task: Task) -> Path:
     finally:
         progress_job.cancel()
         await asyncio.gather(progress_job, return_exceptions=True)
-        task.downloaded = sum(child.downloaded for child in children)
+        task.report_progress(sum(child.downloaded for child in children))
         task.speed = 0
         task.eta = 0
         await asyncio.to_thread(rmtree, parts, True)
 
     if task.batch_completed == 0:
         raise BatchDownloadError("Every link in the batch failed; nothing was uploaded")
-    task.size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
-    task.downloaded = task.size
-    task.progress = 1
+    final_size = sum(
+        item.stat().st_size for item in root.rglob("*") if item.is_file()
+    )
+    task.report_progress(final_size, size=final_size, complete=True)
     return root

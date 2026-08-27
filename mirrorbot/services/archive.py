@@ -43,8 +43,7 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
             matches = PROGRESS_PATTERN.findall(chunk)
             if matches:
                 percent = min(100, int(matches[-1]))
-                task.progress = percent / 100
-                task.downloaded = int(task.size * task.progress)
+                task.report_progress(int(task.size * percent / 100), size=task.size)
 
     readers = [
         asyncio.create_task(read_stream(process.stdout)),
@@ -85,8 +84,7 @@ async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
             )
         LOGGER.error("Archive command failed command=%s detail=%s", args[0], detail)
         raise RuntimeError(f"Archive command failed: {detail[-500:]}")
-    task.progress = 1
-    task.downloaded = task.size
+    task.report_progress(task.size, complete=True)
 
 
 async def zip_path(

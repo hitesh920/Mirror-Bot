@@ -48,13 +48,14 @@ def _progress_hook(task: Task):
             raise asyncio.CancelledError()
         if data.get("status") != "downloading":
             return
-        task.downloaded = int(data.get("downloaded_bytes") or 0)
-        task.size = int(
-            data.get("total_bytes") or data.get("total_bytes_estimate") or 0
+        task.set_transfer_stats(
+            downloaded=int(data.get("downloaded_bytes") or 0),
+            size=int(
+                data.get("total_bytes") or data.get("total_bytes_estimate") or 0
+            ),
+            speed=int(data.get("speed") or 0),
+            eta=int(data.get("eta") or 0),
         )
-        task.speed = int(data.get("speed") or 0)
-        task.eta = int(data.get("eta") or 0)
-        task.progress = task.downloaded / task.size if task.size else 0
 
     return update
 

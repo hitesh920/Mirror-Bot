@@ -1119,8 +1119,8 @@ def test_ytdlp_multiple_outputs_return_the_whole_workspace(tmp_path):
 async def test_telegram_upload_progress_binds_completed_bytes():
     task = make_task()
     client = SimpleNamespace(stop_transmission=lambda: None)
-    first = upload_progress_callback(task, client, 1_000, 100, 0)
-    second = upload_progress_callback(task, client, 1_000, 600, 0)
+    first = upload_progress_callback(task, client, 1_000, 100)
+    second = upload_progress_callback(task, client, 1_000, 600)
 
     await first(50, 100)
     assert task.downloaded == 150
@@ -1242,12 +1242,12 @@ async def test_torrent_selector_tracks_multiple_pending_selections():
     )
 
     for _ in range(20):
-        if selector.get("hash-one") and selector.get("hash-two"):
+        if await selector.get("hash-one") and await selector.get("hash-two"):
             break
         await asyncio.sleep(0.01)
 
-    first_selection = selector.get("hash-one")
-    second_selection = selector.get("hash-two")
+    first_selection = await selector.get("hash-one")
+    second_selection = await selector.get("hash-two")
     assert first_selection is not None
     assert second_selection is not None
     assert first_selection.token != second_selection.token
@@ -1257,8 +1257,8 @@ async def test_torrent_selector_tracks_multiple_pending_selections():
 
     assert await first == f"http://selector/select/{first_selection.token}"
     assert await second == f"http://selector/select/{second_selection.token}"
-    assert selector.get("hash-one") is None
-    assert selector.get("hash-two") is None
+    assert await selector.get("hash-one") is None
+    assert await selector.get("hash-two") is None
     selector._stop_server.assert_awaited_once()
 
 

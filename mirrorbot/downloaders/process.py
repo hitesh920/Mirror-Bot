@@ -31,18 +31,9 @@ async def terminate_process(process: asyncio.subprocess.Process) -> None:
 
 
 async def monitor_directory(task: Task, process: asyncio.subprocess.Process) -> None:
-    previous = 0
     while process.returncode is None:
         if task.cancelled:
             await terminate_process(process)
             raise asyncio.CancelledError()
-        current = path_size(task.work_dir)
-        task.downloaded = current
-        if task.size:
-            task.progress = min(current / task.size, 1)
-        delta = max(0, current - previous)
-        task.speed = delta
-        if task.size and task.speed:
-            task.eta = int((task.size - current) / task.speed)
-        previous = current
+        task.report_progress(path_size(task.work_dir))
         await asyncio.sleep(1)

@@ -203,10 +203,7 @@ class TaskRunner:
 
     @staticmethod
     def _reset_progress(task: Task) -> None:
-        task.progress = 0
-        task.downloaded = 0
-        task.speed = 0
-        task.eta = 0
+        task.begin_progress()
 
     @staticmethod
     def _log_completed(task: Task) -> None:

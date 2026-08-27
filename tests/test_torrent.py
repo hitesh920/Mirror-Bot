@@ -97,7 +97,7 @@ class ImmediateSelector:
 
         return _run()
 
-    def get(self, torrent_hash):
+    async def get(self, torrent_hash):
         return _selection(torrent_hash)
 
     async def cancel(self, torrent_hash):
@@ -118,7 +118,7 @@ class CancelOnGetSelector:
 
         return _run()
 
-    def get(self, torrent_hash):
+    async def get(self, torrent_hash):
         self.task.cancelled = True
         return
 

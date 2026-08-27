@@ -108,10 +108,82 @@ class Task:
     guard_path: Path | None = None
     last_progress_at: float = field(default_factory=monotonic)
     last_processed_bytes: int = 0
+    _progress_started: float = field(default_factory=monotonic, repr=False)
 
     @property
     def terminal(self) -> bool:
         return self.phase in {TaskPhase.COMPLETE, TaskPhase.CANCELLED, TaskPhase.ERROR}
+
+    def begin_progress(self, size: int = 0) -> None:
+        """Reset the progress counters and start a fresh timing segment.
+
+        Call this at the start of every transfer stage (download, extract,
+        archive, split, upload) so speed/ETA are measured per stage.
+        """
+        self._progress_started = monotonic()
+        self.size = max(0, int(size))
+        self.downloaded = 0
+        self.progress = 0.0
+        self.speed = 0
+        self.eta = 0
+
+    def report_progress(
+        self,
+        downloaded: int,
+        *,
+        size: int | None = None,
+        current_file: str | None = None,
+        complete: bool = False,
+    ) -> None:
+        """Atomically update downloaded/size/speed/eta/progress from a byte count.
+
+        A single synchronous call with no ``await`` inside, so concurrent
+        readers (the transfer guard, the status loop) never observe a
+        half-updated set of fields.
+        """
+        if size is not None:
+            self.size = max(0, int(size))
+        if current_file is not None:
+            self.current_file = current_file
+        if complete and not self.size:
+            self.size = max(0, int(downloaded))
+        if complete and self.size:
+            self.downloaded = self.size
+        else:
+            self.downloaded = max(0, int(downloaded))
+        elapsed = monotonic() - self._progress_started
+        self.speed = int(self.downloaded / elapsed) if elapsed > 0 else 0
+        if self.size:
+            self.progress = min(self.downloaded / self.size, 1.0)
+            self.eta = (
+                int((self.size - self.downloaded) / self.speed) if self.speed else 0
+            )
+        else:
+            self.progress = 1.0 if complete else 0.0
+            self.eta = 0
+
+    def advance_progress(self, delta: int) -> None:
+        """Add ``delta`` bytes to the running total (see report_progress)."""
+        self.report_progress(self.downloaded + delta)
+
+    def set_transfer_stats(
+        self,
+        *,
+        downloaded: int,
+        size: int,
+        speed: int,
+        eta: int,
+        progress: float | None = None,
+    ) -> None:
+        """Atomically store stats an engine reports directly (torrent, yt-dlp)."""
+        self.downloaded = max(0, int(downloaded))
+        self.size = max(0, int(size))
+        self.speed = max(0, int(speed))
+        self.eta = max(0, int(eta))
+        if progress is not None:
+            self.progress = min(max(float(progress), 0.0), 1.0)
+        elif self.size:
+            self.progress = min(self.downloaded / self.size, 1.0)
 
     def transition(self, phase: TaskPhase, current_file: str = "") -> None:
         if self.terminal and phase != self.phase:

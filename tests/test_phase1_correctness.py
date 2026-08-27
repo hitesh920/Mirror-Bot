@@ -60,7 +60,7 @@ class NeverRegistersSelector:
 
         return _run()
 
-    def get(self, torrent_hash):
+    async def get(self, torrent_hash):
         return None
 
     async def cancel(self, torrent_hash):

@@ -3,7 +3,6 @@ import logging
 from email.message import Message
 from pathlib import Path
 from shutil import rmtree
-from time import monotonic
 from urllib.parse import unquote, urlparse
 
 import aiofiles
@@ -60,10 +59,7 @@ async def download_single_direct_with_retries(task: Task) -> Path:
     last_error: Exception | None = None
     for attempt in range(1, DIRECT_DOWNLOAD_RETRIES + 2):
         if attempt > 1:
-            task.downloaded = 0
-            task.progress = 0
-            task.speed = 0
-            task.eta = 0
+            task.begin_progress()
             rmtree(task.work_dir, ignore_errors=True)
             LOGGER.warning(
                 "Task %s: retrying direct download attempt=%s",
@@ -115,25 +111,15 @@ async def download_single_direct(task: Task) -> Path:
         filename = safe_name(filename, "download.bin")
         target = task.work_dir / filename
         task.name = filename
-        task.size = total
         ensure_disk_space(target, total)
-        started = monotonic()
+        task.begin_progress(total)
         async with aiofiles.open(target, "wb") as file:
             try:
                 async for chunk in response.content.iter_chunked(1024 * 512):
                     if task.cancelled:
                         raise asyncio.CancelledError()
                     await file.write(chunk)
-                    task.downloaded += len(chunk)
-                    elapsed = monotonic() - started
-                    task.speed = int(task.downloaded / elapsed) if elapsed else 0
-                    if total:
-                        task.progress = task.downloaded / total
-                        task.eta = (
-                            int((total - task.downloaded) / task.speed)
-                            if task.speed
-                            else 0
-                        )
+                    task.advance_progress(len(chunk))
             except TimeoutError as exc:
                 raise _network_timeout_error() from exc
         LOGGER.info(
@@ -142,10 +128,7 @@ async def download_single_direct(task: Task) -> Path:
             filename,
             task.downloaded,
         )
-        if not task.size:
-            task.size = task.downloaded
-        task.progress = 1
-        task.eta = 0
+        task.report_progress(task.downloaded, complete=True)
         return target
 
 
@@ -154,9 +137,8 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     root = task.work_dir / (requested_name or collection.title or "collection")
     root.mkdir(parents=True, exist_ok=True)
     task.name = root.name
-    task.size = collection.total_size
-    ensure_disk_space(root, task.size)
-    started = monotonic()
+    ensure_disk_space(root, collection.total_size)
+    task.begin_progress(collection.total_size)
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(3)
     base_headers = {
@@ -180,16 +162,7 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
 
     async def record_bytes(delta: int) -> None:
         async with lock:
-            task.downloaded += delta
-            elapsed = monotonic() - started
-            task.speed = int(task.downloaded / elapsed) if elapsed else 0
-            if task.size:
-                task.progress = min(task.downloaded / task.size, 1)
-                task.eta = (
-                    int((task.size - task.downloaded) / task.speed)
-                    if task.speed
-                    else 0
-                )
+            task.advance_progress(delta)
 
     async def fetch_once(item, target, session) -> None:
         written = 0
@@ -276,10 +249,10 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     if not succeeded:
         raise NetworkError("Every file in the collection failed to download")
 
-    task.size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
-    task.downloaded = task.size
-    task.progress = 1
-    task.eta = 0
+    final_size = sum(
+        item.stat().st_size for item in root.rglob("*") if item.is_file()
+    )
+    task.report_progress(final_size, size=final_size, complete=True)
     LOGGER.info(
         "Task %s: collection download complete name=%r files=%s/%s bytes=%s",
         task.short_id(),
