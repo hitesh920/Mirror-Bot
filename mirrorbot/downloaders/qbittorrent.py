@@ -5,6 +5,8 @@ from typing import Any
 
 import aiohttp
 
+from ..core.errors import TorrentAuthError, TorrentEngineError
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -27,7 +29,7 @@ class QBittorrentClient:
 
     async def login(self) -> None:
         session = await self._ensure_session()
-        for _ in range(30):
+        for attempt in range(30):
             password = await asyncio.to_thread(self._temporary_password)
             if password:
                 async with session.post(
@@ -36,9 +38,21 @@ class QBittorrentClient:
                 ) as response:
                     body = await response.text()
                     if response.ok and body.strip() == "Ok.":
+                        if attempt:
+                            LOGGER.info(
+                                "qBittorrent login succeeded after %s attempt(s)",
+                                attempt + 1,
+                            )
                         return
+                    LOGGER.debug(
+                        "qBittorrent login rejected (status=%s), retrying",
+                        response.status,
+                    )
+            elif attempt == 0:
+                LOGGER.info("Waiting for the qBittorrent temporary password file")
             await asyncio.sleep(1)
-        raise RuntimeError("Could not authenticate with qBittorrent")
+        LOGGER.error("Gave up authenticating with qBittorrent after 30 attempts")
+        raise TorrentAuthError("Could not authenticate with qBittorrent")
 
     def _temporary_password(self) -> str:
         if not self.password_file.exists():
@@ -74,7 +88,10 @@ class QBittorrentClient:
         async with session.request(method, url, **kwargs) as response:
             if response.status == 403:
                 if not retry_auth:
-                    raise RuntimeError("qBittorrent authentication failed")
+                    raise TorrentAuthError("qBittorrent authentication failed")
+                LOGGER.info(
+                    "qBittorrent returned 403 for %s; re-authenticating", endpoint
+                )
                 await self.login()
                 return await self.request(
                     method,
@@ -86,7 +103,10 @@ class QBittorrentClient:
                 )
             text = await response.text()
             if not response.ok:
-                raise RuntimeError(
+                LOGGER.warning(
+                    "qBittorrent API %s failed status=%s", endpoint, response.status
+                )
+                raise TorrentEngineError(
                     f"qBittorrent API {endpoint} failed "
                     f"({response.status}): {text[:200]}"
                 )

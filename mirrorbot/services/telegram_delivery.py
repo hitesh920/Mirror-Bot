@@ -20,7 +20,7 @@ VIDEO_EXTENSIONS = {".mkv", ".m4v", ".mov", ".mp4", ".webm"}
 AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 PHOTO_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 ANIMATION_EXTENSIONS = {".gif"}
-TELEGRAM_SEND_RETRIES = 3
+TELEGRAM_FLOODWAIT_RETRIES = 3
 
 
 def upload_files(path: Path) -> list[tuple[Path, str]]:
@@ -105,13 +105,37 @@ async def send_telegram_file(
     )
 
 
-async def send_telegram_file_with_retry(*args, task: Task):
-    for attempt in range(1, TELEGRAM_SEND_RETRIES + 1):
+async def send_telegram_file_handling_floodwait(
+    client: Client,
+    task: Task,
+    upload_chat_id: int | str,
+    item: Path,
+    caption: str,
+    progress,
+    media_type: str,
+    metadata: MediaMetadata,
+    thumb: Path | None,
+):
+    """Send one file, waiting out FloodWait up to TELEGRAM_FLOODWAIT_RETRIES times.
+
+    Any other RPCError propagates immediately.
+    """
+    for attempt in range(1, TELEGRAM_FLOODWAIT_RETRIES + 1):
         try:
-            return await send_telegram_file(*args)
+            return await send_telegram_file(
+                client,
+                task,
+                upload_chat_id,
+                item,
+                caption,
+                progress,
+                media_type,
+                metadata,
+                thumb,
+            )
         except FloodWait as exc:
             wait_for = int(getattr(exc, "value", 0) or 0)
-            if attempt >= TELEGRAM_SEND_RETRIES:
+            if attempt >= TELEGRAM_FLOODWAIT_RETRIES:
                 raise
             LOGGER.warning(
                 "Task %s: Telegram FloodWait while uploading; "
@@ -121,9 +145,7 @@ async def send_telegram_file_with_retry(*args, task: Task):
                 attempt,
             )
             await asyncio.sleep(max(wait_for, 1))
-        except RPCError:
-            raise
-    raise RuntimeError("Telegram upload retries exhausted")
+    raise RuntimeError("Telegram upload retries exhausted after repeated FloodWait")
 
 
 def upload_progress_callback(
@@ -338,7 +360,7 @@ async def _upload_to_telegram_chat(
                     metadata.width,
                     metadata.height,
                 )
-                message = await send_telegram_file_with_retry(
+                message = await send_telegram_file_handling_floodwait(
                     client,
                     task,
                     upload_chat_id,
@@ -348,7 +370,6 @@ async def _upload_to_telegram_chat(
                     media_type,
                     metadata,
                     thumb,
-                    task=task,
                 )
                 if message is None:
                     raise asyncio.CancelledError()

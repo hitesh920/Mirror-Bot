@@ -10,13 +10,7 @@ from ..core.errors import TaskFailure
 from ..core.logging_config import log_event
 from ..core.models import Destination, SourceType, Task, TaskPhase
 from ..resolvers import resolve_source
-from .archive import (
-    ArchiveCorruptError,
-    ArchivePasswordError,
-    ArchiveUnsupportedError,
-    extract_path,
-    zip_path,
-)
+from .archive import extract_path, zip_path
 from .paths import ensure_no_symlinks
 from .r2_delivery import upload_to_r2
 from .telegram_delivery import upload_to_telegram
@@ -93,12 +87,6 @@ class TaskRunner:
             self._mark_cancelled(task)
         except TaskFailure as exc:
             self._mark_failed(task, exc, exc.category, logging.WARNING)
-        except (
-            ArchiveCorruptError,
-            ArchivePasswordError,
-            ArchiveUnsupportedError,
-        ) as exc:
-            self._mark_failed(task, exc, "processing", logging.WARNING)
         except Exception as exc:
             if task.cancelled:
                 self._mark_cancelled(task, "cancelled during shutdown")
@@ -118,11 +106,8 @@ class TaskRunner:
                 downloaded = await extract_path(
                     downloaded, task, task.options.extract_password
                 )
-            except (
-                ArchiveCorruptError,
-                ArchivePasswordError,
-                ArchiveUnsupportedError,
-            ):
+            except TaskFailure:
+                # Password / corrupt / unsupported: cannot recover, fail the task.
                 raise
             except RuntimeError as exc:
                 task.processing_warnings.append(

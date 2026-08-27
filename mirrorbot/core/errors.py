@@ -34,6 +34,10 @@ class TorrentEngineError(TorrentError):
     category = "torrent_engine"
 
 
+class TorrentAuthError(TorrentError):
+    category = "torrent_auth"
+
+
 class NetworkError(TaskFailure):
     category = "network"
 

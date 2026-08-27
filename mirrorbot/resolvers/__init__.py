@@ -1,3 +1,4 @@
+import json
 import logging
 from urllib.parse import urlparse
 
@@ -51,6 +52,19 @@ def is_resolvable_url(url: str) -> bool:
     return any(resolver.supports(url) for resolver in RESOLVERS)
 
 
+def _cause_summary(exc: Exception) -> str:
+    """A short, non-sensitive reason for a user-facing resolver error."""
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return f"host returned HTTP {exc.status}"
+    if isinstance(exc, (aiohttp.ClientError, TimeoutError)):
+        return "host could not be reached"
+    if isinstance(exc, json.JSONDecodeError):
+        return "host returned an unexpected response"
+    if isinstance(exc, (KeyError, IndexError, ValueError, TypeError)):
+        return "host returned data in an unexpected format"
+    return type(exc).__name__
+
+
 async def resolve_source(source: Source) -> Source:
     if source.type != SourceType.DIRECT_URL:
         return source
@@ -74,8 +88,16 @@ async def resolve_source(source: Source) -> Source:
             except ResolverError:
                 raise
             except Exception as exc:
+                LOGGER.warning(
+                    "Resolver %s failed host=%s error=%s: %s",
+                    resolver.name,
+                    urlparse(original).hostname or "unknown-host",
+                    type(exc).__name__,
+                    exc,
+                )
                 raise ResolverError(
-                    f"{resolver.name} could not resolve this link"
+                    f"{resolver.name} could not resolve this link "
+                    f"({_cause_summary(exc)})"
                 ) from exc
             current = resolved_source(current, result, resolver.name)
             resolved_target = (

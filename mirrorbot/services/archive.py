@@ -4,6 +4,7 @@ import re
 from asyncio.subprocess import PIPE
 from pathlib import Path
 
+from ..core.errors import TaskFailure
 from ..core.models import Task
 from ..downloaders.process import path_size, terminate_process
 from .transfer_guard import ensure_disk_space
@@ -13,15 +14,19 @@ PROGRESS_PATTERN = re.compile(rb"(?<!\d)(\d{1,3})%")
 MAX_DIAGNOSTIC_OUTPUT = 128 * 1024
 
 
-class ArchivePasswordError(RuntimeError):
+class ArchiveError(TaskFailure):
+    category = "processing"
+
+
+class ArchivePasswordError(ArchiveError):
     pass
 
 
-class ArchiveUnsupportedError(RuntimeError):
+class ArchiveUnsupportedError(ArchiveError):
     pass
 
 
-class ArchiveCorruptError(RuntimeError):
+class ArchiveCorruptError(ArchiveError):
     pass
 
 

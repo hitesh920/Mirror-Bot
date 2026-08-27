@@ -2,6 +2,7 @@
 
 import pytest
 
+from mirrorbot.core.errors import TorrentAuthError, TorrentEngineError
 from mirrorbot.downloaders import qbittorrent as qb_module
 from mirrorbot.downloaders.qbittorrent import QBittorrentClient
 
@@ -102,7 +103,7 @@ async def test_login_raises_after_exhausting_retries(tmp_path, _no_sleep):
     session = FakeSession()
     client = _client(session, tmp_path)  # password file never created
 
-    with pytest.raises(RuntimeError, match="authenticate"):
+    with pytest.raises(TorrentAuthError, match="authenticate"):
         await client.login()
 
     assert len(_no_sleep) == 30
@@ -141,7 +142,7 @@ async def test_request_gives_up_on_second_403(tmp_path, monkeypatch):
 
     monkeypatch.setattr(client, "login", _login)
 
-    with pytest.raises(RuntimeError, match="authentication failed"):
+    with pytest.raises(TorrentAuthError, match="authentication failed"):
         await client.request("GET", "torrents/info")
 
 
@@ -151,5 +152,5 @@ async def test_request_raises_on_http_error(tmp_path):
     )
     client = _client(session, tmp_path)
 
-    with pytest.raises(RuntimeError, match=r"failed \(500\)"):
+    with pytest.raises(TorrentEngineError, match=r"failed \(500\)"):
         await client.request("GET", "torrents/info")
