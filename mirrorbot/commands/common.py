@@ -14,19 +14,12 @@ from pyrogram import filters
 from pyrogram.enums import ParseMode
 from pyrogram.types import Message
 
-from ..app import (
-    HELP_TEXT,
-    LOGGER,
-    app,
-    config,
-    manager,
-    owner_filter,
-    telegram_status,
-)
+from ..context import LOGGER, app, config, manager, owner_filter, telegram_status
 from ..core.formatting import human_size
 from ..core.logging_config import create_log_export, log_event
 from ..services.restart_state import save_restart_state
 from ..services.speedtest import SpeedtestError, run_speedtest
+from ..telegram.messages import HELP_TEXT
 
 speedtest_lock = asyncio.Lock()
 

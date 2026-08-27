@@ -1,32 +1,37 @@
-"""Add command and destination-selection handlers."""
+"""Add command, destination selection, and transfer-task launch."""
 
+import asyncio
+from contextlib import suppress
+from dataclasses import replace
 from html import escape
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
-from pyrogram.types import Message
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from ..app import (
-    ADD_USAGE,
+from ..context import (
     LOGGER,
-    PendingAdd,
-    answer_expired_selection,
     app,
-    batch_mode_buttons,
     config,
-    destination_buttons,
-    launch_selected_task,
+    manager,
     owner_filter,
     pending_adds,
-    start_pending_add_expiry,
+    telegram_status,
+)
+from ..core.batch import collect_batch_sources
+from ..core.models import Destination, Source, SourceType, TaskPhase
+from ..core.parser import parse_add_text, replied_link
+from ..core.source_detector import detect_source
+from ..telegram.keyboards import (
+    batch_mode_buttons,
+    completion_buttons,
+    destination_buttons,
     ytdlp_audio_buttons,
     ytdlp_buttons,
     ytdlp_video_buttons,
 )
-from ..core.batch import collect_batch_sources
-from ..core.models import Destination, Source, SourceType
-from ..core.parser import parse_add_text, replied_link
-from ..core.source_detector import detect_source
+from ..telegram.messages import ADD_USAGE, completion_message
+from ..telegram.pending import PendingAdd
 
 
 @app.on_message(filters.command("add") & owner_filter)
@@ -112,7 +117,7 @@ async def add(_, message: Message):
             f"filename.{name_note}",
             reply_markup=batch_mode_buttons(token),
         )
-        start_pending_add_expiry(token, prompt)
+        pending_adds.track_expiry(token, prompt)
         return
 
     if reply and not link:
@@ -160,7 +165,7 @@ async def add(_, message: Message):
             "Choose destination:",
             reply_markup=destination_buttons(token),
         )
-    start_pending_add_expiry(token, prompt)
+    pending_adds.track_expiry(token, prompt)
 
 
 @app.on_callback_query(filters.regex(r"^ytkind:"))
@@ -225,7 +230,7 @@ async def batch_mode_choice(_, query):
         f"Selected {label}. Choose one destination for the batch:",
         reply_markup=destination_buttons(token),
     )
-    start_pending_add_expiry(token, query.message)
+    pending_adds.track_expiry(token, query.message)
 
 
 @app.on_callback_query(filters.regex(r"^dest:"))
@@ -247,3 +252,164 @@ async def destination_choice(_, query):
         await launch_selected_task(query, token, Destination.CLOUDFLARE_R2)
         return
     await query.answer("Unknown destination", show_alert=True)
+
+
+async def answer_expired_selection(query) -> None:
+    await query.answer("Expired task", show_alert=True)
+    with suppress(Exception):
+        await query.message.edit("Selection expired. Send /add again.")
+
+
+def _spawn_transfer_task(task, reply, query, *, is_torrent: bool = False) -> None:
+    LOGGER.info(
+        "Task %s: selected destination=%s",
+        task.short_id(),
+        task.destination.value,
+    )
+
+    async def runner():
+        async def selector_ready(selected_task):
+            with suppress(Exception):
+                await query.message.delete()
+            return await app.send_message(
+                task.chat_id,
+                "Torrent files are ready for review.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Click here to review files",
+                                url=selected_task.selection_url,
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "Cancel",
+                                callback_data=f"selcancel:{selected_task.short_id()}",
+                            )
+                        ],
+                    ]
+                ),
+                disable_web_page_preview=True,
+            )
+
+        async def selector_done(selector_message):
+            with suppress(Exception):
+                await selector_message.delete()
+            if task.phase == TaskPhase.DOWNLOADING:
+                task.status_visible = True
+                await telegram_status.replace(task.chat_id)
+
+        await manager.run_task(
+            task,
+            telegram_reply=reply,
+            telegram_client=app,
+            on_selector_ready=selector_ready,
+            on_selector_done=selector_done,
+        )
+        if is_torrent:
+            with suppress(Exception):
+                await query.message.delete()
+        if task.phase.value == "complete":
+            await app.send_message(
+                task.chat_id,
+                completion_message(task),
+                parse_mode=ParseMode.HTML,
+                reply_to_message_id=task.message_id,
+                reply_markup=completion_buttons(task),
+                disable_web_page_preview=True,
+            )
+        elif task.error:
+            await app.send_message(
+                task.chat_id,
+                f"Task {task.short_id()} failed:\n{task.error}",
+                parse_mode=ParseMode.DISABLED,
+                reply_to_message_id=task.message_id,
+            )
+        else:
+            await app.send_message(
+                task.chat_id,
+                f"Task {task.short_id()} {task.phase.value}.",
+                parse_mode=ParseMode.DISABLED,
+                reply_to_message_id=task.message_id,
+            )
+        await telegram_status.update(task.chat_id)
+
+    manager.spawn(runner(), name="transfer-task")
+
+
+async def launch_selected_task(query, token: str, destination: Destination) -> None:
+    pending = pending_adds.take(token)
+    if pending is None:
+        await answer_expired_selection(query)
+        return
+    if pending.options.batch_messages:
+        await _launch_batch_tasks(query, token, destination, pending)
+        return
+
+    source = pending.sources[0]
+    task = manager.create_task(
+        query.from_user.id,
+        query.message.chat.id,
+        int(token),
+        source,
+        destination,
+        pending.options,
+    )
+    is_torrent = source.type in {SourceType.MAGNET, SourceType.TORRENT_FILE}
+    if is_torrent:
+        task.status_visible = False
+        await query.message.edit("Collecting torrent metadata...")
+    _spawn_transfer_task(task, pending.reply, query, is_torrent=is_torrent)
+    if not is_torrent:
+        with suppress(Exception):
+            await query.message.delete()
+        await asyncio.sleep(0)
+        await telegram_status.replace(task.chat_id)
+
+
+async def _launch_batch_tasks(query, token, destination, pending: PendingAdd) -> None:
+    if pending.batch_mode == "separate":
+        tasks = []
+        for source in pending.sources:
+            options = replace(pending.options, name="", batch_messages=0)
+            task = manager.create_task(
+                query.from_user.id,
+                query.message.chat.id,
+                int(token),
+                source,
+                destination,
+                options,
+            )
+            tasks.append(task)
+            _spawn_transfer_task(task, None, query)
+        await query.message.edit(
+            f"{len(tasks)} tasks started. Each transfer will finish independently."
+        )
+        await asyncio.sleep(0)
+        await telegram_status.replace(query.message.chat.id)
+        return
+
+    if pending.batch_mode != "zip":
+        await query.message.edit("Batch mode was not selected. Send /add again.")
+        return
+    archive_stem = pending.options.name or f"batch-{token}"
+    options = replace(pending.options, name=archive_stem, zip=True, zip_password="")
+    source = Source(
+        SourceType.BATCH, "", archive_stem, {"sources": pending.sources}
+    )
+    task = manager.create_task(
+        query.from_user.id,
+        query.message.chat.id,
+        int(token),
+        source,
+        destination,
+        options,
+    )
+    task.batch_total = len(pending.sources)
+    task.batch_initial_skipped = pending.skipped
+    _spawn_transfer_task(task, None, query)
+    with suppress(Exception):
+        await query.message.delete()
+    await asyncio.sleep(0)
+    await telegram_status.replace(task.chat_id)

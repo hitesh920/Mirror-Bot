@@ -1265,6 +1265,7 @@ async def test_torrent_selector_tracks_multiple_pending_selections():
 def test_task_manager_prunes_old_terminal_tasks():
     manager = TaskManager.__new__(TaskManager)
     manager.tasks = {}
+    manager._by_short_id = {}
     for index in range(MAX_TERMINAL_TASKS + 5):
         task = make_task()
         task.created_at = index

@@ -28,6 +28,7 @@ class TaskManager:
     def __init__(self, config: Config):
         self.config = config
         self.tasks: dict[str, Task] = {}
+        self._by_short_id: dict[str, Task] = {}
         self.task_sem = asyncio.Semaphore(config.task_limit)
         self.runner_jobs: set[asyncio.Task] = set()
         self.accepting_tasks = True
@@ -71,6 +72,7 @@ class TaskManager:
             work_dir=self.config.download_dir / task_id,
         )
         self.tasks[task_id] = task
+        self._by_short_id.setdefault(task.short_id(), task)
         log_event(
             LOGGER,
             logging.INFO,
@@ -164,12 +166,9 @@ class TaskManager:
         await self.torrent_selector.cancel_all()
 
     def get(self, task_id_or_short: str) -> Task | None:
-        if task_id_or_short in self.tasks:
-            return self.tasks[task_id_or_short]
-        for task in self.tasks.values():
-            if task.short_id() == task_id_or_short:
-                return task
-        return None
+        return self.tasks.get(task_id_or_short) or self._by_short_id.get(
+            task_id_or_short
+        )
 
     def active_tasks(self) -> list[Task]:
         return [task for task in self.tasks.values() if not task.terminal]
@@ -185,6 +184,8 @@ class TaskManager:
         )
         for task in terminal[MAX_TERMINAL_TASKS:]:
             self.tasks.pop(task.id, None)
+            if self._by_short_id.get(task.short_id()) is task:
+                self._by_short_id.pop(task.short_id(), None)
 
     @staticmethod
     def _record_result_manifest(task: Task, path: Path) -> None:

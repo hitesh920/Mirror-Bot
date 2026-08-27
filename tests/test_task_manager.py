@@ -22,6 +22,22 @@ def manager(tmp_path):
     return TaskManager(config)
 
 
+def test_get_resolves_full_and_short_id(manager):
+    from mirrorbot.core.models import AddOptions, Destination, Source, SourceType
+
+    task = manager.create_task(
+        1,
+        1,
+        99,
+        Source(SourceType.DIRECT_URL, "https://example.com/x"),
+        Destination.CLOUDFLARE_R2,
+        AddOptions(),
+    )
+    assert manager.get(task.id) is task
+    assert manager.get(task.short_id()) is task
+    assert manager.get("unknown") is None
+
+
 async def test_run_or_cancel_returns_result(manager, make_task):
     task = make_task()
 
