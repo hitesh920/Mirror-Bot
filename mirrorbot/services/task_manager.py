@@ -34,11 +34,25 @@ class TaskManager:
         self.qb = QBittorrentClient(config.qb_host)
         self.torrent_selector = TorrentSelector(
             self.qb,
-            public_base_url(config.torrent_selection_port, config.public_base_url),
+            config.public_base_url
+            or f"http://localhost:{config.torrent_selection_port}",
             config.torrent_selection_port,
             config.torrent_selection_timeout,
         )
         self.runner = TaskRunner(self)
+
+    async def resolve_public_base_url(self) -> None:
+        """Detect the public host off the event loop, once, at startup.
+
+        Kept out of __init__ (which runs at import time) so the blocking
+        HTTP/UDP probes never stall bot startup.
+        """
+        base = await asyncio.to_thread(
+            public_base_url,
+            self.config.torrent_selection_port,
+            self.config.public_base_url,
+        )
+        self.torrent_selector.public_base_url = base.rstrip("/")
 
     def create_task(
         self, user_id, chat_id, message_id, source, destination, options

@@ -28,7 +28,7 @@ class QBittorrentClient:
     async def login(self) -> None:
         session = await self._ensure_session()
         for _ in range(30):
-            password = self._temporary_password()
+            password = await asyncio.to_thread(self._temporary_password)
             if password:
                 async with session.post(
                     f"{self.host}/api/v2/auth/login",
@@ -105,11 +105,12 @@ class QBittorrentClient:
             ),
         }
         if isinstance(source, Path):
+            content = await asyncio.to_thread(source.read_bytes)
             await self.request(
                 "POST",
                 "torrents/add",
                 data=data,
-                files={"torrents": (source.name, source.read_bytes())},
+                files={"torrents": (source.name, content)},
             )
         else:
             data["urls"] = source

@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlparse
 import aiofiles
 import aiohttp
 
-from ..core.errors import NetworkTimeoutError
+from ..core.errors import NetworkError, NetworkTimeoutError
 from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
 from ..services.transfer_guard import ensure_disk_space
@@ -178,11 +178,22 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
         used_targets.add(str(candidate).lower())
         targets.append(root / candidate)
 
-    async def download_item(item, target, session):
-        if task.cancelled:
-            raise asyncio.CancelledError()
-        async with semaphore:
-            target.parent.mkdir(parents=True, exist_ok=True)
+    async def record_bytes(delta: int) -> None:
+        async with lock:
+            task.downloaded += delta
+            elapsed = monotonic() - started
+            task.speed = int(task.downloaded / elapsed) if elapsed else 0
+            if task.size:
+                task.progress = min(task.downloaded / task.size, 1)
+                task.eta = (
+                    int((task.size - task.downloaded) / task.speed)
+                    if task.speed
+                    else 0
+                )
+
+    async def fetch_once(item, target, session) -> None:
+        written = 0
+        try:
             async with session.get(
                 item.url,
                 headers=item.headers,
@@ -191,26 +202,45 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
             ) as response:
                 response.raise_for_status()
                 async with aiofiles.open(target, "wb") as file:
-                    try:
-                        async for chunk in response.content.iter_chunked(1024 * 512):
-                            if task.cancelled:
-                                raise asyncio.CancelledError()
-                            await file.write(chunk)
-                            async with lock:
-                                task.downloaded += len(chunk)
-                                elapsed = monotonic() - started
-                                task.speed = (
-                                    int(task.downloaded / elapsed) if elapsed else 0
-                                )
-                                if task.size:
-                                    task.progress = min(task.downloaded / task.size, 1)
-                                    task.eta = (
-                                        int((task.size - task.downloaded) / task.speed)
-                                        if task.speed
-                                        else 0
-                                    )
-                    except TimeoutError as exc:
-                        raise _network_timeout_error() from exc
+                    async for chunk in response.content.iter_chunked(1024 * 512):
+                        if task.cancelled:
+                            raise asyncio.CancelledError()
+                        await file.write(chunk)
+                        written += len(chunk)
+                        await record_bytes(len(chunk))
+        except TimeoutError as exc:
+            await record_bytes(-written)
+            raise _network_timeout_error() from exc
+        except BaseException:
+            await record_bytes(-written)
+            raise
+
+    async def download_item(item, target, session) -> None:
+        if task.cancelled:
+            raise asyncio.CancelledError()
+        async with semaphore:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            for attempt in range(1, DIRECT_DOWNLOAD_RETRIES + 2):
+                if attempt > 1:
+                    target.unlink(missing_ok=True)
+                    await asyncio.sleep(min(10, 2 ** (attempt - 1)))
+                try:
+                    await fetch_once(item, target, session)
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if (
+                        not retryable_direct_error(exc)
+                        or attempt > DIRECT_DOWNLOAD_RETRIES
+                    ):
+                        raise
+                    LOGGER.warning(
+                        "Task %s: retrying collection item name=%r attempt=%s",
+                        task.short_id(),
+                        item.filename,
+                        attempt,
+                    )
 
     LOGGER.info(
         "Task %s: starting collection download name=%r files=%s",
@@ -225,21 +255,36 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
             asyncio.create_task(download_item(item, target, session))
             for item, target in zip(collection.files, targets, strict=True)
         ]
-        try:
-            await asyncio.gather(*downloads)
-        except BaseException:
-            for download in downloads:
-                download.cancel()
-            await asyncio.gather(*downloads, return_exceptions=True)
-            raise
-    if not task.size:
-        task.size = task.downloaded
+        results = await asyncio.gather(*downloads, return_exceptions=True)
+
+    cancelled = [r for r in results if isinstance(r, asyncio.CancelledError)]
+    if cancelled:
+        raise asyncio.CancelledError()
+    failures = [r for r in results if isinstance(r, BaseException)]
+    succeeded = len(results) - len(failures)
+    for item, result in zip(collection.files, results, strict=True):
+        if isinstance(result, BaseException):
+            LOGGER.warning(
+                "Task %s: collection item failed name=%r error=%s",
+                task.short_id(),
+                item.filename,
+                result,
+            )
+            task.processing_warnings.append(
+                f"{item.filename}: {type(result).__name__}"
+            )
+    if not succeeded:
+        raise NetworkError("Every file in the collection failed to download")
+
+    task.size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
+    task.downloaded = task.size
     task.progress = 1
     task.eta = 0
     LOGGER.info(
-        "Task %s: collection download complete name=%r files=%s bytes=%s",
+        "Task %s: collection download complete name=%r files=%s/%s bytes=%s",
         task.short_id(),
         task.name,
+        succeeded,
         len(collection.files),
         task.downloaded,
     )

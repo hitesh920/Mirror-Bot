@@ -395,6 +395,7 @@ async def send_r2_expiry_warning(upload: dict) -> None:
 
 async def main() -> None:
     LOGGER.info("========== BOT STARTED ================")
+    await manager.resolve_public_base_url()
     await manager.cleanup_orphaned_torrents()
     cleanup_abandoned_downloads(config.download_dir)
     telegram_started = False

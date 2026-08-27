@@ -62,7 +62,7 @@ def _clean_skipped_files(task: Task, torrent: dict, files: list[dict]) -> None:
     save_path = Path(torrent["save_path"])
     ensure_inside(task.work_dir, save_path)
     for file in files:
-        if file.get("priority", 0) != 0:
+        if int(file.get("priority", 0) or 0) != 0:
             continue
         target = save_path / file["name"]
         ensure_inside(task.work_dir, target)
@@ -155,9 +155,7 @@ async def download_torrent(
 
     selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
     selection = selector.get(task.torrent_hash)
-    while selection is None:
-        if selection_job.done():
-            await selection_job
+    while selection is None and not selection_job.done():
         if task.cancelled:
             selection_job.cancel()
             with suppress(asyncio.CancelledError):
@@ -166,6 +164,13 @@ async def download_torrent(
             raise asyncio.CancelledError()
         await asyncio.sleep(0.2)
         selection = selector.get(task.torrent_hash)
+    if selection is None:
+        # select() finished without ever registering a selection: surface its
+        # failure if it had one, otherwise treat it as an engine error rather
+        # than spinning forever on selector.get().
+        await selection_job
+        await qb.delete(task.torrent_hash, True)
+        raise TorrentEngineError("Torrent file selection ended before it started")
     task.selection_url = f"{selector.public_base_url}/select/{selection.token}"
     try:
         selector_message = await on_selector_ready(task) if on_selector_ready else None

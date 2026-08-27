@@ -99,4 +99,8 @@ async def resolve_source(source: Source) -> Source:
                     return detected
             if current.value == original:
                 return current
+    if any(resolver.supports(current.value) for resolver in RESOLVERS):
+        raise ResolverError(
+            "This link kept redirecting and never resolved to a downloadable file"
+        )
     return current
