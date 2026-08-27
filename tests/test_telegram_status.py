@@ -96,6 +96,22 @@ async def test_replace_sends_new_and_deletes_previous(status, make_task):
     assert status.messages[555] is status.app.sent[1]
 
 
+async def test_idle_chat_bookkeeping_is_cleaned_up(status, make_task):
+    task = _visible_task(make_task)
+    status._tasks.append(task)
+    await status.update(555)
+    status.ensure_loop(555)
+    assert 555 in status.messages
+
+    status._tasks.clear()
+    await status.update(555)
+
+    assert 555 not in status.messages
+    assert 555 not in status.text
+    assert 555 not in status.jobs
+    assert 555 not in status.locks
+
+
 async def test_start_adopts_caller_message_and_deletes_old(status, make_task):
     status._tasks.append(_visible_task(make_task))
     await status.update(555)

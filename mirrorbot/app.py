@@ -12,6 +12,8 @@ from pyrogram.enums import ParseMode
 from . import context
 from .commands import add, common, r2  # noqa: F401  -- registers handlers on import
 from .context import app, background, config, manager, pending_adds, telegram_status
+from .downloaders import torrent as torrent_engine
+from .services import transfer_guard
 from .services.r2_delivery import expiry_sweeper
 from .services.restart_state import take_restart_state
 from .services.runtime import RuntimeCoordinator
@@ -20,6 +22,8 @@ from .services.telegram_delivery import telegram_chat_id
 from .telegram import messages as telegram_messages
 
 LOGGER = logging.getLogger(__name__)
+transfer_guard.configure(config)
+torrent_engine.configure(config)
 runtime = RuntimeCoordinator(manager, background)
 
 

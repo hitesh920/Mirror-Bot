@@ -15,6 +15,19 @@ def _int(name: str, default: int = 0) -> int:
         raise RuntimeError(f"{name} must be an integer") from exc
 
 
+def _float(name: str, default: float, *, minimum: float = 0.0) -> float:
+    value = getenv(name)
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number") from exc
+    if parsed < minimum:
+        raise RuntimeError(f"{name} must be at least {minimum}")
+    return parsed
+
+
 def _bounded_int(
     name: str,
     default: int,
@@ -61,6 +74,12 @@ class Config:
     ytdlp_audio_quality: str = "320"
     zip_compression_level: int = 5
     log_file: str = "logs/bot.log"
+    disk_min_reserve_bytes: int = 5 * 1024**3
+    disk_reserve_ratio: float = 0.05
+    stall_timeout_seconds: int = 600
+    guard_check_interval_seconds: int = 5
+    torrent_metadata_timeout: int = 300
+    torrent_add_timeout: int = 60
 
     @classmethod
     def load(cls) -> "Config":
@@ -117,6 +136,23 @@ class Config:
                 "CLOUDFLARE_API_TOKEN",
                 "",
             ).strip(),
+            log_file=getenv("LOG_FILE", "logs/bot.log").strip() or "logs/bot.log",
+            disk_min_reserve_bytes=_bounded_int(
+                "DISK_MIN_RESERVE_BYTES", 5 * 1024**3, minimum=0
+            ),
+            disk_reserve_ratio=_float("DISK_RESERVE_RATIO", 0.05, minimum=0.0),
+            stall_timeout_seconds=_bounded_int(
+                "STALL_TIMEOUT_SECONDS", 600, minimum=30
+            ),
+            guard_check_interval_seconds=_bounded_int(
+                "GUARD_CHECK_INTERVAL_SECONDS", 5, minimum=1
+            ),
+            torrent_metadata_timeout=_bounded_int(
+                "TORRENT_METADATA_TIMEOUT", 300, minimum=1
+            ),
+            torrent_add_timeout=_bounded_int(
+                "TORRENT_ADD_TIMEOUT", 60, minimum=1
+            ),
         )
 
     @property

@@ -50,27 +50,33 @@ class TelegramStatus:
         )
 
     async def update(self, chat_id: int) -> None:
+        idle = False
         async with self.locks[chat_id]:
             tasks = self.chat_tasks(chat_id)
             if not tasks:
                 message = self.messages.pop(chat_id, None)
                 self.text.pop(chat_id, None)
                 await self._delete_quietly(message, chat_id, "completed")
-                return
+                idle = True
+            else:
+                text = format_status(tasks)
+                await self._update_locked(chat_id, text)
+        if idle:
+            self._forget(chat_id)
 
-            text = format_status(tasks)
-            message = self.messages.get(chat_id)
-            if message is None:
-                await self._store(
-                    chat_id, await self._send_status(chat_id, text), text,
-                    replaced_reason="replaced",
-                )
-            elif self.text.get(chat_id) != text:
-                try:
-                    await message.edit_text(text, parse_mode=ParseMode.HTML)
-                    self.text[chat_id] = text
-                except Exception:
-                    LOGGER.exception("Could not update status message chat=%s", chat_id)
+    async def _update_locked(self, chat_id: int, text: str) -> None:
+        message = self.messages.get(chat_id)
+        if message is None:
+            await self._store(
+                chat_id, await self._send_status(chat_id, text), text,
+                replaced_reason="replaced",
+            )
+        elif self.text.get(chat_id) != text:
+            try:
+                await message.edit_text(text, parse_mode=ParseMode.HTML)
+                self.text[chat_id] = text
+            except Exception:
+                LOGGER.exception("Could not update status message chat=%s", chat_id)
 
     async def replace(self, chat_id: int) -> None:
         async with self.locks[chat_id]:
@@ -107,6 +113,19 @@ class TelegramStatus:
             await self.update(chat_id)
         finally:
             self.jobs.pop(chat_id, None)
+
+    def _forget(self, chat_id: int) -> None:
+        """Drop per-chat bookkeeping once a chat has no visible tasks.
+
+        Called after the chat's lock is released, so a now-idle lock is safe to
+        remove; a still-running loop keeps its own jobs entry.
+        """
+        job = self.jobs.get(chat_id)
+        if job is None or job.done():
+            self.jobs.pop(chat_id, None)
+        lock = self.locks.get(chat_id)
+        if lock is not None and not lock.locked():
+            self.locks.pop(chat_id, None)
 
     def cancel_jobs(self) -> None:
         for job in list(self.jobs.values()):

@@ -17,10 +17,10 @@ from .services.task_manager import TaskManager
 from .telegram.pending import PendingAdds
 from .telegram.status import TelegramStatus
 
-setup_logging()
+config = Config.load()
+setup_logging(config.log_file)
 LOGGER = logging.getLogger("mirrorbot")
 
-config = Config.load()
 manager = TaskManager(config)
 background = BackgroundTasks()
 

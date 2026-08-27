@@ -7,6 +7,7 @@ from pathlib import Path
 from shutil import rmtree
 from urllib.parse import parse_qs, urlparse
 
+from ..core.config import Config
 from ..core.errors import (
     TorrentDuplicateError,
     TorrentEngineError,
@@ -22,7 +23,16 @@ from .torrent_selector import TorrentSelector
 LOGGER = logging.getLogger(__name__)
 FINISHED_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP"}
 ERROR_STATES = {"error", "missingFiles", "unknown"}
+
+# Defaults; overridden from Config at startup via configure().
 TORRENT_METADATA_TIMEOUT = 300
+TORRENT_ADD_ATTEMPTS = 60
+
+
+def configure(config: Config) -> None:
+    global TORRENT_METADATA_TIMEOUT, TORRENT_ADD_ATTEMPTS
+    TORRENT_METADATA_TIMEOUT = config.torrent_metadata_timeout
+    TORRENT_ADD_ATTEMPTS = config.torrent_add_timeout
 
 
 class DuplicateTorrentError(TorrentDuplicateError):
@@ -78,7 +88,7 @@ def _clean_skipped_files(task: Task, torrent: dict, files: list[dict]) -> None:
 async def _wait_for_torrent(
     qb: QBittorrentClient, task: Task, expected_hash: str = ""
 ) -> dict:
-    for _ in range(60):
+    for _ in range(TORRENT_ADD_ATTEMPTS):
         if task.cancelled:
             raise asyncio.CancelledError()
         torrents = await qb.info(tag=task.id)

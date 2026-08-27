@@ -3,16 +3,26 @@ import shutil
 from pathlib import Path
 from time import monotonic
 
+from ..core.config import Config
 from ..core.errors import DiskSpaceError, StalledTransferError
 from ..core.formatting import human_size
 from ..core.models import Task, TaskPhase
 
-GIB = 1024**3
-MIN_RESERVE = 5 * GIB
+# Defaults; overridden from Config at startup via configure().
+MIN_RESERVE = 5 * 1024**3
 RESERVE_RATIO = 0.05
 STALL_TIMEOUT = 600
 CHECK_INTERVAL = 5
 STALL_PHASES = {TaskPhase.DOWNLOADING, TaskPhase.UPLOADING}
+
+
+def configure(config: Config) -> None:
+    """Apply the tunable guard thresholds from Config (called once at startup)."""
+    global MIN_RESERVE, RESERVE_RATIO, STALL_TIMEOUT, CHECK_INTERVAL
+    MIN_RESERVE = config.disk_min_reserve_bytes
+    RESERVE_RATIO = config.disk_reserve_ratio
+    STALL_TIMEOUT = config.stall_timeout_seconds
+    CHECK_INTERVAL = config.guard_check_interval_seconds
 
 
 def existing_path(path: Path) -> Path:
@@ -72,9 +82,11 @@ class TransferGuard:
                 self.task.phase in STALL_PHASES
                 and monotonic() - self.last_activity >= STALL_TIMEOUT
             ):
+                minutes = max(1, round(STALL_TIMEOUT / 60))
                 self.task.fail_guard(
                     StalledTransferError(
-                        "Transfer stalled for 10 minutes without progress"
+                        f"Transfer stalled for {minutes} minute"
+                        f"{'s' if minutes != 1 else ''} without progress"
                     )
                 )
                 return
