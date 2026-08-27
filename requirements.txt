@@ -1,10 +1,14 @@
-aiofiles
-aiohttp
-boto3
-curl_cffi
-python-dotenv
-kurigram
-tgcrypto
-yt-dlp[default]
-psutil
-speedtest-cli
+# Direct runtime dependencies (pinned).
+# After changing anything here, regenerate the fully-resolved lock:
+#   pip install -r requirements.txt && pip freeze | sort > requirements.lock
+# The Docker image installs from requirements.lock, not this file.
+aiofiles==25.1.0
+aiohttp==3.14.3
+boto3==1.43.81
+curl_cffi==0.16.2
+python-dotenv==1.2.3
+Kurigram==2.2.25
+TgCrypto==1.2.5
+yt-dlp[default]==2026.8.19
+psutil==7.2.2
+speedtest-cli==2.1.3
