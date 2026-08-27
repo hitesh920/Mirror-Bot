@@ -44,7 +44,6 @@ from mirrorbot.services.cloudflare_analytics import (
     billing_period,
     classify_operations,
 )
-from mirrorbot.services.page_style import TEMP_PAGE_CSS
 from mirrorbot.services.r2_delivery import (
     R2Uploader,
     build_folder_page,
@@ -306,13 +305,13 @@ def test_upload_tree_rejects_symbolic_links(tmp_path):
 
 
 def test_mobile_action_bars_reserve_list_space():
-    torrent_page_source = Path("mirrorbot/downloaders/torrent_selector.py").read_text(
-        encoding="utf-8"
-    )
+    torrent_page_source = Path(
+        "mirrorbot/downloaders/torrent_selector_page.py"
+    ).read_text(encoding="utf-8")
 
     assert "--selectionbar-height" in torrent_page_source
     assert "ResizeObserver(syncSelectionSpace)" in torrent_page_source
-    assert "[hidden] { display: none !important; }" in TEMP_PAGE_CSS
+    assert "[hidden] { display: none !important; }" in torrent_page_source
 
 
 def test_telegram_only_public_surface():

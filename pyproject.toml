@@ -20,4 +20,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "mirrorbot/downloaders/torrent_selector.py" = ["E501"]
+"mirrorbot/downloaders/torrent_selector_page.py" = ["E501"]
 "mirrorbot/services/r2_delivery.py" = ["E501"]
+"mirrorbot/services/r2_folder_page.py" = ["E501"]

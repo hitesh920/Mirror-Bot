@@ -8,8 +8,8 @@ from pathlib import PurePosixPath
 from aiohttp import web
 
 from ..core.formatting import human_size
-from ..services.page_style import TEMP_PAGE_CSS
 from .qbittorrent import QBittorrentClient
+from .torrent_selector_page import render_selection_page
 
 LOGGER = logging.getLogger(__name__)
 
@@ -161,64 +161,9 @@ class TorrentSelector:
     async def _show(self, request: web.Request) -> web.Response:
         selection = self._selection(request)
         rows = render_tree(build_tree(selection.files))
-        page = f"""<!doctype html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Select torrent files</title>
-<style>
-{TEMP_PAGE_CSS}
-body{{background:var(--bg)}}
-.appbar{{position:sticky;top:0;z-index:8;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 94%,transparent);backdrop-filter:blur(14px)}}
-.appbar-inner{{max-width:1180px;margin:0 auto;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px}}
-.brand{{display:grid;gap:5px;min-width:0}}.brand h1{{font-size:22px;margin:0}}.brand p{{margin:0;color:var(--muted)}}
-.meta-pills{{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}}.meta-pills span{{display:inline-flex;align-items:center;min-height:34px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);padding:6px 10px;color:var(--muted);font-weight:760;white-space:nowrap}}
-.shell{{max-width:1180px;margin:0 auto;padding:16px 18px calc(var(--selectionbar-height,72px) + 32px);display:grid;gap:12px}}
-.toolbar,.tree-card,.selectionbar{{border:1px solid var(--line);border-radius:10px;background:var(--surface);box-shadow:var(--shadow)}}
-.toolbar{{padding:10px;display:flex;align-items:center;gap:10px}}.toolbar input{{flex:1;min-width:220px}}.toolbar-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
-ul{{list-style:none;margin:0;padding:0}}.tree-card{{overflow:hidden}}
-.row{{display:grid;grid-template-columns:32px 24px minmax(0,1fr) auto;gap:9px;padding:10px 14px 10px calc(14px + var(--depth) * 20px);border-bottom:1px solid var(--line);align-items:center;transition:background .12s ease}}.row:hover{{background:var(--surface-soft)}}
-.folder>.row{{background:color-mix(in srgb,var(--surface-soft) 45%,var(--surface))}}.folder-name,.name{{min-width:0;overflow-wrap:anywhere}}.folder-name{{justify-content:flex-start;min-height:0;padding:0;text-align:left;background:transparent;color:var(--text);font-weight:820;border:0;border-radius:2px}}.folder-name:hover{{background:transparent;color:var(--primary);text-decoration:underline}}
-.name{{font-weight:760}}small{{color:var(--muted);white-space:nowrap}}.expand{{width:30px;height:30px;min-height:30px;padding:0;margin:0;background:var(--surface-soft);color:var(--text);border:1px solid var(--line-strong);border-radius:7px;font-weight:900}}.spacer{{width:30px}}
-.selectionbar{{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10;width:min(1180px,calc(100vw - 32px));padding:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-color:color-mix(in srgb,var(--primary) 42%,var(--line));background:color-mix(in srgb,var(--primary-soft) 45%,var(--surface));backdrop-filter:blur(14px)}}.selectionbar .count{{font-weight:850}}.selection-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
-@media(max-width:760px){{.appbar-inner{{display:grid;padding:12px}}.brand h1{{font-size:20px}}.meta-pills{{justify-content:flex-start}}.shell{{padding:12px 10px calc(var(--selectionbar-height,120px) + 24px)}}.toolbar{{display:grid;align-items:stretch}}.toolbar input{{min-width:0}}.toolbar-actions{{width:100%;display:grid;grid-template-columns:1fr 1fr}}.toolbar-actions button{{width:100%}}.tree-card{{border-radius:8px}}.row{{grid-template-columns:30px 22px minmax(0,1fr);gap:7px;padding:10px 10px 10px calc(10px + var(--depth) * 12px)}}small{{display:none}}.folder-name,.name{{font-size:13px}}.selectionbar{{display:grid;bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);max-height:45vh;overflow:auto}}.selection-actions{{display:grid;grid-template-columns:1fr 1fr;width:100%}}.selection-actions button{{width:100%}}}}@media(max-width:430px){{.toolbar-actions{{grid-template-columns:1fr}}.row{{padding-left:calc(8px + var(--depth) * 9px)}}}}
-</style></head><body>
-<header class="appbar"><div class="appbar-inner"><div class="brand"><h1>Select torrent files</h1><p>Expand folders and choose only the files you want.</p></div><div class="meta-pills"><span>Nothing selected by default</span><span>Temporary selector</span></div></div></header>
-<main class="shell">
-<form method="post">
-<section class="toolbar"><input id="search" type="search" placeholder="Search files and folders"><div class="toolbar-actions"><button class="secondary" type="button" id="check-all">Check all</button><button class="secondary" type="button" id="uncheck-all">Uncheck all</button></div></section>
-<section class="tree-card"><ul id="tree">{rows}</ul></section>
-<section class="selectionbar" id="selectionbar"><span class="count" id="count">0 files selected</span><div class="selection-actions"><button type="submit">Start download</button><button class="cancel" type="submit" name="action" value="cancel">Cancel</button></div></section>
-</form>
-</main>
-<script>
-const setChildren=(folder,checked)=>folder.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=checked;box.indeterminate=false;}});
-const selectionbar=document.getElementById('selectionbar');
-const syncSelectionSpace=()=>document.documentElement.style.setProperty('--selectionbar-height',`${{Math.ceil(selectionbar.getBoundingClientRect().height)}}px`);
-new ResizeObserver(syncSelectionSpace).observe(selectionbar);window.addEventListener('resize',syncSelectionSpace);syncSelectionSpace();
-const updateCount=()=>{{const n=document.querySelectorAll('.file-check:checked').length;document.getElementById('count').textContent=`${{n}} file${{n===1?'':'s'}} selected`;}};
-const updateParents=element=>{{
- let folder=element.closest('.folder');
- while(folder){{
-  const parent=folder.querySelector(':scope > .row > .folder-check');
-  const files=[...folder.querySelectorAll('.file-check')];
-  parent.checked=files.length>0&&files.every(file=>file.checked);
-  parent.indeterminate=files.some(file=>file.checked)&&!parent.checked;
-  folder=folder.parentElement.closest('.folder');
- }} updateCount();
-}};
-const toggleFolder=target=>{{
- const tree=document.getElementById(target); tree.hidden=!tree.hidden;
- const button=document.querySelector(`.expand[data-target="${{target}}"]`);
- button.textContent=tree.hidden?'+':'-'; button.setAttribute('aria-expanded',String(!tree.hidden));
-}};
-document.querySelectorAll('.expand,.folder-name').forEach(button=>button.addEventListener('click',()=>toggleFolder(button.dataset.target)));
-document.querySelectorAll('.folder-check').forEach(box=>box.addEventListener('change',()=>{{setChildren(box.closest('.folder'),box.checked);updateParents(box.closest('.folder').parentElement);}}));
-document.querySelectorAll('.file-check').forEach(box=>box.addEventListener('change',()=>{{updateParents(box);}}));
-document.getElementById('check-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=true;box.indeterminate=false;}});updateCount();}});
-document.getElementById('uncheck-all').addEventListener('click',()=>{{document.querySelectorAll('input[type=checkbox]').forEach(box=>{{box.checked=false;box.indeterminate=false;}});updateCount();}});
-document.getElementById('search').addEventListener('input',e=>{{const q=e.target.value.toLowerCase();document.querySelectorAll('#tree li.file').forEach(row=>row.hidden=!!q&&!row.textContent.toLowerCase().includes(q));document.querySelectorAll('#tree li.folder').forEach(row=>{{const match=!q||row.textContent.toLowerCase().includes(q);row.hidden=!match;if(q&&match){{const tree=row.querySelector(':scope > ul');if(tree)tree.hidden=false;const button=row.querySelector(':scope > .row > .expand');if(button){{button.textContent='-';button.setAttribute('aria-expanded','true')}}}}}});}});
-</script>
-</body></html>"""
-        return web.Response(text=page, content_type="text/html")
+        return web.Response(
+            text=render_selection_page(rows), content_type="text/html"
+        )
 
     async def _submit(self, request: web.Request) -> web.Response:
         selection = self._selection(request)

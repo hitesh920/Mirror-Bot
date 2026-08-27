@@ -125,16 +125,10 @@ async def _wait_for_metadata(
     )
 
 
-async def download_torrent(
-    task: Task,
-    qb: QBittorrentClient,
-    selector: TorrentSelector,
-    torrent_file: Path | None = None,
-    on_selector_ready=None,
-    on_selector_done=None,
-) -> Path:
-    task.work_dir.mkdir(parents=True, exist_ok=True)
-    source = torrent_file or task.source.value
+async def _add_and_register(
+    task: Task, qb: QBittorrentClient, source: str | Path
+) -> None:
+    """Add the torrent and record its hash, or raise if it is a duplicate."""
     info_hash = ""
     if isinstance(source, str):
         info_hash = magnet_info_hash(source)
@@ -149,13 +143,14 @@ async def download_torrent(
         "Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8]
     )
 
-    torrent, files = await _wait_for_metadata(qb, task)
-    task.name = str(torrent.get("name") or task.name or "torrent")
-    await qb.stop(task.torrent_hash)
-    task.transition(TaskPhase.SELECTING)
-    task.size = sum(file.get("size", 0) for file in files)
 
-    selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
+async def _await_selection(
+    task: Task,
+    qb: QBittorrentClient,
+    selector: TorrentSelector,
+    selection_job: asyncio.Task,
+):
+    """Poll until the selector has registered a Selection (or fail/cancel)."""
     selection = await selector.get(task.torrent_hash)
     while selection is None and not selection_job.done():
         if task.cancelled:
@@ -168,14 +163,29 @@ async def download_torrent(
         selection = await selector.get(task.torrent_hash)
     if selection is None:
         # select() finished without ever registering a selection: surface its
-        # failure if it had one, otherwise treat it as an engine error rather
-        # than spinning forever on selector.get().
+        # failure if it had one, rather than spinning forever on selector.get().
         await selection_job
         await qb.delete(task.torrent_hash, True)
         raise TorrentEngineError("Torrent file selection ended before it started")
+    return selection
+
+
+async def _run_selection(
+    task: Task,
+    qb: QBittorrentClient,
+    selector: TorrentSelector,
+    files: list[dict],
+    on_selector_ready,
+    on_selector_done,
+) -> None:
+    """Present the file selector, wait for the user's choice, size the result."""
+    selection_job = asyncio.create_task(selector.select(task.torrent_hash, files))
+    selection = await _await_selection(task, qb, selector, selection_job)
     task.selection_url = f"{selector.public_base_url}/select/{selection.token}"
     try:
-        selector_message = await on_selector_ready(task) if on_selector_ready else None
+        selector_message = (
+            await on_selector_ready(task) if on_selector_ready else None
+        )
     except Exception:
         await selector.cancel(task.torrent_hash)
         await selection_job
@@ -191,8 +201,7 @@ async def download_torrent(
             await asyncio.sleep(1)
         await selection_job
         task.transition(TaskPhase.DOWNLOADING)
-        selected_files = await qb.files(task.torrent_hash)
-        selected_size = selected_torrent_size(selected_files)
+        selected_size = selected_torrent_size(await qb.files(task.torrent_hash))
         task.size = selected_size
         ensure_disk_space(task.work_dir, selected_size)
     finally:
@@ -200,6 +209,8 @@ async def download_torrent(
         if on_selector_done and selector_message:
             await on_selector_done(selector_message)
 
+
+async def _poll_until_complete(task: Task, qb: QBittorrentClient) -> Path:
     while True:
         if task.cancelled:
             await qb.delete(task.torrent_hash, True)
@@ -226,3 +237,26 @@ async def download_torrent(
         if state in ERROR_STATES:
             raise TorrentEngineError(f"qBittorrent entered state: {state}")
         await asyncio.sleep(2)
+
+
+async def download_torrent(
+    task: Task,
+    qb: QBittorrentClient,
+    selector: TorrentSelector,
+    torrent_file: Path | None = None,
+    on_selector_ready=None,
+    on_selector_done=None,
+) -> Path:
+    task.work_dir.mkdir(parents=True, exist_ok=True)
+    await _add_and_register(task, qb, torrent_file or task.source.value)
+
+    torrent, files = await _wait_for_metadata(qb, task)
+    task.name = str(torrent.get("name") or task.name or "torrent")
+    await qb.stop(task.torrent_hash)
+    task.transition(TaskPhase.SELECTING)
+    task.size = sum(file.get("size", 0) for file in files)
+
+    await _run_selection(
+        task, qb, selector, files, on_selector_ready, on_selector_done
+    )
+    return await _poll_until_complete(task, qb)
