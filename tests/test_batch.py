@@ -165,7 +165,7 @@ async def test_batch_downloader_limits_concurrency_and_keeps_partial_success(
     active = 0
     maximum_active = 0
 
-    async def fake_resolve(source):
+    async def fake_resolve(source, session=None):
         return source
 
     async def fake_download(child):
@@ -203,7 +203,7 @@ async def test_batch_downloader_limits_concurrency_and_keeps_partial_success(
 async def test_batch_downloader_preserves_collection_folder(tmp_path, monkeypatch):
     task = make_batch_task(tmp_path, count=2)
 
-    async def fake_resolve(source):
+    async def fake_resolve(source, session=None):
         return source
 
     async def fake_download(child):
@@ -228,7 +228,7 @@ async def test_batch_downloader_preserves_collection_folder(tmp_path, monkeypatc
 async def test_batch_downloader_fails_when_every_source_fails(tmp_path, monkeypatch):
     task = make_batch_task(tmp_path, count=2)
 
-    async def fake_resolve(source):
+    async def fake_resolve(source, session=None):
         return source
 
     async def fake_download(_child):
@@ -241,6 +241,32 @@ async def test_batch_downloader_fails_when_every_source_fails(tmp_path, monkeypa
         await download_batch(task)
 
     assert task.batch_failed == 2
+
+
+@pytest.mark.asyncio
+async def test_batch_shares_one_resolver_session(tmp_path, monkeypatch):
+    task = make_batch_task(tmp_path, count=4)
+    seen_sessions = []
+
+    async def fake_resolve(source, session=None):
+        seen_sessions.append(id(session))
+        return source
+
+    async def fake_download(child):
+        child.work_dir.mkdir(parents=True, exist_ok=True)
+        target = child.work_dir / "f.bin"
+        target.write_bytes(b"x")
+        child.downloaded = child.size = 1
+        return target
+
+    monkeypatch.setattr(batch_downloader, "resolve_source", fake_resolve)
+    monkeypatch.setattr(batch_downloader, "download_direct", fake_download)
+
+    await download_batch(task)
+
+    assert len(seen_sessions) == 4
+    assert len(set(seen_sessions)) == 1  # one ClientSession for the whole batch
+    assert None not in seen_sessions
 
 
 @pytest.mark.asyncio
@@ -287,7 +313,7 @@ async def test_batch_cancellation_removes_child_workspaces(tmp_path, monkeypatch
     task = make_batch_task(tmp_path, count=2)
     started = asyncio.Event()
 
-    async def fake_resolve(source):
+    async def fake_resolve(source, session=None):
         return source
 
     async def fake_download(child):
@@ -318,7 +344,7 @@ async def test_batch_zip_uses_store_mode_and_flattens_staging_root(
     task = make_batch_task(tmp_path)
     captured = {}
 
-    async def fake_run(_task, *command, cwd=None):
+    async def fake_run(_task, *command, cwd=None, stdin_data=None):
         captured["command"] = command
         captured["cwd"] = cwd
 

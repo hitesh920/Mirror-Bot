@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from ..core.logging_config import log_event
 from ..core.models import Source, SourceType
 from .base import USER_AGENT, ResolvedCollection, ResolverError, resolved_source
 from .direct_hosts import (
@@ -95,12 +96,14 @@ async def _resolve_with(source: Source, session: aiohttp.ClientSession) -> Sourc
         except ResolverError:
             raise
         except Exception as exc:
-            LOGGER.warning(
-                "Resolver %s failed host=%s error=%s: %s",
-                resolver.name,
-                urlparse(original).hostname or "unknown-host",
-                type(exc).__name__,
-                exc,
+            log_event(
+                LOGGER,
+                logging.WARNING,
+                "resolver.failed",
+                resolver=resolver.name,
+                host=urlparse(original).hostname or "unknown-host",
+                error_type=type(exc).__name__,
+                error=exc,
             )
             raise ResolverError(
                 f"{resolver.name} could not resolve this link "
@@ -112,10 +115,12 @@ async def _resolve_with(source: Source, session: aiohttp.ClientSession) -> Sourc
             if isinstance(result, ResolvedCollection)
             else urlparse(result.url).hostname or "unknown-host"
         )
-        LOGGER.info(
-            "Resolved direct-host link resolver=%s target=%s",
-            resolver.name,
-            resolved_target,
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "resolver.resolved",
+            resolver=resolver.name,
+            target=resolved_target,
         )
         if isinstance(result, ResolvedCollection):
             return current

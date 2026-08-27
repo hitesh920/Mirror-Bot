@@ -14,6 +14,7 @@ from ..core.errors import (
     TorrentMetadataTimeoutError,
     TorrentRemovedError,
 )
+from ..core.logging_config import log_event
 from ..core.models import Task, TaskPhase
 from ..services.paths import ensure_inside
 from ..services.transfer_guard import ensure_disk_space
@@ -149,8 +150,12 @@ async def _add_and_register(
     task.torrent_hash = torrent["hash"]
     task.name = ""
     task.transition(TaskPhase.METADATA)
-    LOGGER.info(
-        "Task %s: torrent added hash=%s", task.short_id(), task.torrent_hash[:8]
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "torrent.added",
+        task=task.short_id(),
+        hash=task.torrent_hash[:8],
     )
 
 
@@ -242,7 +247,9 @@ async def _poll_until_complete(task: Task, qb: QBittorrentClient) -> Path:
             final_files = await qb.files(task.torrent_hash)
             await qb.delete(task.torrent_hash, False)
             _clean_skipped_files(task, torrent, final_files)
-            LOGGER.info("Task %s: torrent download complete", task.short_id())
+            log_event(
+                LOGGER, logging.INFO, "torrent.complete", task=task.short_id()
+            )
             return content_path
         if state in ERROR_STATES:
             raise TorrentEngineError(f"qBittorrent entered state: {state}")

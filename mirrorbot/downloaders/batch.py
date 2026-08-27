@@ -4,10 +4,12 @@ from pathlib import Path
 from shutil import move, rmtree
 from urllib.parse import urlparse
 
+import aiohttp
+
 from ..core.errors import TaskFailure
 from ..core.models import AddOptions, Source, SourceType, Task
 from ..resolvers import resolve_source
-from ..resolvers.base import safe_name
+from ..resolvers.base import USER_AGENT, safe_name
 from .direct import download_direct
 
 BATCH_DOWNLOAD_CONCURRENCY = 3
@@ -76,12 +78,14 @@ async def download_batch(task: Task) -> Path:
         _child(index, source) for index, source in enumerate(sources, 1)
     ]
 
+    resolver_session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
+
     async def run_source(index: int, source: Source, child: Task) -> None:
         try:
             async with semaphore:
                 if task.cancelled:
                     raise asyncio.CancelledError()
-                child.source = await resolve_source(child.source)
+                child.source = await resolve_source(child.source, resolver_session)
                 if child.source.type != SourceType.DIRECT_URL:
                     raise BatchDownloadError("resolved to a non-direct source")
                 downloaded = await download_direct(child)
@@ -140,6 +144,7 @@ async def download_batch(task: Task) -> Path:
         task.speed = 0
         task.eta = 0
         await asyncio.to_thread(rmtree, parts, True)
+        await asyncio.gather(resolver_session.close(), return_exceptions=True)
 
     if task.batch_completed == 0:
         raise BatchDownloadError("Every link in the batch failed; nothing was uploaded")

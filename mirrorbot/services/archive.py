@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from asyncio.subprocess import PIPE
+from contextlib import suppress
 from pathlib import Path
 
 from ..core.errors import TaskFailure
@@ -30,14 +31,28 @@ class ArchiveCorruptError(ArchiveError):
     pass
 
 
-async def _run(task: Task, *args: str, cwd: Path | None = None) -> None:
+def _password_stdin(password: str) -> bytes | None:
+    """7-Zip and unrar read the password from stdin when no -p<value> is given,
+    which keeps it out of argv / /proc/<pid>/cmdline."""
+    return f"{password}\n".encode() if password else None
+
+
+async def _run(
+    task: Task, *args: str, cwd: Path | None = None, stdin_data: bytes | None = None
+) -> None:
     process = await asyncio.create_subprocess_exec(
         *args,
         cwd=cwd,
+        stdin=PIPE if stdin_data is not None else None,
         stdout=PIPE,
         stderr=PIPE,
         start_new_session=True,
     )
+    if stdin_data is not None and process.stdin is not None:
+        process.stdin.write(stdin_data)
+        with suppress(OSError):
+            await process.stdin.drain()
+        process.stdin.close()
     output = bytearray()
 
     async def read_stream(stream) -> None:
@@ -115,9 +130,14 @@ async def zip_path(
     ensure_disk_space(output, path_size(path))
     command = ["7z", "a", "-tzip", f"-mx={level}", "-y", "-bsp1"]
     if password:
-        command.extend([f"-p{password}", "-mem=AES256"])
+        command.extend(["-p", "-mem=AES256"])
     command.extend([str(output), "." if contents_only else path.name])
-    await _run(task, *command, cwd=path if contents_only else path.parent)
+    await _run(
+        task,
+        *command,
+        cwd=path if contents_only else path.parent,
+        stdin_data=_password_stdin(password),
+    )
     return output
 
 
@@ -129,18 +149,14 @@ async def extract_path(path: Path, task: Task, password: str = "") -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".rar":
         command = ["unrar", "x", "-o+"]
-        if password:
-            command.append(f"-p{password}")
-        else:
+        if not password:
             command.append("-p-")
         command.append(str(path))
         command.append(f"{output_dir}/")
     else:
         command = ["7z", "x", "-y", "-bsp1", f"-o{output_dir}"]
-        if password:
-            command.append(f"-p{password}")
-        else:
+        if not password:
             command.append("-p-")
         command.append(str(path))
-    await _run(task, *command)
+    await _run(task, *command, stdin_data=_password_stdin(password))
     return output_dir

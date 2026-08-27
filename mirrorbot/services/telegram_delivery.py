@@ -9,6 +9,7 @@ from pyrogram import Client
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait, RPCError
 
+from ..core.logging_config import log_event
 from ..core.models import Task, TaskPhase
 from ..downloaders.process import path_size
 from .media_metadata import MediaMetadata, create_video_thumbnail, probe_media
@@ -137,12 +138,13 @@ async def send_telegram_file_handling_floodwait(
             wait_for = int(getattr(exc, "value", 0) or 0)
             if attempt >= TELEGRAM_FLOODWAIT_RETRIES:
                 raise
-            LOGGER.warning(
-                "Task %s: Telegram FloodWait while uploading; "
-                "retrying in %ss attempt=%s",
-                task.short_id(),
-                wait_for,
-                attempt,
+            log_event(
+                LOGGER,
+                logging.WARNING,
+                "telegram.floodwait",
+                task=task.short_id(),
+                retry_in=f"{wait_for}s",
+                attempt=attempt,
             )
             await asyncio.sleep(max(wait_for, 1))
     raise RuntimeError("Telegram upload retries exhausted after repeated FloodWait")
@@ -167,12 +169,14 @@ def upload_progress_callback(
 async def split_file(
     task: Task, source: Path, parts_dir: Path, part_size: int
 ) -> list[Path]:
-    LOGGER.info(
-        "Task %s: splitting Telegram file name=%r size=%s part_size=%s",
-        task.short_id(),
-        source.name,
-        source.stat().st_size,
-        part_size,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "telegram.split_start",
+        task=task.short_id(),
+        name=source.name,
+        size=source.stat().st_size,
+        part_size=part_size,
     )
     ensure_disk_space(parts_dir, source.stat().st_size)
     key = sha1(str(source).encode(), usedforsecurity=False).hexdigest()[:12]
@@ -207,11 +211,13 @@ async def split_file(
             index += 1
             if written < part_size:
                 break
-    LOGGER.info(
-        "Task %s: split complete name=%r parts=%s",
-        task.short_id(),
-        source.name,
-        len(parts),
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "telegram.split_complete",
+        task=task.short_id(),
+        name=source.name,
+        parts=len(parts),
     )
     return parts
 
@@ -269,11 +275,13 @@ async def upload_to_telegram(
             raise RuntimeError(
                 "Telegram dump channel is unavailable and no request chat is available"
             ) from exc
-        LOGGER.warning(
-            "Task %s: Telegram dump channel upload failed before posting; "
-            "falling back to request chat: %s",
-            task.short_id(),
-            exc,
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            "telegram.dump_fallback",
+            task=task.short_id(),
+            result="falling back to request chat",
+            error=exc,
         )
         return await _upload_to_telegram_chat(
             task, path, client, split_size, task.chat_id, "request_chat"
@@ -302,10 +310,12 @@ async def _upload_to_telegram_chat(
     task.result_folders = []
     task.result_links = []
     task.telegram_upload_mode = upload_mode
-    LOGGER.info(
-        "Task %s: Telegram delivery target=%s",
-        task.short_id(),
-        upload_mode,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "telegram.delivery_start",
+        task=task.short_id(),
+        target=upload_mode,
     )
 
     try:
@@ -348,17 +358,17 @@ async def _upload_to_telegram_chat(
                             thumbs_dir,
                             metadata.duration,
                         )
-                LOGGER.info(
-                    "Task %s: uploading Telegram file name=%r size=%s type=%s "
-                    "thumb=%s duration=%s size=%sx%s",
-                    task.short_id(),
-                    current_file,
-                    item.stat().st_size,
-                    media_type,
-                    bool(thumb),
-                    metadata.duration,
-                    metadata.width,
-                    metadata.height,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    "telegram.uploading",
+                    task=task.short_id(),
+                    name=current_file,
+                    size=item.stat().st_size,
+                    type=media_type,
+                    thumb=bool(thumb),
+                    duration=metadata.duration,
+                    dimensions=f"{metadata.width}x{metadata.height}",
                 )
                 message = await send_telegram_file_handling_floodwait(
                     client,
@@ -380,18 +390,22 @@ async def _upload_to_telegram_chat(
                 task.result_links.append(
                     telegram_message_link(message, upload_chat_id, task.chat_id)
                 )
-                LOGGER.info(
-                    "Task %s: Telegram upload complete name=%r",
-                    task.short_id(),
-                    current_file,
+                log_event(
+                    LOGGER,
+                    logging.INFO,
+                    "telegram.file_complete",
+                    task=task.short_id(),
+                    name=current_file,
                 )
 
         task.report_progress(total_size, size=total_size, complete=True)
-        LOGGER.info(
-            "Task %s: Telegram delivery complete files=%s bytes=%s",
-            task.short_id(),
-            sent,
-            total_size,
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "telegram.delivery_complete",
+            task=task.short_id(),
+            files=sent,
+            bytes=total_size,
         )
         return sent
     finally:

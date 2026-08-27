@@ -10,6 +10,7 @@ import aiofiles
 import aiohttp
 
 from ..core.errors import NetworkError, NetworkTimeoutError
+from ..core.logging_config import log_event
 from ..core.models import Task
 from ..resolvers.base import USER_AGENT, ResolvedCollection, safe_name
 from ..services.transfer_guard import ensure_disk_space
@@ -76,8 +77,13 @@ async def _retrying(
         if number > 1:
             if before_retry is not None:
                 await before_retry(number)
-            LOGGER.warning(
-                "Task %s: retrying %s attempt=%s", task.short_id(), label, number - 1
+            log_event(
+                LOGGER,
+                logging.WARNING,
+                "direct.retry",
+                task=task.short_id(),
+                stage=label,
+                attempt=number - 1,
             )
             await asyncio.sleep(min(10, 2 ** (number - 1)))
         try:
@@ -139,11 +145,13 @@ async def download_single_direct(task: Task) -> Path:
     original_filename = filename_from_url(task.source.value)
     requested_name = safe_name(task.options.name) if task.options.name else ""
     task.name = requested_name or task.source.filename or original_filename
-    LOGGER.info(
-        "Task %s: starting direct download name=%r host=%s",
-        task.short_id(),
-        task.name,
-        urlparse(task.source.value).netloc,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "direct.start",
+        task=task.short_id(),
+        name=task.name,
+        host=urlparse(task.source.value).netloc,
     )
     headers = {"User-Agent": USER_AGENT, **(task.source.metadata.get("headers") or {})}
     cookies = task.source.metadata.get("cookies") or {}
@@ -175,11 +183,13 @@ async def download_single_direct(task: Task) -> Path:
             task.advance_progress(delta)
 
         await _stream_to_file(response, target, task, bump)
-        LOGGER.info(
-            "Task %s: direct download complete name=%r bytes=%s",
-            task.short_id(),
-            filename,
-            task.downloaded,
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "direct.complete",
+            task=task.short_id(),
+            name=filename,
+            bytes=task.downloaded,
         )
         task.report_progress(task.downloaded, complete=True)
         return target
@@ -263,11 +273,13 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
                 before_retry=before_retry,
             )
 
-    LOGGER.info(
-        "Task %s: starting collection download name=%r files=%s",
-        task.short_id(),
-        task.name,
-        len(collection.files),
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "collection.start",
+        task=task.short_id(),
+        name=task.name,
+        files=len(collection.files),
     )
     async with aiohttp.ClientSession(
         headers=base_headers, cookies=base_cookies, timeout=DIRECT_DOWNLOAD_TIMEOUT
@@ -284,11 +296,13 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
     succeeded = len(results) - len(failures)
     for item, result in zip(collection.files, results, strict=True):
         if isinstance(result, BaseException):
-            LOGGER.warning(
-                "Task %s: collection item failed name=%r error=%s",
-                task.short_id(),
-                item.filename,
-                result,
+            log_event(
+                LOGGER,
+                logging.WARNING,
+                "collection.item_failed",
+                task=task.short_id(),
+                name=item.filename,
+                error=result,
             )
             task.processing_warnings.append(
                 f"{item.filename}: {type(result).__name__}"
@@ -300,12 +314,13 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
         item.stat().st_size for item in root.rglob("*") if item.is_file()
     )
     task.report_progress(final_size, size=final_size, complete=True)
-    LOGGER.info(
-        "Task %s: collection download complete name=%r files=%s/%s bytes=%s",
-        task.short_id(),
-        task.name,
-        succeeded,
-        len(collection.files),
-        task.downloaded,
+    log_event(
+        LOGGER,
+        logging.INFO,
+        "collection.complete",
+        task=task.short_id(),
+        name=task.name,
+        files=f"{succeeded}/{len(collection.files)}",
+        bytes=task.downloaded,
     )
     return root
