@@ -4,7 +4,13 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .base import ResolvedDownload, ResolverError, host_matches
+from .base import (
+    ResolvedDownload,
+    ResolverError,
+    fetch_json,
+    fetch_text,
+    host_matches,
+)
 
 
 class SolidFilesResolver:
@@ -15,9 +21,7 @@ class SolidFilesResolver:
         return host_matches(url, self.domains)
 
     async def resolve(self, url, session) -> ResolvedDownload:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         match = re.search(r"viewerOptions'\s*,\s*(\{.*?\})\s*\);", page)
         if not match:
             raise ResolverError("SolidFiles download data was not found")
@@ -33,9 +37,7 @@ class UploadEeResolver:
         return host_matches(url, self.domains) and "/files/" in urlparse(url).path
 
     async def resolve(self, url, session) -> ResolvedDownload:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         match = re.search(r'<a[^>]+href="([^"]+)"[^>]+id="d_l"', page)
         if not match:
             match = re.search(r'<a[^>]+id="d_l"[^>]+href="([^"]+)"', page)
@@ -60,9 +62,7 @@ class StreamTapeResolver:
         return host_matches(url, self.domains)
 
     async def resolve(self, url, session) -> ResolvedDownload:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         parts = [part for part in urlparse(url).path.split("/") if part]
         file_id = (
             parts[-2] if len(parts) > 1 and parts[-2] not in {"v", "e"} else parts[-1]
@@ -83,9 +83,7 @@ class PCloudResolver:
         return host_matches(url, self.domains)
 
     async def resolve(self, url, session) -> ResolvedDownload:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         match = re.search(r'["\']downloadlink["\']\s*:\s*["\'](https:.*?)[\'"]', page)
         if not match:
             raise ResolverError("pCloud download link was not found")
@@ -102,9 +100,7 @@ class SendCmResolver:
     async def resolve(self, url, session) -> ResolvedDownload:
         file_id = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
         if "/d/" in urlparse(url).path:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                page = await response.text()
+            page = await fetch_text(session, url)
             match = re.search(
                 r'<input[^>]+name=["\']id["\'][^>]+value=["\']([^"\']+)', page
             )
@@ -134,9 +130,7 @@ class KrakenFilesResolver:
         return host_matches(url, self.domains)
 
     async def resolve(self, url, session) -> ResolvedDownload:
-        async with session.get(url) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         action = re.search(
             r'<form[^>]+id=["\']dl-form["\'][^>]+action=["\']([^"\']+)', page
         )
@@ -148,9 +142,9 @@ class KrakenFilesResolver:
         post_url = action.group(1)
         if post_url.startswith("/"):
             post_url = f"https://krakenfiles.com{post_url}"
-        async with session.post(post_url, data={"token": token.group(1)}) as response:
-            response.raise_for_status()
-            payload = await response.json()
+        payload = await fetch_json(
+            session, post_url, method="POST", data={"token": token.group(1)}
+        )
         direct = payload.get("url")
         if not direct:
             raise ResolverError("KrakenFiles download link was not found")

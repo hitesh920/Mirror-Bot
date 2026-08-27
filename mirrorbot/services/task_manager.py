@@ -269,43 +269,48 @@ class TaskManager:
             LOGGER.info("Removed %s orphaned qBittorrent task(s)", removed)
         return removed
 
-    async def _run_or_cancel(self, task: Task, awaitable):
+    async def _await_or_cancel(self, task: Task, operation: asyncio.Task):
+        """Wait for ``operation`` unless the task is cancelled first.
+
+        On cancellation: cancel ``operation``, wait for it to settle, and raise
+        ``task.guard_error`` (if any) or ``asyncio.CancelledError``. Otherwise
+        return ``operation``'s result.
+        """
         self._raise_if_cancelled(task)
-        operation = asyncio.create_task(awaitable)
-        cancelled = asyncio.create_task(task.cancel_event.wait())
-        done, _ = await asyncio.wait(
-            {operation, cancelled}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if cancelled in done or task.cancelled:
+        waiter = asyncio.create_task(task.cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {operation, waiter}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+        if waiter in done or task.cancelled:
             operation.cancel()
             await asyncio.gather(operation, return_exceptions=True)
             if task.guard_error:
                 raise task.guard_error
             raise asyncio.CancelledError()
-        cancelled.cancel()
-        await asyncio.gather(cancelled, return_exceptions=True)
         return await operation
+
+    async def _run_or_cancel(self, task: Task, awaitable):
+        return await self._await_or_cancel(task, asyncio.ensure_future(awaitable))
 
     @asynccontextmanager
     async def _queue_slot(self, semaphore: asyncio.Semaphore, task: Task):
         self._raise_if_cancelled(task)
-        acquire = asyncio.create_task(semaphore.acquire())
-        cancelled = asyncio.create_task(task.cancel_event.wait())
-        done, _ = await asyncio.wait(
-            {acquire, cancelled}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if cancelled in done or task.cancelled:
-            if acquire.done() and not acquire.cancelled():
+        acquire = asyncio.ensure_future(semaphore.acquire())
+        try:
+            await self._await_or_cancel(task, acquire)
+        except BaseException:
+            # Release the slot if we won it in the same tick we were cancelled.
+            if (
+                acquire.done()
+                and not acquire.cancelled()
+                and acquire.exception() is None
+            ):
                 semaphore.release()
-            else:
-                acquire.cancel()
-                await asyncio.gather(acquire, return_exceptions=True)
-            if not cancelled.done():
-                cancelled.cancel()
-                await asyncio.gather(cancelled, return_exceptions=True)
-            raise asyncio.CancelledError()
-        cancelled.cancel()
-        await asyncio.gather(cancelled, return_exceptions=True)
+            raise
         try:
             yield
         finally:

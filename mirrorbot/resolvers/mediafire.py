@@ -8,6 +8,8 @@ from .base import (
     ResolvedDownload,
     ResolvedFile,
     ResolverError,
+    fetch_json,
+    fetch_text,
     host_matches,
 )
 
@@ -39,9 +41,7 @@ class MediaFireResolver:
     async def resolve(self, url, session) -> ResolvedDownload | ResolvedCollection:
         if "/folder/" in url:
             return await self._resolve_folder(url, session)
-        async with session.get(url, allow_redirects=True) as response:
-            response.raise_for_status()
-            page = await response.text()
+        page = await fetch_text(session, url)
         direct = extract_mediafire_link(page)
         if not direct:
             raise ResolverError("MediaFire download link was not found")
@@ -95,9 +95,7 @@ class MediaFireResolver:
             normal_url = (item.get("links") or {}).get("normal_download")
             if not normal_url:
                 continue
-            async with session.get(normal_url, allow_redirects=True) as response:
-                response.raise_for_status()
-                direct = extract_mediafire_link(await response.text())
+            direct = extract_mediafire_link(await fetch_text(session, normal_url))
             if direct:
                 collection.files.append(
                     ResolvedFile(
@@ -109,12 +107,12 @@ class MediaFireResolver:
                 )
 
     async def _api(self, session, endpoint, data):
-        async with session.post(
+        payload = await fetch_json(
+            session,
             f"https://www.mediafire.com/api/1.5/{endpoint}",
+            method="POST",
             data={**data, "response_format": "json"},
-        ) as response:
-            response.raise_for_status()
-            payload = await response.json()
+        )
         result = payload.get("response") or {}
         if result.get("message"):
             raise ResolverError(f"MediaFire: {result['message']}")

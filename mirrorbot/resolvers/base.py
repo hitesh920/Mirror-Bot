@@ -17,6 +17,26 @@ class ResolverError(RuntimeError):
     pass
 
 
+async def fetch_text(
+    session: aiohttp.ClientSession, url: str, *, method: str = "GET", **kwargs
+) -> str:
+    """GET/POST ``url`` and return the response body text, raising for HTTP errors."""
+    kwargs.setdefault("allow_redirects", True)
+    async with session.request(method, url, **kwargs) as response:
+        response.raise_for_status()
+        return await response.text()
+
+
+async def fetch_json(
+    session: aiohttp.ClientSession, url: str, *, method: str = "GET", **kwargs
+):
+    """GET/POST ``url`` and return the parsed JSON body, raising for HTTP errors."""
+    kwargs.setdefault("allow_redirects", True)
+    async with session.request(method, url, **kwargs) as response:
+        response.raise_for_status()
+        return await response.json()
+
+
 @dataclass
 class ResolvedDownload:
     url: str

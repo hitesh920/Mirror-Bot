@@ -27,33 +27,44 @@ class TelegramStatus:
             if task.chat_id == chat_id and task.status_visible
         ]
 
+    async def _delete_quietly(self, message, chat_id: int, reason: str) -> None:
+        if message is None:
+            return
+        try:
+            await message.delete()
+        except Exception:
+            LOGGER.debug("Could not delete %s status chat=%s", reason, chat_id,
+                         exc_info=True)
+
+    async def _store(self, chat_id: int, message, text: str, *, replaced_reason: str):
+        """Adopt ``message`` as the live status message, deleting the previous one."""
+        old = self.messages.get(chat_id)
+        self.messages[chat_id] = message
+        self.text[chat_id] = text
+        if old is not None and old.id != message.id:
+            await self._delete_quietly(old, chat_id, replaced_reason)
+
+    async def _send_status(self, chat_id: int, text: str):
+        return await self.app.send_message(
+            chat_id, text, parse_mode=ParseMode.HTML, disable_notification=True
+        )
+
     async def update(self, chat_id: int) -> None:
         async with self.locks[chat_id]:
             tasks = self.chat_tasks(chat_id)
             if not tasks:
                 message = self.messages.pop(chat_id, None)
                 self.text.pop(chat_id, None)
-                if message:
-                    try:
-                        await message.delete()
-                    except Exception:
-                        LOGGER.debug(
-                            "Could not delete completed status chat=%s",
-                            chat_id,
-                            exc_info=True,
-                        )
+                await self._delete_quietly(message, chat_id, "completed")
                 return
 
             text = format_status(tasks)
             message = self.messages.get(chat_id)
             if message is None:
-                self.messages[chat_id] = await self.app.send_message(
-                    chat_id,
-                    text,
-                    parse_mode=ParseMode.HTML,
-                    disable_notification=True,
+                await self._store(
+                    chat_id, await self._send_status(chat_id, text), text,
+                    replaced_reason="replaced",
                 )
-                self.text[chat_id] = text
             elif self.text.get(chat_id) != text:
                 try:
                     await message.edit_text(text, parse_mode=ParseMode.HTML)
@@ -64,42 +75,17 @@ class TelegramStatus:
     async def replace(self, chat_id: int) -> None:
         async with self.locks[chat_id]:
             text = format_status(self.chat_tasks(chat_id))
-            new_message = await self.app.send_message(
-                chat_id,
-                text,
-                parse_mode=ParseMode.HTML,
-                disable_notification=True,
+            await self._store(
+                chat_id, await self._send_status(chat_id, text), text,
+                replaced_reason="replaced",
             )
-            old_message = self.messages.get(chat_id)
-            self.messages[chat_id] = new_message
-            self.text[chat_id] = text
-            if old_message:
-                try:
-                    await old_message.delete()
-                except Exception:
-                    LOGGER.debug(
-                        "Could not delete replaced status chat=%s",
-                        chat_id,
-                        exc_info=True,
-                    )
         self.ensure_loop(chat_id)
 
     async def start(self, chat_id: int, message) -> None:
         async with self.locks[chat_id]:
-            old_message = self.messages.get(chat_id)
             text = format_status(self.chat_tasks(chat_id))
             await message.edit_text(text, parse_mode=ParseMode.HTML)
-            self.messages[chat_id] = message
-            self.text[chat_id] = text
-            if old_message and old_message.id != message.id:
-                try:
-                    await old_message.delete()
-                except Exception:
-                    LOGGER.debug(
-                        "Could not delete old status chat=%s",
-                        chat_id,
-                        exc_info=True,
-                    )
+            await self._store(chat_id, message, text, replaced_reason="old")
         self.ensure_loop(chat_id)
 
     async def send(self, chat_id: int) -> None:
