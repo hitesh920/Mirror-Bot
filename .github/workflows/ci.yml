@@ -22,7 +22,9 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff format --check .
 
       - name: Test
         run: pytest -q

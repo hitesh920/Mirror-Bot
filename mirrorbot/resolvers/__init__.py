@@ -81,11 +81,7 @@ async def _resolve_with(source: Source, session: aiohttp.ClientSession) -> Sourc
     current = source
     for _ in range(3):
         resolver = next(
-            (
-                candidate
-                for candidate in RESOLVERS
-                if candidate.supports(current.value)
-            ),
+            (candidate for candidate in RESOLVERS if candidate.supports(current.value)),
             None,
         )
         if resolver is None:
@@ -106,8 +102,7 @@ async def _resolve_with(source: Source, session: aiohttp.ClientSession) -> Sourc
                 error=exc,
             )
             raise ResolverError(
-                f"{resolver.name} could not resolve this link "
-                f"({_cause_summary(exc)})"
+                f"{resolver.name} could not resolve this link ({_cause_summary(exc)})"
             ) from exc
         current = resolved_source(current, result, resolver.name)
         resolved_target = (

@@ -155,6 +155,7 @@ async def flaky_server():
         return web.Response(status=500)
 
     app.router.add_get("/ok", ok)
+    app.router.add_get("/partial", ok)
     app.router.add_get("/flaky", flaky)
     app.router.add_get("/broken", broken)
     runner = web.AppRunner(app)
@@ -206,6 +207,32 @@ async def test_collection_tolerates_partial_failure(
     assert (root / "a.bin").read_bytes() == b"good-bytes"
     assert not (root / "b.bin").exists()
     assert any("b.bin" in w for w in task.processing_warnings)
+
+
+async def test_collection_removes_partial_file_after_final_failure(
+    make_task, flaky_server, monkeypatch
+):
+    monkeypatch.setattr(direct_module.asyncio, "sleep", _fast_sleep)
+    original_stream = direct_module._stream_to_file
+
+    async def fail_after_partial_write(response, target, task, on_bytes):
+        if response.url.path == "/partial":
+            target.write_bytes(b"partial")
+            await on_bytes(7)
+            raise OSError("connection lost")
+        return await original_stream(response, target, task, on_bytes)
+
+    monkeypatch.setattr(direct_module, "_stream_to_file", fail_after_partial_write)
+    base, _state = flaky_server
+    task = make_task()
+    task.source = Source(SourceType.DIRECT_URL, base, metadata={})
+    collection = _collection(base, [("a.bin", "ok"), ("b.bin", "partial")])
+
+    root = await download_collection(task, collection)
+
+    assert (root / "a.bin").read_bytes() == b"good-bytes"
+    assert not (root / "b.bin").exists()
+    assert task.downloaded == len(b"good-bytes")
 
 
 async def test_collection_all_failing_raises(make_task, flaky_server, monkeypatch):

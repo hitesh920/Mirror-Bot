@@ -96,7 +96,15 @@ async def test_floodwait_handler_retries_then_succeeds(monkeypatch):
     assert len(seen) == 2
     # args forwarded verbatim, no duplicate task kwarg
     assert seen[0] == (
-        "client", task, 42, "item", "caption", "progress", "document", "meta", None
+        "client",
+        task,
+        42,
+        "item",
+        "caption",
+        "progress",
+        "document",
+        "meta",
+        None,
     )
 
 

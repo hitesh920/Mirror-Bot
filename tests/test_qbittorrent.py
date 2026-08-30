@@ -147,9 +147,7 @@ async def test_request_gives_up_on_second_403(tmp_path, monkeypatch):
 
 
 async def test_request_raises_on_http_error(tmp_path):
-    session = FakeSession(
-        request_responses=[FakeResponse(status=500, body="boom")]
-    )
+    session = FakeSession(request_responses=[FakeResponse(status=500, body="boom")])
     client = _client(session, tmp_path)
 
     with pytest.raises(TorrentEngineError, match=r"failed \(500\)"):

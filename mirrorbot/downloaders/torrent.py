@@ -198,9 +198,7 @@ async def _run_selection(
     selection = await _await_selection(task, qb, selector, selection_job)
     task.selection_url = f"{selector.public_base_url}/select/{selection.token}"
     try:
-        selector_message = (
-            await on_selector_ready(task) if on_selector_ready else None
-        )
+        selector_message = await on_selector_ready(task) if on_selector_ready else None
     except Exception:
         await selector.cancel(task.torrent_hash)
         await selection_job
@@ -247,9 +245,7 @@ async def _poll_until_complete(task: Task, qb: QBittorrentClient) -> Path:
             final_files = await qb.files(task.torrent_hash)
             await qb.delete(task.torrent_hash, False)
             _clean_skipped_files(task, torrent, final_files)
-            log_event(
-                LOGGER, logging.INFO, "torrent.complete", task=task.short_id()
-            )
+            log_event(LOGGER, logging.INFO, "torrent.complete", task=task.short_id())
             return content_path
         if state in ERROR_STATES:
             raise TorrentEngineError(f"qBittorrent entered state: {state}")
@@ -273,7 +269,5 @@ async def download_torrent(
     task.transition(TaskPhase.SELECTING)
     task.size = sum(file.get("size", 0) for file in files)
 
-    await _run_selection(
-        task, qb, selector, files, on_selector_ready, on_selector_done
-    )
+    await _run_selection(task, qb, selector, files, on_selector_ready, on_selector_done)
     return await _poll_until_complete(task, qb)

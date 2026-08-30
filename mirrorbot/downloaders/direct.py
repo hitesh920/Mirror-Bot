@@ -266,12 +266,16 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
             async def before_retry(_number: int) -> None:
                 target.unlink(missing_ok=True)
 
-            await _retrying(
-                task,
-                f"collection item {item.filename!r}",
-                lambda: fetch_once(item, target, session),
-                before_retry=before_retry,
-            )
+            try:
+                await _retrying(
+                    task,
+                    f"collection item {item.filename!r}",
+                    lambda: fetch_once(item, target, session),
+                    before_retry=before_retry,
+                )
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
 
     log_event(
         LOGGER,
@@ -304,15 +308,11 @@ async def download_collection(task: Task, collection: ResolvedCollection) -> Pat
                 name=item.filename,
                 error=result,
             )
-            task.processing_warnings.append(
-                f"{item.filename}: {type(result).__name__}"
-            )
+            task.processing_warnings.append(f"{item.filename}: {type(result).__name__}")
     if not succeeded:
         raise NetworkError("Every file in the collection failed to download")
 
-    final_size = sum(
-        item.stat().st_size for item in root.rglob("*") if item.is_file()
-    )
+    final_size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
     task.report_progress(final_size, size=final_size, complete=True)
     log_event(
         LOGGER,

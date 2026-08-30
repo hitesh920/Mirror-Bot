@@ -77,9 +77,7 @@ async def _run(
     cancel_job.cancel()
     if wait_job not in done:
         await terminate_process(process)
-        await asyncio.gather(
-            wait_job, cancel_job, *readers, return_exceptions=True
-        )
+        await asyncio.gather(wait_job, cancel_job, *readers, return_exceptions=True)
         raise asyncio.CancelledError()
     await asyncio.gather(cancel_job, *readers, return_exceptions=True)
     detail = output.decode(errors="replace").strip()

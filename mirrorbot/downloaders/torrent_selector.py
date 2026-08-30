@@ -161,9 +161,7 @@ class TorrentSelector:
     async def _show(self, request: web.Request) -> web.Response:
         selection = self._selection(request)
         rows = render_tree(build_tree(selection.files))
-        return web.Response(
-            text=render_selection_page(rows), content_type="text/html"
-        )
+        return web.Response(text=render_selection_page(rows), content_type="text/html")
 
     async def _submit(self, request: web.Request) -> web.Response:
         selection = self._selection(request)

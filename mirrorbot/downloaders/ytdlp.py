@@ -50,9 +50,7 @@ def _progress_hook(task: Task):
             return
         task.set_transfer_stats(
             downloaded=int(data.get("downloaded_bytes") or 0),
-            size=int(
-                data.get("total_bytes") or data.get("total_bytes_estimate") or 0
-            ),
+            size=int(data.get("total_bytes") or data.get("total_bytes_estimate") or 0),
             speed=int(data.get("speed") or 0),
             eta=int(data.get("eta") or 0),
         )

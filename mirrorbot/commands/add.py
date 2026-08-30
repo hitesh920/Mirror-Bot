@@ -395,9 +395,7 @@ async def _launch_batch_tasks(query, token, destination, pending: PendingAdd) ->
         return
     archive_stem = pending.options.name or f"batch-{token}"
     options = replace(pending.options, name=archive_stem, zip=True, zip_password="")
-    source = Source(
-        SourceType.BATCH, "", archive_stem, {"sources": pending.sources}
-    )
+    source = Source(SourceType.BATCH, "", archive_stem, {"sources": pending.sources})
     task = manager.create_task(
         query.from_user.id,
         query.message.chat.id,

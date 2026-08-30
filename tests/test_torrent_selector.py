@@ -69,9 +69,7 @@ async def test_submit_cancel_action_marks_selection_cancelled():
     selection = _selection(FILES)
     selector.selections[selection.token] = selection
 
-    response = await selector._submit(
-        _request(selection.token, {"action": "cancel"})
-    )
+    response = await selector._submit(_request(selection.token, {"action": "cancel"}))
 
     assert selection.cancelled is True
     assert selection.submitted.is_set()
@@ -84,9 +82,7 @@ async def test_submit_requires_at_least_one_valid_file():
     selection = _selection(FILES)
     selector.selections[selection.token] = selection
 
-    response = await selector._submit(
-        _request(selection.token, {"file": ["99"]})
-    )
+    response = await selector._submit(_request(selection.token, {"file": ["99"]}))
 
     assert response.status == 400
     assert not selection.submitted.is_set()

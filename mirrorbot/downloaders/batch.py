@@ -148,8 +148,6 @@ async def download_batch(task: Task) -> Path:
 
     if task.batch_completed == 0:
         raise BatchDownloadError("Every link in the batch failed; nothing was uploaded")
-    final_size = sum(
-        item.stat().st_size for item in root.rglob("*") if item.is_file()
-    )
+    final_size = sum(item.stat().st_size for item in root.rglob("*") if item.is_file())
     task.report_progress(final_size, size=final_size, complete=True)
     return root

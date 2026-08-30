@@ -33,8 +33,9 @@ class TelegramStatus:
         try:
             await message.delete()
         except Exception:
-            LOGGER.debug("Could not delete %s status chat=%s", reason, chat_id,
-                         exc_info=True)
+            LOGGER.debug(
+                "Could not delete %s status chat=%s", reason, chat_id, exc_info=True
+            )
 
     async def _store(self, chat_id: int, message, text: str, *, replaced_reason: str):
         """Adopt ``message`` as the live status message, deleting the previous one."""
@@ -68,7 +69,9 @@ class TelegramStatus:
         message = self.messages.get(chat_id)
         if message is None:
             await self._store(
-                chat_id, await self._send_status(chat_id, text), text,
+                chat_id,
+                await self._send_status(chat_id, text),
+                text,
                 replaced_reason="replaced",
             )
         elif self.text.get(chat_id) != text:
@@ -82,7 +85,9 @@ class TelegramStatus:
         async with self.locks[chat_id]:
             text = format_status(self.chat_tasks(chat_id))
             await self._store(
-                chat_id, await self._send_status(chat_id, text), text,
+                chat_id,
+                await self._send_status(chat_id, text),
+                text,
                 replaced_reason="replaced",
             )
         self.ensure_loop(chat_id)

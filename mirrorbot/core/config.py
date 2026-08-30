@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isfinite
 from os import getenv
 from pathlib import Path
 
@@ -23,6 +24,8 @@ def _float(name: str, default: float, *, minimum: float = 0.0) -> float:
         parsed = float(value)
     except ValueError as exc:
         raise RuntimeError(f"{name} must be a number") from exc
+    if not isfinite(parsed):
+        raise RuntimeError(f"{name} must be a finite number")
     if parsed < minimum:
         raise RuntimeError(f"{name} must be at least {minimum}")
     return parsed
@@ -150,9 +153,7 @@ class Config:
             torrent_metadata_timeout=_bounded_int(
                 "TORRENT_METADATA_TIMEOUT", 300, minimum=1
             ),
-            torrent_add_timeout=_bounded_int(
-                "TORRENT_ADD_TIMEOUT", 60, minimum=1
-            ),
+            torrent_add_timeout=_bounded_int("TORRENT_ADD_TIMEOUT", 60, minimum=1),
         )
 
     @property

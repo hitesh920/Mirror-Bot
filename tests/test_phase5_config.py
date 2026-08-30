@@ -48,6 +48,9 @@ def test_config_reads_tunables_from_env(_env, monkeypatch):
     ("name", "value", "message"),
     [
         ("DISK_RESERVE_RATIO", "abc", "must be a number"),
+        ("DISK_RESERVE_RATIO", "nan", "must be a finite number"),
+        ("DISK_RESERVE_RATIO", "inf", "must be a finite number"),
+        ("DISK_RESERVE_RATIO", "-inf", "must be a finite number"),
         ("DISK_RESERVE_RATIO", "-0.1", "at least"),
         ("STALL_TIMEOUT_SECONDS", "5", "at least 30"),
         ("TORRENT_ADD_TIMEOUT", "0", "at least 1"),

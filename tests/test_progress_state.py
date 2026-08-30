@@ -78,9 +78,7 @@ def test_report_progress_never_exceeds_one(make_task):
 
 def test_set_transfer_stats_stores_engine_values_verbatim(make_task):
     task = make_task()
-    task.set_transfer_stats(
-        downloaded=500, size=1000, speed=250, eta=2, progress=0.5
-    )
+    task.set_transfer_stats(downloaded=500, size=1000, speed=250, eta=2, progress=0.5)
 
     assert (task.downloaded, task.size, task.speed, task.eta) == (500, 1000, 250, 2)
     assert task.progress == 0.5
