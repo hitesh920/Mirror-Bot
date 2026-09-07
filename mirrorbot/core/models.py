@@ -108,6 +108,7 @@ class Task:
     guard_path: Path | None = None
     last_progress_at: float = field(default_factory=monotonic)
     last_processed_bytes: int = 0
+    activity_revision: int = 0
     _progress_started: float = field(default_factory=monotonic, repr=False)
 
     @property
@@ -165,6 +166,11 @@ class Task:
     def advance_progress(self, delta: int) -> None:
         """Add ``delta`` bytes to the running total (see report_progress)."""
         self.report_progress(self.downloaded + delta)
+
+    def mark_activity(self) -> None:
+        """Record useful transfer activity that may not commit bytes yet."""
+        self.activity_revision += 1
+        self.last_progress_at = monotonic()
 
     def set_transfer_stats(
         self,

@@ -6,22 +6,24 @@ from time import monotonic
 from ..core.config import Config
 from ..core.errors import DiskSpaceError, StalledTransferError
 from ..core.formatting import human_size
-from ..core.models import Task, TaskPhase
+from ..core.models import Destination, Task, TaskPhase
 
 # Defaults; overridden from Config at startup via configure().
 MIN_RESERVE = 5 * 1024**3
 RESERVE_RATIO = 0.05
 STALL_TIMEOUT = 600
+R2_STALL_TIMEOUT = 1800
 CHECK_INTERVAL = 5
 STALL_PHASES = {TaskPhase.DOWNLOADING, TaskPhase.UPLOADING}
 
 
 def configure(config: Config) -> None:
     """Apply the tunable guard thresholds from Config (called once at startup)."""
-    global MIN_RESERVE, RESERVE_RATIO, STALL_TIMEOUT, CHECK_INTERVAL
+    global MIN_RESERVE, RESERVE_RATIO, STALL_TIMEOUT, R2_STALL_TIMEOUT, CHECK_INTERVAL
     MIN_RESERVE = config.disk_min_reserve_bytes
     RESERVE_RATIO = config.disk_reserve_ratio
     STALL_TIMEOUT = config.stall_timeout_seconds
+    R2_STALL_TIMEOUT = config.r2_stall_timeout_seconds
     CHECK_INTERVAL = config.guard_check_interval_seconds
 
 
@@ -51,6 +53,7 @@ class TransferGuard:
         self.task = task
         self.last_bytes = task.downloaded
         self.last_progress = task.progress
+        self.last_activity_revision = task.activity_revision
         self.last_activity = monotonic()
         self.last_phase = task.phase
 
@@ -78,11 +81,21 @@ class TransferGuard:
                 self.last_activity = monotonic()
                 self.task.last_progress_at = self.last_activity
                 self.task.last_processed_bytes = self.task.downloaded
+            if self.task.activity_revision != self.last_activity_revision:
+                self.last_activity_revision = self.task.activity_revision
+                self.last_activity = monotonic()
+                self.task.last_progress_at = self.last_activity
+            stall_timeout = (
+                R2_STALL_TIMEOUT
+                if self.task.phase == TaskPhase.UPLOADING
+                and self.task.destination == Destination.CLOUDFLARE_R2
+                else STALL_TIMEOUT
+            )
             if (
                 self.task.phase in STALL_PHASES
-                and monotonic() - self.last_activity >= STALL_TIMEOUT
+                and monotonic() - self.last_activity >= stall_timeout
             ):
-                minutes = max(1, round(STALL_TIMEOUT / 60))
+                minutes = max(1, round(stall_timeout / 60))
                 self.task.fail_guard(
                     StalledTransferError(
                         f"Transfer stalled for {minutes} minute"

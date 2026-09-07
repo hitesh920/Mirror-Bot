@@ -426,6 +426,8 @@ Additional R2 settings:
 
 - `R2_PREFIX` defaults to `uploads/`.
 - `R2_AUTO_DELETE_SECONDS` defaults to `172800`.
+- `R2_STALL_TIMEOUT_SECONDS` defaults to `1800` and controls the R2-specific
+  no-progress watchdog.
 - `CLOUDFLARE_ACCOUNT_ID` enables account usage data in `/r2stats`.
 - `CLOUDFLARE_API_TOKEN` supplies read-only Billing and Account Analytics
   access for `/r2stats`.

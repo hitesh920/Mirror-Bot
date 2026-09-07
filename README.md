@@ -196,6 +196,8 @@ Optional:
 - `R2_PREFIX` — Prefix managed by the bot. Defaults to `uploads/`.
 - `R2_AUTO_DELETE_SECONDS` — Retention period. Defaults to `172800` seconds;
   use `0` to disable automatic deletion.
+- `R2_STALL_TIMEOUT_SECONDS` — Cancel an R2 upload only after this many seconds
+  without byte-level activity. Defaults to `1800` (30 minutes).
 - `CLOUDFLARE_ACCOUNT_ID` — Enables account usage information in `/r2stats`.
 - `CLOUDFLARE_API_TOKEN` — Read-only Billing and Account Analytics token used
   by `/r2stats`.

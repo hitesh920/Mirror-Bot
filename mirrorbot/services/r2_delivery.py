@@ -5,17 +5,20 @@ import json
 import logging
 import mimetypes
 import os
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from email.header import decode_header
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
-from time import time
+from time import monotonic, time
 from urllib.parse import unquote, urlsplit
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
 from ..core.config import Config
 from ..core.models import Task
@@ -25,7 +28,20 @@ from .r2_folder_page import build_folder_page, normalize_folder_page_labels
 
 LOGGER = logging.getLogger(__name__)
 MULTIPART_THRESHOLD = 64 * 1024 * 1024
-PART_SIZE = 32 * 1024 * 1024
+PART_SIZE = 16 * 1024 * 1024
+PART_UPLOAD_ATTEMPTS = 4
+FILE_UPLOAD_ATTEMPTS = 2
+RETRY_BASE_SECONDS = 3
+RETRYABLE_R2_ERROR_CODES = {
+    "InternalError",
+    "OperationAborted",
+    "RequestTimeout",
+    "RequestTimeoutException",
+    "SlowDown",
+    "ServiceUnavailable",
+    "Throttling",
+    "ThrottlingException",
+}
 EXPIRY_SWEEP_INTERVAL = 60 * 60
 R2_DELETE_WARNING_SECONDS = 12 * 60 * 60
 PRESIGNED_URL_LIFETIME = 7 * 24 * 60 * 60
@@ -33,6 +49,52 @@ FOLDER_PAGE_SUFFIX = ".mirrorbot-folder.html"
 WARNING_STATE_FILENAME = ".r2-delete-warnings.json"
 FolderExpiryCache = dict[str, tuple[tuple[str, float], int | None]]
 WarningState = dict[str, int]
+
+
+class ProgressBody:
+    """File-like request body that reports newly-read bytes without double counts."""
+
+    def __init__(
+        self,
+        body,
+        size: int,
+        callback: Callable[[int], None],
+    ):
+        self._body = body
+        self._size = size
+        self._callback = callback
+        self._high_water = 0
+
+    def read(self, amount: int = -1):
+        data = self._body.read(amount)
+        position = min(self._size, self._body.tell())
+        if position > self._high_water:
+            self._high_water = position
+            self._callback(position)
+        return data
+
+    def seek(self, offset: int, whence: int = 0):
+        return self._body.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._body.tell()
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __getattr__(self, name: str):
+        return getattr(self._body, name)
+
+
+def retryable_r2_error(exc: Exception) -> bool:
+    if isinstance(exc, ParamValidationError):
+        return False
+    if isinstance(exc, ClientError):
+        response = exc.response or {}
+        status = int(response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 0)
+        code = str(response.get("Error", {}).get("Code") or "")
+        return status == 429 or status >= 500 or code in RETRYABLE_R2_ERROR_CODES
+    return isinstance(exc, (BotoCoreError, OSError, TimeoutError))
 
 
 def normalize_prefix(value: str) -> str:
@@ -59,6 +121,9 @@ def r2_client(config: Config):
         config=BotoConfig(
             signature_version="s3v4",
             retries={"max_attempts": 4, "mode": "standard"},
+            connect_timeout=30,
+            read_timeout=300,
+            tcp_keepalive=True,
             max_pool_connections=max(10, config.task_limit * 2),
             s3={"addressing_style": "path"},
         ),
@@ -240,7 +305,7 @@ class R2Uploader:
                 )
                 self.task.current_file = display_name
                 self.created_keys.append(key)
-                await self.upload_file(file_path, key, download_url)
+                await self.upload_file_with_retries(file_path, key, download_url)
                 self.task.result_files.append(display_name)
                 uploaded_files.append(
                     (display_name, download_url, file_path.stat().st_size)
@@ -315,14 +380,16 @@ class R2Uploader:
         )
         if size < MULTIPART_THRESHOLD:
             with file_path.open("rb") as body:
+                progress_body = self.progress_body(body, size, self.uploaded)
                 await cancellable_thread(
                     self.client.put_object,
                     Bucket=self.config.r2_bucket,
                     Key=key,
-                    Body=body,
+                    Body=progress_body,
                     ContentType=content_type,
                     Metadata=metadata,
                 )
+            await asyncio.sleep(0)
             self.uploaded += size
             self.update_progress()
             return
@@ -343,13 +410,12 @@ class R2Uploader:
                 while chunk := body.read(PART_SIZE):
                     if self.task.cancelled:
                         raise asyncio.CancelledError()
-                    uploaded = await cancellable_thread(
-                        self.client.upload_part,
-                        Bucket=self.config.r2_bucket,
-                        Key=key,
-                        UploadId=upload_id,
-                        PartNumber=part_number,
-                        Body=chunk,
+                    uploaded = await self.upload_part_with_retries(
+                        file_path,
+                        key,
+                        upload_id,
+                        part_number,
+                        chunk,
                     )
                     parts.append(
                         {
@@ -371,6 +437,139 @@ class R2Uploader:
         except BaseException:
             await self.abort_active_upload()
             raise
+
+    async def upload_file_with_retries(
+        self,
+        file_path: Path,
+        key: str,
+        download_url: str,
+    ) -> None:
+        committed_before_file = self.uploaded
+        for attempt in range(1, FILE_UPLOAD_ATTEMPTS + 1):
+            started = monotonic()
+            try:
+                await self.upload_file(file_path, key, download_url)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.uploaded = committed_before_file
+                self.update_progress()
+                retryable = retryable_r2_error(exc)
+                if not retryable or attempt >= FILE_UPLOAD_ATTEMPTS:
+                    LOGGER.error(
+                        "Task %s: R2 file upload failed file=%s attempt=%s/%s "
+                        "duration=%.1fs retryable=%s error=%s: %s",
+                        self.task.short_id(),
+                        file_path.name,
+                        attempt,
+                        FILE_UPLOAD_ATTEMPTS,
+                        monotonic() - started,
+                        retryable,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    raise
+                delay = min(30, RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+                LOGGER.warning(
+                    "Task %s: retrying R2 file file=%s attempt=%s/%s "
+                    "duration=%.1fs retry_in=%ss error=%s: %s",
+                    self.task.short_id(),
+                    file_path.name,
+                    attempt,
+                    FILE_UPLOAD_ATTEMPTS,
+                    monotonic() - started,
+                    delay,
+                    type(exc).__name__,
+                    exc,
+                )
+                await self.retry_wait(delay)
+        raise RuntimeError("R2 file upload retry loop exhausted")
+
+    async def upload_part_with_retries(
+        self,
+        file_path: Path,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        chunk: bytes,
+    ) -> dict:
+        committed_before_part = self.uploaded
+        for attempt in range(1, PART_UPLOAD_ATTEMPTS + 1):
+            started = monotonic()
+            try:
+                progress_body = self.progress_body(
+                    BytesIO(chunk), len(chunk), committed_before_part
+                )
+                result = await cancellable_thread(
+                    self.client.upload_part,
+                    Bucket=self.config.r2_bucket,
+                    Key=key,
+                    UploadId=upload_id,
+                    PartNumber=part_number,
+                    Body=progress_body,
+                )
+                await asyncio.sleep(0)
+                return result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await asyncio.sleep(0)
+                self.update_progress()
+                retryable = retryable_r2_error(exc)
+                if not retryable or attempt >= PART_UPLOAD_ATTEMPTS:
+                    LOGGER.error(
+                        "Task %s: R2 part failed file=%s part=%s attempt=%s/%s "
+                        "duration=%.1fs retryable=%s error=%s: %s",
+                        self.task.short_id(),
+                        file_path.name,
+                        part_number,
+                        attempt,
+                        PART_UPLOAD_ATTEMPTS,
+                        monotonic() - started,
+                        retryable,
+                        type(exc).__name__,
+                        exc,
+                    )
+                    raise
+                delay = min(30, RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+                LOGGER.warning(
+                    "Task %s: retrying R2 part file=%s part=%s attempt=%s/%s "
+                    "duration=%.1fs retry_in=%ss error=%s: %s",
+                    self.task.short_id(),
+                    file_path.name,
+                    part_number,
+                    attempt,
+                    PART_UPLOAD_ATTEMPTS,
+                    monotonic() - started,
+                    delay,
+                    type(exc).__name__,
+                    exc,
+                )
+                await self.retry_wait(delay)
+        raise RuntimeError("R2 part upload retry loop exhausted")
+
+    def progress_body(self, body, size: int, committed: int) -> ProgressBody:
+        loop = asyncio.get_running_loop()
+
+        def report(position: int) -> None:
+            loop.call_soon_threadsafe(
+                self.update_inflight_progress,
+                committed + position,
+            )
+
+        return ProgressBody(body, size, report)
+
+    def update_inflight_progress(self, uploaded: int) -> None:
+        self.task.report_progress(min(self.total_size, uploaded), size=self.total_size)
+        self.task.mark_activity()
+
+    async def retry_wait(self, seconds: int) -> None:
+        try:
+            await asyncio.wait_for(self.task.cancel_event.wait(), timeout=seconds)
+        except TimeoutError:
+            return
+        raise asyncio.CancelledError()
 
     async def abort_active_upload(self) -> None:
         active = self.active_upload

@@ -3,7 +3,7 @@
 import pytest
 
 from mirrorbot.core.errors import DiskSpaceError, StalledTransferError
-from mirrorbot.core.models import TaskPhase
+from mirrorbot.core.models import Destination, TaskPhase
 from mirrorbot.services import transfer_guard
 from mirrorbot.services.transfer_guard import TransferGuard
 
@@ -14,6 +14,7 @@ def _fast_guard(monkeypatch, clock):
     monkeypatch.setattr(transfer_guard, "monotonic", clock)
     monkeypatch.setattr(transfer_guard, "CHECK_INTERVAL", 5)
     monkeypatch.setattr(transfer_guard, "STALL_TIMEOUT", 600)
+    monkeypatch.setattr(transfer_guard, "R2_STALL_TIMEOUT", 1800)
 
     async def _sleep(_seconds):
         clock.advance(transfer_guard.CHECK_INTERVAL)
@@ -51,6 +52,45 @@ async def test_guard_flags_stall_after_timeout(make_task, monkeypatch, _fast_gua
 
     assert isinstance(task.guard_error, StalledTransferError)
     assert task.failure_category == "stalled"
+
+
+async def test_guard_uses_longer_timeout_for_r2_upload(
+    make_task, monkeypatch, _fast_guard
+):
+    _allow_disk(monkeypatch)
+    task = make_task(
+        phase=TaskPhase.UPLOADING,
+        destination=Destination.CLOUDFLARE_R2,
+    )
+    started = _fast_guard.now
+
+    await TransferGuard(task).monitor()
+
+    assert isinstance(task.guard_error, StalledTransferError)
+    assert _fast_guard.now - started == transfer_guard.R2_STALL_TIMEOUT
+
+
+async def test_guard_accepts_activity_without_committed_bytes(
+    make_task, monkeypatch, _fast_guard
+):
+    _allow_disk(monkeypatch)
+    task = make_task(phase=TaskPhase.UPLOADING)
+    guard = TransferGuard(task)
+    ticks = {"n": 0}
+    real_sleep = transfer_guard.asyncio.sleep
+
+    async def _sleep(seconds):
+        await real_sleep(seconds)
+        ticks["n"] += 1
+        task.mark_activity()
+        if ticks["n"] >= 400:
+            task.transition(TaskPhase.COMPLETE)
+
+    monkeypatch.setattr(transfer_guard.asyncio, "sleep", _sleep)
+
+    await guard.monitor()
+
+    assert task.guard_error is None
 
 
 async def test_guard_does_not_flag_while_progressing(

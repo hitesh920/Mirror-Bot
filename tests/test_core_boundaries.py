@@ -45,6 +45,7 @@ from mirrorbot.services.cloudflare_analytics import (
     classify_operations,
 )
 from mirrorbot.services.r2_delivery import (
+    ProgressBody,
     R2Uploader,
     build_folder_page,
     decode_metadata_value,
@@ -943,6 +944,17 @@ def test_r2_expiry_sweeper_runs_hourly():
     assert r2_delivery.R2_DELETE_WARNING_SECONDS == 12 * 60 * 60
 
 
+def test_r2_progress_body_does_not_double_count_retries():
+    positions = []
+    body = ProgressBody(BytesIO(b"abcde"), 5, positions.append)
+
+    assert body.read(3) == b"abc"
+    body.seek(0)
+    assert body.read() == b"abcde"
+
+    assert positions == [3, 5]
+
+
 @pytest.mark.asyncio
 async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypatch):
     source = tmp_path / "movie.bin"
@@ -959,7 +971,7 @@ async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypat
             return {"UploadId": "upload-id"}
 
         def upload_part(self, **kwargs):
-            self.parts.append(bytes(kwargs["Body"]))
+            self.parts.append(kwargs["Body"].read())
             return {"ETag": f"etag-{kwargs['PartNumber']}"}
 
         def complete_multipart_upload(self, **kwargs):
@@ -996,6 +1008,117 @@ async def test_r2_multipart_upload_tracks_parts_and_progress(tmp_path, monkeypat
     assert [part["PartNumber"] for part in client.completed] == [1, 2, 3]
     assert task.downloaded == 5
     assert task.progress == 1
+    assert task.activity_revision > 0
+
+
+@pytest.mark.asyncio
+async def test_r2_multipart_part_retries_and_recovers(tmp_path, monkeypatch):
+    source = tmp_path / "movie.bin"
+    source.write_bytes(b"abcde")
+    task = make_task()
+
+    class Client:
+        def __init__(self):
+            self.attempts = 0
+
+        def create_multipart_upload(self, **_kwargs):
+            return {"UploadId": "upload-id"}
+
+        def upload_part(self, **kwargs):
+            assert kwargs["Body"].read() == b"abcde"
+            self.attempts += 1
+            if self.attempts < 3:
+                raise OSError("temporary R2 connection failure")
+            return {"ETag": "etag-1"}
+
+        def complete_multipart_upload(self, **_kwargs):
+            return {}
+
+        def abort_multipart_upload(self, **_kwargs):
+            raise AssertionError("recovered multipart upload must not abort")
+
+    uploader = R2Uploader.__new__(R2Uploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(
+        r2_bucket="mirror-bot", r2_auto_delete_seconds=86400
+    )
+    uploader.client = Client()
+    uploader.created_keys = ["uploads/task/movie.bin"]
+    uploader.active_upload = None
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded = 0
+    monkeypatch.setattr(r2_delivery, "MULTIPART_THRESHOLD", 1)
+    monkeypatch.setattr(r2_delivery, "PART_SIZE", 5)
+    monkeypatch.setattr(uploader, "retry_wait", AsyncMock())
+
+    await uploader.upload_file(
+        source,
+        "uploads/task/movie.bin",
+        "https://original.example/movie",
+    )
+
+    assert uploader.client.attempts == 3
+    assert uploader.retry_wait.await_count == 2
+    assert task.downloaded == 5
+
+
+@pytest.mark.asyncio
+async def test_r2_restarts_current_file_after_part_retries_fail(tmp_path, monkeypatch):
+    source = tmp_path / "movie.bin"
+    source.write_bytes(b"abcde")
+    task = make_task()
+
+    class Client:
+        def __init__(self):
+            self.uploads = 0
+            self.aborted = []
+            self.completed = []
+
+        def create_multipart_upload(self, **_kwargs):
+            self.uploads += 1
+            return {"UploadId": f"upload-{self.uploads}"}
+
+        def upload_part(self, **kwargs):
+            assert kwargs["Body"].read() == b"abcde"
+            if kwargs["UploadId"] == "upload-1":
+                raise OSError("first multipart upload failed")
+            return {"ETag": "etag-1"}
+
+        def complete_multipart_upload(self, **kwargs):
+            self.completed.append(kwargs["UploadId"])
+            return {}
+
+        def abort_multipart_upload(self, **kwargs):
+            self.aborted.append(kwargs["UploadId"])
+
+    uploader = R2Uploader.__new__(R2Uploader)
+    uploader.task = task
+    uploader.path = source
+    uploader.config = SimpleNamespace(
+        r2_bucket="mirror-bot", r2_auto_delete_seconds=86400
+    )
+    uploader.client = Client()
+    uploader.created_keys = ["uploads/task/movie.bin"]
+    uploader.active_upload = None
+    uploader.total_size = source.stat().st_size
+    uploader.uploaded = 0
+    monkeypatch.setattr(r2_delivery, "MULTIPART_THRESHOLD", 1)
+    monkeypatch.setattr(r2_delivery, "PART_SIZE", 5)
+    monkeypatch.setattr(r2_delivery, "PART_UPLOAD_ATTEMPTS", 1)
+    monkeypatch.setattr(uploader, "retry_wait", AsyncMock())
+
+    await uploader.upload_file_with_retries(
+        source,
+        "uploads/task/movie.bin",
+        "https://original.example/movie",
+    )
+
+    assert uploader.client.uploads == 2
+    assert uploader.client.aborted == ["upload-1"]
+    assert uploader.client.completed == ["upload-2"]
+    assert uploader.retry_wait.await_count == 1
+    assert task.downloaded == 5
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,7 @@ class Config:
     disk_min_reserve_bytes: int = 5 * 1024**3
     disk_reserve_ratio: float = 0.05
     stall_timeout_seconds: int = 600
+    r2_stall_timeout_seconds: int = 1800
     guard_check_interval_seconds: int = 5
     torrent_metadata_timeout: int = 300
     torrent_add_timeout: int = 60
@@ -146,6 +147,9 @@ class Config:
             disk_reserve_ratio=_float("DISK_RESERVE_RATIO", 0.05, minimum=0.0),
             stall_timeout_seconds=_bounded_int(
                 "STALL_TIMEOUT_SECONDS", 600, minimum=30
+            ),
+            r2_stall_timeout_seconds=_bounded_int(
+                "R2_STALL_TIMEOUT_SECONDS", 1800, minimum=30
             ),
             guard_check_interval_seconds=_bounded_int(
                 "GUARD_CHECK_INTERVAL_SECONDS", 5, minimum=1
