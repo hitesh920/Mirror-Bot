@@ -946,13 +946,37 @@ def test_r2_expiry_sweeper_runs_hourly():
 
 def test_r2_progress_body_does_not_double_count_retries():
     positions = []
-    body = ProgressBody(BytesIO(b"abcde"), 5, positions.append)
+    body = ProgressBody(
+        BytesIO(b"abcde"),
+        5,
+        positions.append,
+        report_bytes=3,
+        report_interval=60,
+    )
 
     assert body.read(3) == b"abc"
     body.seek(0)
     assert body.read() == b"abcde"
 
     assert positions == [3, 5]
+
+
+def test_r2_progress_body_throttles_small_reads():
+    report_bytes = r2_delivery.PROGRESS_REPORT_BYTES
+    payload = b"x" * (report_bytes + 10)
+    positions = []
+    body = ProgressBody(
+        BytesIO(payload),
+        len(payload),
+        positions.append,
+        report_interval=60,
+    )
+
+    for _ in range(4):
+        body.read(report_bytes // 4)
+    body.read()
+
+    assert positions == [report_bytes, len(payload)]
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,8 @@ PART_SIZE = 16 * 1024 * 1024
 PART_UPLOAD_ATTEMPTS = 4
 FILE_UPLOAD_ATTEMPTS = 2
 RETRY_BASE_SECONDS = 3
+PROGRESS_REPORT_BYTES = 1024 * 1024
+PROGRESS_REPORT_INTERVAL = 0.25
 RETRYABLE_R2_ERROR_CODES = {
     "InternalError",
     "OperationAborted",
@@ -59,18 +61,33 @@ class ProgressBody:
         body,
         size: int,
         callback: Callable[[int], None],
+        *,
+        report_bytes: int = PROGRESS_REPORT_BYTES,
+        report_interval: float = PROGRESS_REPORT_INTERVAL,
     ):
         self._body = body
         self._size = size
         self._callback = callback
+        self._report_bytes = report_bytes
+        self._report_interval = report_interval
         self._high_water = 0
+        self._reported_position = 0
+        self._last_reported_at = monotonic()
 
     def read(self, amount: int = -1):
         data = self._body.read(amount)
         position = min(self._size, self._body.tell())
         if position > self._high_water:
             self._high_water = position
-            self._callback(position)
+            now = monotonic()
+            if (
+                position == self._size
+                or position - self._reported_position >= self._report_bytes
+                or now - self._last_reported_at >= self._report_interval
+            ):
+                self._reported_position = position
+                self._last_reported_at = now
+                self._callback(position)
         return data
 
     def seek(self, offset: int, whence: int = 0):
