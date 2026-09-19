@@ -127,7 +127,10 @@ async def cancel_selector(_, query):
 @app.on_message(filters.command("ping") & owner_filter)
 async def ping(_, message: Message):
     log_event(LOGGER, logging.INFO, "command.ping", result="requested")
-    await message.reply("pong")
+    started_at = time.perf_counter()
+    response = await message.reply("Pinging...")
+    latency_ms = (time.perf_counter() - started_at) * 1000
+    await response.edit_text(f"Pong: {latency_ms:.2f} ms")
 
 
 @app.on_message(filters.command("speedtest") & owner_filter)
