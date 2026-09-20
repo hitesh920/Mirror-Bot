@@ -1,5 +1,12 @@
 """Tests for lightweight core command handlers."""
 
+from mirrorbot.telegram.messages import HELP_TEXT
+
+
+def test_help_text_covers_basic_health_commands():
+    assert "<code>/start</code>" in HELP_TEXT
+    assert "<code>/ping</code>" in HELP_TEXT
+
 
 async def test_ping_reports_telegram_response_latency(monkeypatch):
     monkeypatch.setenv("BOT_TOKEN", "123456:test-token")

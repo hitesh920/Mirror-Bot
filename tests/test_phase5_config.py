@@ -1,5 +1,6 @@
 """Phase 5a: tunables moved into Config and wired to the engines."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,7 @@ def _env(monkeypatch):
 
 def test_config_defaults_for_new_tunables(_env):
     config = Config.load()
+    assert config.r2_bucket == "mirror-bot"
     assert config.disk_min_reserve_bytes == 5 * 1024**3
     assert config.disk_reserve_ratio == 0.05
     assert config.stall_timeout_seconds == 600
@@ -27,6 +29,24 @@ def test_config_defaults_for_new_tunables(_env):
     assert config.torrent_metadata_timeout == 300
     assert config.torrent_add_timeout == 60
     assert config.log_file == "logs/bot.log"
+
+
+def test_default_r2_bucket_completes_configuration(_env, monkeypatch):
+    monkeypatch.setenv("R2_ENDPOINT_URL", "https://example.r2.cloudflarestorage.com")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "access")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.delenv("R2_BUCKET", raising=False)
+
+    config = Config.load()
+
+    assert config.r2_bucket == "mirror-bot"
+    assert config.r2_configured
+
+
+def test_environment_template_includes_public_base_url():
+    template = Path(__file__).parents[1] / ".env.example"
+
+    assert "PUBLIC_BASE_URL=" in template.read_text(encoding="utf-8").splitlines()
 
 
 def test_config_reads_tunables_from_env(_env, monkeypatch):

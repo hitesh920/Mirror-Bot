@@ -1,4 +1,4 @@
-FROM denoland/deno:bin-2.3.0 AS deno
+FROM denoland/deno:bin-2.9.7 AS deno
 
 # --- build stage: compile any wheels that need a toolchain -------------------
 FROM python:3.12-slim AS builder

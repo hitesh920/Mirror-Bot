@@ -9,9 +9,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -28,3 +28,29 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      - name: Compile and check shell syntax
+        run: |
+          python -m compileall -q mirrorbot scripts
+          bash -n start.sh
+
+      - name: Audit locked dependencies
+        run: python -m pip_audit -r requirements.lock
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Build runtime image
+        run: docker build --tag mirror-bot-ci .
+
+      - name: Smoke-test runtime tools
+        run: |
+          docker run --rm --entrypoint deno mirror-bot-ci --version
+          docker run --rm mirror-bot-ci python -c "import aiohttp, boto3, pyrogram, yt_dlp"

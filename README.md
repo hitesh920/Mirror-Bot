@@ -113,6 +113,7 @@ Every command is restricted to `OWNER_ID`.
 | `/logs` | Send recent sanitized logs |
 | `/restart` | Gracefully restart the bot |
 | `/ping` | Measure Telegram response latency |
+| `/start` | Confirm the bot is online |
 | `/help` | Show the built-in command guide |
 
 The [Commands Wiki page](https://github.com/hitesh920/Mirror-Bot/wiki/Commands)
@@ -149,10 +150,13 @@ python -m pip install -r requirements-dev.txt
 python -m ruff check .
 python -m ruff format --check .
 python -m pytest -q
+python -m compileall -q mirrorbot scripts
+python -m pip_audit -r requirements.lock
+bash -n start.sh
 ```
 
-CI runs Ruff and the full test suite for every push and pull request. Review the
-[development guide](https://github.com/hitesh920/Mirror-Bot/wiki/Development)
+CI runs these checks plus Compose validation and a container build for every
+push and pull request. Review the [development guide](https://github.com/hitesh920/Mirror-Bot/wiki/Development)
 before changing transfer, cleanup, deployment, or security behavior.
 
 ## Security

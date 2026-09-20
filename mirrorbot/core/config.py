@@ -123,7 +123,7 @@ class Config:
             ),
             telegram_dump_chat_id=getenv("TELEGRAM_DUMP_CHAT_ID", "").strip(),
             r2_endpoint_url=getenv("R2_ENDPOINT_URL", "").strip().rstrip("/"),
-            r2_bucket=getenv("R2_BUCKET", "").strip(),
+            r2_bucket=getenv("R2_BUCKET", "mirror-bot").strip(),
             r2_access_key_id=getenv("R2_ACCESS_KEY_ID", "").strip(),
             r2_secret_access_key=getenv("R2_SECRET_ACCESS_KEY", "").strip(),
             r2_prefix=getenv("R2_PREFIX", "uploads/").strip(),

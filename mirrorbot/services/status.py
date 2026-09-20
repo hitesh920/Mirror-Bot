@@ -56,7 +56,6 @@ def task_status(task: Task, number: int) -> str:
         TaskPhase.EXTRACTING,
         TaskPhase.ARCHIVING,
         TaskPhase.SPLITTING,
-        TaskPhase.DELIVERING,
         TaskPhase.UPLOADING,
     }:
         if task.batch_total and task.phase == TaskPhase.DOWNLOADING:

@@ -24,6 +24,8 @@ HELP_TEXT = "\n".join(
         "<code>-n name</code> custom task name",
         "",
         "<b>Status</b>",
+        "<code>/start</code> - confirm the bot is online",
+        "<code>/ping</code> - measure Telegram response latency",
         "<code>/status</code> - live task status",
         "<code>/stats</code> - bot/server stats",
         "<code>/speedtest</code> - test server network speed",
