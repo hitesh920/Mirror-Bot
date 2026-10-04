@@ -178,7 +178,6 @@ async def search(_, message: Message):
     await progress.edit_text(
         messages[0],
         parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
     )
     for text in messages[1:]:
         await message.reply(
