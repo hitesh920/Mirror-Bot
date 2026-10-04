@@ -179,7 +179,7 @@ async def search(_, message: Message):
         messages[0],
         parse_mode=ParseMode.HTML,
     )
-    for text in messages[1:]
+    for text in messages[1:]:
         await message.reply(
             text,
             parse_mode=ParseMode.HTML,
