@@ -21,6 +21,40 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Check direct pins are present in runtime lock
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          pin_pattern = re.compile(
+              r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*==\s*([^\s;]+)"
+          )
+
+          def pinned_dependencies(path):
+              result = {}
+              for raw_line in Path(path).read_text().splitlines():
+                  line = raw_line.partition("#")[0].strip()
+                  if not line:
+                      continue
+                  match = pin_pattern.match(line)
+                  if match:
+                      name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+                      result[name] = match.group(2)
+              return result
+
+          source = pinned_dependencies("requirements.in")
+          lock = pinned_dependencies("requirements.txt")
+          mismatched = {
+              name: {"source": version, "lock": lock.get(name)}
+              for name, version in source.items()
+              if lock.get(name) != version
+          }
+          if mismatched:
+              raise SystemExit(f"Runtime lock is out of sync with requirements.in: {mismatched}")
+          print(f"All {len(source)} direct runtime pins are present in requirements.txt.")
+          PY
+
       - name: Lint
         run: |
           ruff check .
@@ -35,7 +69,7 @@ jobs:
           bash -n start.sh
 
       - name: Audit locked dependencies
-        run: python -m pip_audit -r requirements.lock
+        run: python -m pip_audit -r requirements.txt
 
   container:
     runs-on: ubuntu-latest
