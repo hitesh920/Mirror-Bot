@@ -159,8 +159,8 @@ bash -n start.sh
 
 Runtime dependencies are declared with exact pins in `requirements.in`.
 The fully resolved `requirements.txt` is the lockfile used by Docker and CI.
-Dependabot is configured with its `pip-compile` ecosystem so dependency update
-pull requests update the input and generated lock together.
+Dependabot uses the `pip` ecosystem with the `requirements.in` / `requirements.txt`
+pip-compile layout so dependency update pull requests keep the input and lock in sync.
 
 To regenerate the runtime lock locally after editing `requirements.in`, run:
 
