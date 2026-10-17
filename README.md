@@ -142,6 +142,8 @@ The detailed user, operator, and engineering documentation lives in the
 
 Mirror-Bot targets Python 3.12.
 
+Install the development tools and run the checks:
+
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
@@ -151,8 +153,19 @@ python -m ruff check .
 python -m ruff format --check .
 python -m pytest -q
 python -m compileall -q mirrorbot scripts
-python -m pip_audit -r requirements.lock
+python -m pip_audit -r requirements.txt
 bash -n start.sh
+```
+
+Runtime dependencies are declared with exact pins in `requirements.in`.
+The fully resolved `requirements.txt` is the lockfile used by Docker and CI.
+Dependabot is configured with its `pip-compile` ecosystem so dependency update
+pull requests update the input and generated lock together.
+
+To regenerate the runtime lock locally after editing `requirements.in`, run:
+
+```bash
+pip-compile --output-file=requirements.txt requirements.in
 ```
 
 CI runs these checks plus Compose validation and a container build for every
