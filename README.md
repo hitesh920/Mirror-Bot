@@ -8,7 +8,7 @@ Download from the web, torrents, or Telegram; process the result; then deliver
 it to Telegram or a private Cloudflare R2 bucket.
 
 [![CI](https://github.com/hitesh920/Mirror-Bot/actions/workflows/ci.yml/badge.svg)](https://github.com/hitesh920/Mirror-Bot/actions/workflows/ci.yml)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Run_with-Docker-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Telegram](https://img.shields.io/badge/Control_from-Telegram-26A5E4?logo=telegram&logoColor=white)](https://telegram.org/)
 [![Cloudflare R2](https://img.shields.io/badge/Optional_storage-Cloudflare_R2-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/r2/)
@@ -140,12 +140,12 @@ The detailed user, operator, and engineering documentation lives in the
 
 ## Development
 
-Mirror-Bot targets Python 3.12.
+Mirror-Bot uses Python 3.14 in its Docker runtime. CI runs the full checks on Python 3.12 and 3.14.
 
 Install the development tools and run the checks:
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 
