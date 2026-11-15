@@ -1,7 +1,7 @@
-FROM denoland/deno:bin-2.9.7 AS deno
+FROM denoland/deno:bin-2.9.8 AS deno
 
 # --- build stage: compile any wheels that need a toolchain -------------------
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # --- runtime stage: no toolchain, just the installed env + system tools -----
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
